@@ -41,6 +41,10 @@ struct FASTLocalFlameField
     FVector LastAnchorLocation = FVector::ZeroVector;
     float Time = 0.0f;
     float SpawnDebt = 0.0f;
+    FVector LastAnchorVelocity = FVector::ZeroVector;
+    float Breath = 0.78f;
+    float VisualEnergy = 0.55f;
+    float CurrentGust = 0.0f;
     bool bReady = false;
 };
 
@@ -135,7 +139,7 @@ public:
     float LightRadius = 525.0f;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="AST Fire|Response", meta=(ClampMin="10"))
-    float InfluenceRadius = 225.0f;
+    float InfluenceRadius = 375.0f;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="AST Fire|Response", meta=(ClampMin="0", ClampMax="45"))
     float MaxLeanDegrees = 16.0f;
@@ -228,6 +232,7 @@ private:
     TArray<FVector_NetQuantize10> ExtraLocalPoints;
 
     TSet<TWeakObjectPtr<APawn>> NearbyPawns;
+    TMap<TWeakObjectPtr<APawn>, FVector> LastNearbyPawnPositions;
     FVector LastOwnerPosition = FVector::ZeroVector;
     FVector LastOwnerVelocity = FVector::ZeroVector;
     FQuat LastOwnerRotation = FQuat::Identity;
@@ -235,6 +240,7 @@ private:
     FVector SmoothedAngularVelocity = FVector::ZeroVector;
     float VolumeUpdateDebt = 0.0f;
     float Disturbance = 0.0f;
+    float LightEnvelope = 0.65f;
     float SmoothIntensity = 0.0f;
     bool bInitialized = false;
     bool bPlaying = false;

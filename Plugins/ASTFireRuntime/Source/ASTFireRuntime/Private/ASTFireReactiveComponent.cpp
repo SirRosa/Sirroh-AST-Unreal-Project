@@ -66,6 +66,7 @@ UASTFireReactiveComponent::UASTFireReactiveComponent()
 {
     PrimaryComponentTick.bCanEverTick = true;
     PrimaryComponentTick.TickInterval = 0.04f; // 25 Hz max, volume updates LOD-throttled
+    PrimaryComponentTick.TickGroup = TG_PostUpdateWork; // sample bones after skeletal animation
     SetIsReplicatedByDefault(true);
     FireSystem = TSoftObjectPtr<UNiagaraSystem>(
         FSoftObjectPath(TEXT("/Game/VFX/Fire/Systems/NS_Fire_Master.NS_Fire_Master")));
@@ -159,6 +160,7 @@ void UASTFireReactiveComponent::EndPlay(const EEndPlayReason::Type EndPlayReason
 {
     bPlaying = false;
     NearbyPawns.Reset();
+    LastNearbyPawnPositions.Reset();
     if (InfluenceSphere)
     {
         InfluenceSphere->DestroyComponent();
@@ -1012,7 +1014,11 @@ void UASTFireReactiveComponent::OnInfluenceBegin(
     bool bFromSweep, const FHitResult& SweepResult)
 {
     if (APawn* Pawn = Cast<APawn>(OtherActor))
-        NearbyPawns.Add(Pawn);
+        if (Pawn != GetOwner())
+        {
+            NearbyPawns.Add(Pawn);
+            LastNearbyPawnPositions.Add(TWeakObjectPtr<APawn>(Pawn), Pawn->GetActorLocation());
+        }
 }
 
 void UASTFireReactiveComponent::OnInfluenceEnd(
@@ -1020,7 +1026,10 @@ void UASTFireReactiveComponent::OnInfluenceEnd(
     UPrimitiveComponent* OtherComp, int32 OtherBodyIndex)
 {
     if (APawn* Pawn = Cast<APawn>(OtherActor))
+    {
         NearbyPawns.Remove(Pawn);
+        LastNearbyPawnPositions.Remove(TWeakObjectPtr<APawn>(Pawn));
+    }
 }
 
 void UASTFireReactiveComponent::TickComponent(
@@ -1050,20 +1059,43 @@ void UASTFireReactiveComponent::TickComponent(
 
     float LocalDisturbance = 0.0f;
     FVector LocalWind = FVector::ZeroVector;
+
+    // Include pawns that were already in the volume at flame startup.
+    if (IsValid(InfluenceSphere))
+    {
+        TArray<AActor*> InRange;
+        InfluenceSphere->GetOverlappingActors(InRange, APawn::StaticClass());
+        for (AActor* Candidate : InRange)
+            if (APawn* Pawn = Cast<APawn>(Candidate))
+                if (Pawn != GetOwner()) NearbyPawns.Add(Pawn);
+    }
     for (auto It = NearbyPawns.CreateIterator(); It; ++It)
     {
         APawn* Pawn = It->Get();
         if (!IsValid(Pawn))
         {
+            LastNearbyPawnPositions.Remove(*It);
             It.RemoveCurrent();
             continue;
         }
-        const float Distance = FVector::Dist(Position, Pawn->GetActorLocation());
+        if (Pawn == GetOwner()) continue;
+        const FVector PawnPosition = Pawn->GetActorLocation();
+        const FVector* Previous = LastNearbyPawnPositions.Find(*It);
+        const FVector MeasuredVelocity = Previous && DeltaTime > 0.001f
+            ? (PawnPosition - *Previous) / DeltaTime : Pawn->GetVelocity();
+        LastNearbyPawnPositions.Add(*It, PawnPosition);
+        const FVector PawnVelocity = Pawn->GetVelocity().SizeSquared() >
+            MeasuredVelocity.SizeSquared() ? Pawn->GetVelocity() : MeasuredVelocity;
+        float Distance = FVector::Dist(Position, PawnPosition);
+        for (const UProceduralMeshComponent* Volume : FireVolumes)
+            if (IsValid(Volume))
+                Distance = FMath::Min(Distance,
+                    FVector::Dist(Volume->GetComponentLocation(), PawnPosition));
         if (Distance >= InfluenceRadius) continue;
-        const FVector PawnVelocity = Pawn->GetVelocity();
-        const float Strength =
-            (1.0f - Distance / FMath::Max(InfluenceRadius, 1.0f)) *
-            FMath::Clamp(PawnVelocity.Size() / 650.0f, 0.0f, 1.0f);
+        const float Proximity = FMath::Square(1.0f -
+            Distance / FMath::Max(InfluenceRadius, 1.0f));
+        const float Strength = Proximity *
+            FMath::Clamp(PawnVelocity.Size() / 280.0f, 0.0f, 1.8f);
         if (Strength > LocalDisturbance)
         {
             LocalDisturbance = Strength;
@@ -1073,33 +1105,50 @@ void UASTFireReactiveComponent::TickComponent(
 
     Disturbance = FMath::FInterpTo(
         Disturbance, LocalDisturbance, DeltaTime,
-        LocalDisturbance > Disturbance ? 10.0f : 3.0f);
+        LocalDisturbance > Disturbance ? 17.0f : 4.0f);
     const float TargetIntensity = bStartLit ? Intensity : 0.0f;
     SmoothIntensity = FMath::FInterpTo(
         SmoothIntensity, TargetIntensity, DeltaTime, 6.0f);
 
     const float Time = GetWorld()->GetTimeSeconds();
-    const float Pulse = 0.85f + 0.09f * FMath::Sin(Time * 4.4f)
-        + 0.045f * FMath::Sin(Time * 12.8f)
-        + 0.025f * FMath::Sin(Time * 18.9f);
+    const float Pulse = 0.55f + 0.22f * FMath::Sin(Time * 5.8f)
+        + 0.17f * FMath::Sin(Time * 9.7f + 1.2f)
+        + 0.12f * FMath::Sin(Time * 2.1f + 2.4f);
     const float Movement = FMath::Clamp(Velocity.Size() / 600.0f, 0.0f, 1.0f);
     const float Response = FMath::Max(Movement, Disturbance);
-    const FVector Wind = -Velocity * 0.48f - Acceleration.GetClampedToMaxSize(5000.0f) * 0.025f
-        + LocalWind * 0.18f + AmbientWind;
-    const float ResponseRate = Response > 0.1f ? 5.0f : 2.5f;
-    SmoothedFlow = FMath::VInterpTo(SmoothedFlow, Wind.GetClampedToMaxSize(800.0f),
+    const FVector Wind = -Velocity * 1.05f
+        - Acceleration.GetClampedToMaxSize(6500.0f) * 0.065f
+        + LocalWind * 1.35f + AmbientWind;
+    const float ResponseRate = Wind.SizeSquared() >
+        SmoothedFlow.SizeSquared() ? 15.0f : 6.5f;
+    SmoothedFlow = FMath::VInterpTo(SmoothedFlow, Wind.GetClampedToMaxSize(1600.0f),
         DeltaTime, ResponseRate);
     SmoothedAngularVelocity = FMath::VInterpTo(
-        SmoothedAngularVelocity, AngularVelocity, DeltaTime, 4.0f);
+        SmoothedAngularVelocity, AngularVelocity, DeltaTime, 9.0f);
     const FVector LocalWindVec = GetOwner()->GetActorTransform()
         .InverseTransformVectorNoScale(Wind);
 
+    // Light now follows the computed thermal mass of flame clusters.
+    float VisualEnergy = 0.0f;
+    for (const FASTLocalFlameField& Field : LocalFields)
+        VisualEnergy += Field.VisualEnergy;
+    if (LocalFields.Num() > 0)
+        VisualEnergy /= float(LocalFields.Num());
+    else
+        VisualEnergy = FMath::Clamp(Pulse, 0.05f, 1.0f);
+    const float WantedLight = FMath::Clamp(
+        0.09f + 0.83f * VisualEnergy + 0.16f * FMath::Max(Pulse, 0.0f),
+        0.10f, 1.22f);
+    LightEnvelope = FMath::FInterpTo(LightEnvelope, WantedLight, DeltaTime,
+        WantedLight > LightEnvelope ? 12.0f : 6.0f);
     if (IsValid(Light))
     {
-        Light->SetIntensity(LightPower *
-            FMath::Max(0.0f, SmoothIntensity * (Pulse + Response * 0.14f)));
-        Light->SetAttenuationRadius(LightRadius * (0.92f + Pulse * 0.10f));
-        Light->SetLightColor(FLinearColor(1.0f, 0.41f + Pulse * 0.07f, 0.20f));
+        const float FireLight = SmoothIntensity * LightEnvelope;
+        Light->SetIntensity(LightPower * FireLight);
+        Light->SetAttenuationRadius(LightRadius *
+            FMath::Clamp(0.54f + 0.62f * LightEnvelope, 0.52f, 1.27f));
+        Light->SetLightColor(FLinearColor(
+            1.0f, 0.24f + 0.26f * LightEnvelope, 0.075f + 0.18f * LightEnvelope));
     }
 
     const float Lean = FMath::Clamp(
