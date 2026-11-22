@@ -37,6 +37,9 @@ jobs:
           python Automation/ASTFire/test_stage6_shape_and_ignition.py
           python -m py_compile Automation/ASTFire/test_stage7_mesh_motion.py
           python Automation/ASTFire/test_stage7_mesh_motion.py
+          python -m py_compile Automation/ASTFire/setup_stage8_surface.py
+          python -m py_compile Automation/ASTFire/test_stage8_integrated.py
+          python Automation/ASTFire/test_stage8_integrated.py
           python Automation/ASTFire/test_stage4_source.py
       - name: Parse PowerShell deployment script
         shell: pwsh
@@ -45,7 +48,8 @@ jobs:
             "Automation/ASTFire/deploy_stage2_windows.ps1",
             "Automation/ASTFire/deploy_stage4_windows.ps1",
             "Automation/ASTFire/deploy_stage5_verified_windows.ps1",
-            "Automation/ASTFire/deploy_stage6_windows.ps1"
+            "Automation/ASTFire/deploy_stage6_windows.ps1",
+            "Automation/ASTFire/deploy_stage8_windows.ps1"
           )) {
             $tokens = $null
             $errors = $null

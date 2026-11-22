@@ -168,3 +168,30 @@ to the actual mesh**, not just the actor's bounding sphere/capsule.
 - Cały instalator: `STAGE6_INSTALL_SUCCESS_VISUAL_AND_CONTACT_TEST_PENDING`, exit 0.
 - Silnik renderujący dopasowuje płomienie do kości oraz próbuje osadzić punkty na powierzchni fizycznej/kolizyjnej mesha. Bez właściwej kolizji następuje awaryjny fallback na obwiednię, co **nie gwarantuje** zgodności z renderowanymi trójkątami każdego mesha.
 - **Brak testów PIE, zweryfikowanej jakości wizualnej, benchmarków 1/10/50 aktorów oraz testów multiplayer.** Kompilacja i commandlety nie potwierdzają, że deformacja, cykle życia i światło spełniają wymagania użytkownika w ruchu.
+
+
+## Stage 8 — one coupled fire system: exact skinned surface, buoyant tongues, responsive light
+
+Stage 7 screenshots showed red floating blobs and flames left behind by sprinting.
+Stage 8 renders the burning ROOT as an original masked material overlay on the
+**actual GPU-skinned/rendered triangles** of the actor. The base mesh/material
+assets remain untouched; animation automatically deforms the fire mask.
+Pre-existing overlays are deliberately preserved. Flame coverage is quantized
+in rest-pose local coordinates, while flow, intensity and thermal energy
+are runtime parameters. This is one simulation/state: the skinned surface,
+small independent buoyant tongues and fire light receive the same energy and
+wind. Large bone billboards are scaled down, the hot root can no longer be
+erased entirely by random heat decay, and detached fragments are capped at four.
+
+New files: `Automation/ASTFire/setup_stage8_surface.py` generates
+`/Game/VFX/Fire/Materials/M_AST_FireSurface` and configures only AST-owned
+`BP_AST_FireSource` and `BP_AST_FireSource_Igniter`.
+`Automation/ASTFire/deploy_stage8_windows.ps1` verifies exact commit SHA,
+builds in TEMP, backs up scoped plugin sources/DLLs and owned fire assets,
+and runs Stage4 volume material, Stage6 contact Blueprint and Stage8 surface
+commandlets (once each). It refuses to overwrite binaries if UE is open.
+
+**Not exact:** detached rising tongues still use secondary attachment points,
+not full skinned-triangle GPU particle sampling. Overlay shape IS exactly the
+real render surface. No char/damage. No claims about final looks or movement
+until user PIE tests. Tests verify source/structure, not perception.
