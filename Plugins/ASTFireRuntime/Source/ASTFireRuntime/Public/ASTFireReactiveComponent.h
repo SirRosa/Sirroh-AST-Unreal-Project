@@ -20,6 +20,7 @@ class UStaticMeshComponent;
 class UMaterialInterface;
 class UMaterialInstanceDynamic;
 class UProceduralMeshComponent;
+class UASTFireFreeFlameComponent;
 class FLifetimeProperty;
 
 
@@ -89,6 +90,11 @@ public:
     /** Procedural camera-facing 2.5D heat-field flame, following spatial burn anchors. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="AST Fire|Visuals")
     bool bEnableProceduralFlames = true;
+
+    /** Only for migration/debug. Default renderer uses UNBOUNDED surface emission,
+        not the Stage5-8 fixed rectangle per bone. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="AST Fire|Visuals")
+    bool bUseLegacyHeatGrid = false;
 
     /** Authored material generated under /Game/VFX/Fire/Materials by Stage 4 commandlet. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="AST Fire|Visuals")
@@ -241,6 +247,9 @@ private:
 
     UPROPERTY(Transient)
     TObjectPtr<UPointLightComponent> Light = nullptr;
+
+    UPROPERTY(Transient)
+    TObjectPtr<UASTFireFreeFlameComponent> FreeFlames = nullptr;
 
     UPROPERTY(Transient)
     TObjectPtr<UPointLightComponent> GeneratedLight = nullptr;

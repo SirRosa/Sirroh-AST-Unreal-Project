@@ -131,6 +131,7 @@ try:
             obj.set_editor_property("enable_surface_fire", True)
             obj.set_editor_property("surface_material", asset)
             obj.set_editor_property("enable_procedural_flames", True)
+            obj.set_editor_property("use_legacy_heat_grid", False)
             affected += 1
         require(affected == 1, "Expected exactly one ASTFireReactiveComponent in " + name)
         u.BlueprintEditorLibrary.compile_blueprint(bp)

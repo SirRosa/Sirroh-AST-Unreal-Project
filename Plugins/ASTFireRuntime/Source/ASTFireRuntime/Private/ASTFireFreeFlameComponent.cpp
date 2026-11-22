@@ -320,7 +320,7 @@ void UASTFireFreeFlameComponent::UpdateGeometry(float DeltaTime, bool bCreate)
         {
             FEmber& Ember=Embers[K];
             if (Ember.Life > 0.f) continue;
-            const int32 Pick = (Seed + int32(Time*43.f) + K*7) % Roots.Num();
+            const int32 Pick = FMath::Abs(Seed + int32(Time*43.f) + K*7) % Roots.Num();
             Ember.Position=SampleRoot(Roots[Pick]) +
                 FVector::UpVector * (28.f+Roots[Pick].Scale*34.f);
             Ember.Velocity = Wind*.10f + FVector(

@@ -1,4 +1,5 @@
 #include "ASTFireReactiveComponent.h"
+#include "ASTFireFreeFlameComponent.h"
 
 #include "NiagaraComponent.h"
 #include "NiagaraSystem.h"
@@ -251,7 +252,7 @@ void UASTFireReactiveComponent::AddFlamePoint(
     if (!Owner || !Parent) return;
     const bool bLit = bStartLit && Intensity > 0.005f;
 
-    if (bEnableProceduralFlames && ProceduralMaterial)
+    if (bEnableProceduralFlames && bUseLegacyHeatGrid && ProceduralMaterial)
     {
         AddVolume(Parent, Socket, LocalPosition, CardScale, ProceduralMaterial);
     }
@@ -867,6 +868,27 @@ void UASTFireReactiveComponent::InitializeFire()
         Light->SetLightColor(FLinearColor(1.0f, 0.42f, 0.21f));
     }
 
+    if (bEnableProceduralFlames && !bUseLegacyHeatGrid && ProceduralMaterial)
+    {
+        FreeFlames = NewObject<UASTFireFreeFlameComponent>(Owner,
+            NAME_None, RF_Transient);
+        if (IsValid(FreeFlames))
+        {
+            FreeFlames->SetSource(Parent, ProceduralMaterial, SimulationSeed);
+            FreeFlames->SetThermal(Intensity, AmbientWind, 0.75f);
+            FreeFlames->RegisterComponent();
+        }
+    }
+
+    // Do not instantiate ANY bone-bound square sprites/volumes in Stage9.
+    // The free flame component samples the true skinned mesh vertices each tick.
+    if (IsValid(FreeFlames) && !bEnableFlameCards && !bEnableNiagara)
+    {
+        bInitialized = true;
+        UpdateVisibility();
+        return;
+    }
+
     struct FFirePoint { FName Socket; FVector Offset; float Size; };
     TArray<FFirePoint> Points;
     const int32 Count = FMath::Clamp(FlamePoints, 1, 16);
@@ -1039,6 +1061,9 @@ void UASTFireReactiveComponent::InitializeFire()
 
 void UASTFireReactiveComponent::RemoveGeneratedVisuals()
 {
+    if (IsValid(FreeFlames))
+        FreeFlames->DestroyComponent();
+    FreeFlames = nullptr;
     ReleaseSurfaceFire();
     for (UNiagaraComponent* FX : GeneratedFX)
         if (IsValid(FX)) FX->DestroyComponent();
@@ -1117,6 +1142,7 @@ void UASTFireReactiveComponent::UpdateVisibility()
 {
     const bool bLit = bStartLit && Intensity > 0.005f;
     UpdateSurfaceVisibility();
+    if (IsValid(FreeFlames)) FreeFlames->SetFlamesVisible(bLit);
     for (UStaticMeshComponent* Card : FireCards)
         if (IsValid(Card)) Card->SetVisibility(bLit);
     for (UProceduralMeshComponent* Volume : FireVolumes)
@@ -1272,13 +1298,16 @@ void UASTFireReactiveComponent::TickComponent(
                 FMath::Clamp(Flow.Z / 450.0f, -2.0f, 2.0f), 0.0f));
     }
 
-    // Light now follows the computed thermal mass of flame clusters.
-    float VisualEnergy = 0.0f;
+    if (IsValid(FreeFlames))
+        FreeFlames->SetThermal(SmoothIntensity, SmoothedFlow, LightEnvelope);
+
+    // Light follows the same actual living flame energy.
+    float VisualEnergy = IsValid(FreeFlames) ? FreeFlames->GetVisualEnergy() : 0.0f;
     for (const FASTLocalFlameField& Field : LocalFields)
         VisualEnergy += Field.VisualEnergy;
     if (LocalFields.Num() > 0)
         VisualEnergy /= float(LocalFields.Num());
-    else
+    else if (!IsValid(FreeFlames))
         VisualEnergy = FMath::Clamp(Pulse, 0.05f, 1.0f);
     const float WantedLight = FMath::Clamp(
         0.09f + 0.83f * VisualEnergy + 0.16f * FMath::Max(Pulse, 0.0f),
