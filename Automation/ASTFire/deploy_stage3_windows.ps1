@@ -8,7 +8,7 @@ Backs up every source/config file before overwriting and stops on any failure.
 param(
     [string]$ProjectRoot = 'D:\0 Sirro\Unreal Projects\AST_V1_18',
     [string]$EngineRoot = 'D:\0 Sirro\UE 5.8.1\UE_5.8',
-    [string]$Revision = '9db32ec66267afb89e0d33e79b11ed91c00b2ffb'
+    [string]$Revision = 'e097d5ddc9de0154b90380a157e7da0e6f2886d5'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -41,6 +41,8 @@ $files = @(
     'Plugins/ASTFireRuntime/Source/ASTFireRuntime/Private/ASTFireRuntimeModule.cpp',
     'Plugins/ASTFireRuntime/Source/ASTFireRuntime/Public/ASTFireReactiveComponent.h',
     'Plugins/ASTFireRuntime/Source/ASTFireRuntime/Private/ASTFireReactiveComponent.cpp',
+    'Plugins/ASTFireRuntime/Source/ASTFireRuntime/Public/ASTFireBlueprintLibrary.h',
+    'Plugins/ASTFireRuntime/Source/ASTFireRuntime/Private/ASTFireBlueprintLibrary.cpp',
     'Plugins/ASTFireRuntime/Source/ASTFireEditor/ASTFireEditor.Build.cs',
     'Plugins/ASTFireRuntime/Source/ASTFireEditor/Private/ASTFireEditorModule.cpp',
     'Plugins/ASTFireRuntime/Source/ASTFireEditor/Public/ASTFireEditorLibrary.h',
