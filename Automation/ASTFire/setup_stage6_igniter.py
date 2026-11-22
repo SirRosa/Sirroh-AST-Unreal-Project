@@ -69,7 +69,7 @@ try:
     require(len(zones) == 1, "Expected exactly one ignition zone, found " + str(len(zones)))
     require(len(fire) == 1, "Expected exactly one reactive fire component")
     # Native constructor already sets QueryOnly, all-object-channel overlaps,
-    # 75x75x84 extent and +68cm height; don't override user-saved component tuning.
+    # 75x75x84 extent around its attachment; no movement in its constructor.
     u.BlueprintEditorLibrary.compile_blueprint(blueprint)
     require(ASSET.save_loaded_asset(blueprint, only_if_is_dirty=False),
             "Failed to save dedicated igniter Blueprint")

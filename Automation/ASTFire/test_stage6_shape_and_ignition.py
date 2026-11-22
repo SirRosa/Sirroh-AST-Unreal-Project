@@ -17,6 +17,7 @@ assert "return Bottom * Top * Side;" in cpp
 assert "VolumeUpdateDebt" in cpp
 assert 'return color*0.65;' in material
 assert "class ASTFIRERUNTIME_API UASTFireIgnitionZoneComponent" in igniterH
+assert "SetRelativeLocation(" not in igniterC, "Never move a component in its constructor: UE CDO crash"
 assert "OnComponentBeginOverlap.AddDynamic" in igniterC
 assert "OnComponentEndOverlap.AddDynamic" in igniterC
 assert "GetNetMode() == NM_Client" in igniterC

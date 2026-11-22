@@ -10,7 +10,6 @@ UASTFireIgnitionZoneComponent::UASTFireIgnitionZoneComponent()
     PrimaryComponentTick.bCanEverTick = false;
     SetMobility(EComponentMobility::Movable);
     SetBoxExtent(FVector(75.0f, 75.0f, 84.0f), false);
-    SetRelativeLocation(FVector(0.0f, 0.0f, 68.0f));
     SetCollisionObjectType(ECC_WorldDynamic);
     SetCollisionEnabled(ECollisionEnabled::QueryOnly);
     SetCollisionResponseToAllChannels(ECR_Overlap);
