@@ -25,7 +25,7 @@ LOCKS = [
     {
         "start": "int32 UASTFireFreeFlameComponent::EmitTip(",
         "end": "void UASTFireFreeFlameComponent::AdvanceSimulation(",
-        "hash": "479d3642"
+        "hash": "0112fb55"
     },
     {
         "start": "void UASTFireFreeFlameComponent::AdvanceSimulation(",
@@ -52,7 +52,7 @@ src=c[c.index("void UASTFireFreeFlameComponent::UpdateConnectedSource("):
       c.index("void UASTFireFreeFlameComponent::TickComponent(")]
 ribbon=c[c.index("void UASTFireFreeFlameComponent::UpdateGeometry("):
          c.index("void UASTFireFreeFlameComponent::BuildSourceAnchors()")]
-assert "Necks.Reserve(Tongues.Num()*(RingsPerTongue-1)+Tongues.Num());" in src
+assert "Necks.Reserve(Tongues.Num()*(RingsPerTongue+4));" in src
 assert "static constexpr float NeckFractions[9] =" in src
 assert "const FVector WorldB=TongueCenterAt(T,Root,V1,Right);" in src
 assert "Necks.Add(Neck);" in src
@@ -91,4 +91,4 @@ assert heat_at(21.,14.)==0
 assert "static constexpr int32 SourceGridX = 32;" in Path(
     "Plugins/ASTFireRuntime/Source/ASTFireRuntime/Public/ASTFireFreeFlameComponent.h"
 ).read_text()
-print("Stage16: State machine hash intact; coverage/variation and Stage15 field guards OK")
+print("Stage17: unchanged growth/retraction state machine, updated detached palette and organic field OK")

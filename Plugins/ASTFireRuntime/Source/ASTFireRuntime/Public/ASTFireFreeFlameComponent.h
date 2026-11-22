@@ -117,6 +117,7 @@ private:
     FVector TongueCenterAt(const FTongue& Tongue, const FVector& Base,
         float Fraction, const FVector& Right) const;
     void AdvanceSimulation(float Dt);
+    void UpdateDetachedVortices(float Dt);
     void UpdateGeometry(bool bCreate);
     void UpdateSurfaceMap(float Dt);
     int32 EmitTip(FTongue& Tongue, const FVector& Base, float Length,

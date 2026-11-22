@@ -558,3 +558,23 @@ Stage16 changes only the work branch:
   tests. The original Stage15 `main` and backup remain untouched.
 - Still requires real UE 5.8.1 BuildPlugin and user PIE visual checks before
   claiming success or acceptable performance. No CFD or gameplay physics.
+
+
+### Stage17 — silhouette and detached-life refinement (2026-11-22)
+
+- **Stage16 remains pinned to `main`** at commit `30318a7b5b96aa02029226df0873654e10152234`.
+  Immutable recovery: `backup/ast-fire-stage16-deployed-2026-11-22` and the
+  local Stage16 `Backup_20261122_111629`. This stage edits only the work branch.
+- Same single projected field: every tongue has independently curling upper
+  contour, notched width and zero-to-two **same-life** shorter upper forks.
+  No new root render layer, particles, smoke, or additional life state.
+- Detached fragments: same `M_AST_FireTongue` shader/palette, similar
+  brightness at birth with gradual cooling, undulating/tumbling shapes.
+  A post-simulation vortex pass alters real world-space velocities; thus
+  trajectories curve, rather than merely moving straight up with a sine sprite.
+- `ConfigureGeneration`, `AdvanceSimulation` (including exact split,
+  retraction, detached lifetime/age/death, base buoyancy), and `AddStrip`
+  remain byte-identical to deployed Stage16; CI verifies hashes. Only
+  detached spawn thermal/RHS frame, live rendering and flight vortex are new.
+- GPU shader/render appearance and performance require separate validation;
+  no automatic gameplay/PIE.

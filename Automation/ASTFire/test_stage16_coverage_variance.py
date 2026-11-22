@@ -71,5 +71,7 @@ assert "T.BridgedChild = EmitTip(T,VisualBase,T.SplitLength,Flow);" in c
 assert "T.CurrentLength = FMath::Lerp(T.SplitLength,T.RetractTarget,Ease);" in c
 assert "D.Position+=D.Velocity*Dt;" in c
 assert "Child.Lifetime=.52f + .68f*Uniform(Salt+3);" in c
+assert "Child.Temperature=.92f + .07f*Uniform(Salt+8);" in c
+assert "UpdateDetachedVortices(SimDt);" in c
 
 print("Stage16 coverage/variance: skeletal all-body, static six-face, detached mass and asymmetric dance OK")

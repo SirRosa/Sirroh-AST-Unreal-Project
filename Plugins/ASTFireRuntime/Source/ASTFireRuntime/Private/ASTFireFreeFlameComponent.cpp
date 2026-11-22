@@ -490,8 +490,17 @@ FVector UASTFireFreeFlameComponent::TongueCenterAt(
     const float Dance=(FMath::Sin(Elapsed*SwaySpeed+Phase)+
         .37f*FMath::Sin(Elapsed*SwaySpeed*1.81f+Tongue.Seed))*
         SwayAmplitude*FMath::Pow(V,1.35f);
+    // Only the last half bends into an asymmetric hooked tip; the shared
+    // root and approved wind response are not shifted. The curl is tied
+    // to this tongue's own seed rather than an identical sine for all.
+    const float Upper=ASTFireLife::SmoothStep((V-.54f)/.43f);
+    const float TipHook=Upper*(7.f+13.f*
+        ASTFireLife::Hash(Tongue.Seed*.63f))*Tongue.Scale*
+        (FMath::Sin(Elapsed*(2.1f+
+            ASTFireLife::Hash(Tongue.Seed*.29f)*2.5f)+Tongue.Seed*.37f)
+         +.34f*FMath::Sin(V*14.7f-Elapsed*4.6f+Phase));
     return Base+FVector::UpVector*Tongue.CurrentLength*V+
-        Flow*V*V*.095f+Right*(Curl+Curl2+Lean*V+Dance);
+        Flow*V*V*.095f+Right*(Curl+Curl2+Lean*V+Dance+TipHook);
 }
 
 int32 UASTFireFreeFlameComponent::EmitTip(
@@ -524,9 +533,11 @@ int32 UASTFireFreeFlameComponent::EmitTip(
         Flow*.28f-Tongue.WorldVelocity*.12f+
         FVector::RightVector*(Uniform(Salt+10)*2.f-1.f)*110.f+
         FVector::ForwardVector*(Uniform(Salt+11)*2.f-1.f)*95.f;
-    Child.Temperature=.70f + .19f*Uniform(Salt+8);
+    // Same thermal palette as the parent mantle: do not spawn an orange
+    // ember from a nearly white/yellow parent. Cooling occurs during life.
+    Child.Temperature=.92f + .07f*Uniform(Salt+8);
     Child.Seed=Uniform(Salt+9)*102.f;
-    Child.Right=FVector::RightVector;
+    Child.Right=Right;
     return (DetachCursor-1)%MaxDetached;
 }
 
@@ -671,6 +682,30 @@ void UASTFireFreeFlameComponent::UpdateSurfaceMap(float Dt)
     bClusterMapUploaded = true;
 }
 
+// Applied AFTER the approved life simulation. The age, cooling, death,
+// buoyancy and state machine above remain byte-for-byte unchanged.
+void UASTFireFreeFlameComponent::UpdateDetachedVortices(float Dt)
+{
+    for(FDetached& D:Detached)
+    {
+        if(!D.bAlive) continue;
+        const float Fade=FMath::Clamp(
+            1.f-D.Age/FMath::Max(.1f,D.Lifetime),0.f,1.f);
+        const FVector Side=D.Right.GetSafeNormal();
+        const FVector Depth=FVector::CrossProduct(
+            FVector::UpVector,Side).GetSafeNormal();
+        const float Speed=4.0f+3.3f*ASTFireLife::Hash(D.Seed*.41f);
+        const float Phase=D.Age*Speed+D.Seed*.19f;
+        // Two nonharmonic accelerations produce actual curved, irregular
+        // world-space trajectories, even with no wind (not a sprite wiggle).
+        const FVector Vortex=Side*FMath::Sin(Phase)*
+            (195.f+105.f*ASTFireLife::Hash(D.Seed*.65f))+
+            Depth*FMath::Cos(Phase*.77f+D.Seed*.31f)*145.f;
+        D.Velocity=(D.Velocity+Vortex*Dt*(.43f+.57f*Fade))
+            .GetClampedToMaxSize(900.f);
+    }
+}
+
 void UASTFireFreeFlameComponent::AddStrip(
     const TArray<FVector>& Centers,const TArray<float>& Widths,
     const TArray<float>& Temperatures,float ShapeSeed,float LifeFade,
@@ -786,18 +821,33 @@ void UASTFireFreeFlameComponent::UpdateGeometry(bool bCreate)
         TArray<float> H;
         const float Age=D.bAlive?FMath::Clamp(D.Age/D.Lifetime,0.f,1.f):1.f;
         const float Fade=D.bAlive?1.f-Age:0.f;
+        const float SpinSpeed=3.3f+5.f*ASTFireLife::Hash(D.Seed*.37f);
+        const float Spin=D.Seed*.11f+D.Age*SpinSpeed;
+        const float Angle=FMath::Sin(Spin)*.75f;
+        const FVector LocalUp=(FVector::UpVector*FMath::Cos(Angle)+
+            Right*FMath::Sin(Angle)).GetSafeNormal();
+        const FVector LocalSide=(Right*FMath::Cos(Angle)-
+            FVector::UpVector*FMath::Sin(Angle)).GetSafeNormal();
         for (int32 K=0;K<RingsPerDetached;++K)
         {
             const float V=float(K)/float(RingsPerDetached-1);
-            const float Wiggle=FMath::Sin(V*11.0f+Elapsed*8.1f+D.Seed)*
-                2.3f*Fade;
-            C.Add(D.Position+FVector::UpVector*D.Length*V*Fade+
-                Right*Wiggle);
-            W.Add(D.Width*Fade*FMath::Sin(PI*(.13f+.84f*V)));
-            H.Add(D.Temperature*(1.f-.46f*V)*
-                FMath::Pow(Fade,1.25f));
+            const float Curl=(FMath::Sin(V*9.8f+Spin)*.24f+
+                FMath::Sin(V*16.3f-Spin*.72f)*.13f)*
+                D.Width*FMath::Pow(V,1.2f)*Fade;
+            C.Add(D.Position+LocalUp*D.Length*V*Fade+
+                LocalSide*Curl);
+            const float Lobes=FMath::Clamp(1.f+
+                .31f*FMath::Sin(V*14.2f+Spin+D.Seed) +
+                .17f*FMath::Sin(V*24.4f-Spin*.54f),.43f,1.35f);
+            W.Add(D.Width*FMath::Pow(Fade,.72f)*
+                FMath::Sin(PI*(.08f+.88f*V))*Lobes);
+            // The parent and its detached piece feed the SAME pixel shader
+            // with comparable vertex heat. The ember cools mainly at the
+            // end of life rather than instantly becoming dark red.
+            H.Add(D.Temperature*(1.04f-.18f*V)*
+                FMath::Pow(Fade,.66f));
         }
-        AddStrip(C,W,H,D.Seed,1.f,Right,Verts,UVs,Colors);
+        AddStrip(C,W,H,D.Seed,1.f,LocalSide,Verts,UVs,Colors);
     }
 
     TArray<int32> Triangles;
@@ -1104,7 +1154,9 @@ void UASTFireFreeFlameComponent::UpdateConnectedSource(
         float EndV = 0.f;
     };
     TArray<FNeckSegment> Necks;
-    Necks.Reserve(Tongues.Num()*(RingsPerTongue-1)+Tongues.Num());
+    // A few short forks grow from the UPPER portion of the same flame body.
+    // These are not new emitters with their own roots or life state.
+    Necks.Reserve(Tongues.Num()*(RingsPerTongue+4));
     // One continuous living field from the root to the moving pointed tip.
     static constexpr float NeckFractions[9] =
         {0.f,.125f,.25f,.375f,.5f,.625f,.75f,.875f,1.f};
@@ -1115,48 +1167,86 @@ void UASTFireFreeFlameComponent::UpdateConnectedSource(
             FVector::DotProduct(Delta,Right),
             FVector::DotProduct(Delta,Up));
     };
+    auto AppendNeck=[&](const FVector& WorldA,const FVector& WorldB,
+        float RadiusA,float RadiusB,float V0,float V1)
+    {
+        FNeckSegment Neck;
+        Neck.Start=Project(WorldA);
+        Neck.End=Project(WorldB);
+        Neck.StartRadius=FMath::Max(0.f,RadiusA);
+        Neck.EndRadius=FMath::Max(0.f,RadiusB);
+        Neck.StartDepth=FVector::DotProduct(WorldA-Origin,Normal);
+        Neck.EndDepth=FVector::DotProduct(WorldB-Origin,Normal);
+        Neck.StartV=V0;
+        Neck.EndV=V1;
+        Necks.Add(Neck);
+        const float Extent=FMath::Max(Neck.StartRadius,Neck.EndRadius)+12.f;
+        MinX=FMath::Min(MinX,FMath::Min(float(Neck.Start.X),
+            float(Neck.End.X))-Extent);
+        MaxX=FMath::Max(MaxX,FMath::Max(float(Neck.Start.X),
+            float(Neck.End.X))+Extent);
+        MinY=FMath::Min(MinY,FMath::Min(float(Neck.Start.Y),
+            float(Neck.End.Y))-Extent);
+        MaxY=FMath::Max(MaxY,FMath::Max(float(Neck.Start.Y),
+            float(Neck.End.Y))+Extent);
+    };
     for(int32 I=0;I<Tongues.Num();++I)
     {
         const FTongue& T=Tongues[I];
         if(!T.bActive || T.Age<0.f || Heat<.015f) continue;
         const FVector& Root=ConnectedRoots[I];
+        const float Phase=FMath::Lerp(T.PreviousPhase,T.Phase,
+            ASTFireLife::SmoothStep(T.Age/FMath::Max(.1f,T.GrowSeconds)));
+        auto RadiusAt=[&](float V)
+        {
+            const float Ridge=FMath::Clamp(.85f+.15f*
+                FMath::Sin(V*13.8f+Phase+.57f*Elapsed),.4f,1.05f);
+            // Asymmetric narrowing near the tip: irregular side notches
+            // instead of a single smooth cone/tentacle on every generation.
+            const float Upper=ASTFireLife::SmoothStep((V-.48f)/.43f);
+            const float Tips=FMath::Clamp(1.f+Upper*(
+                .27f*FMath::Sin(V*19.4f+T.Seed*.23f+Elapsed*4.1f)+
+                .16f*FMath::Sin(V*29.3f-T.Seed*.13f-Elapsed*3.6f)),
+                .46f,1.38f);
+            return FMath::Max(0.f,T.CurrentWidth*(.94f-.18f*V)*
+                FMath::Pow(FMath::Max(0.f,1.f-V),.73f)*Ridge*Tips);
+        };
         FVector WorldA=TongueCenterAt(T,Root,NeckFractions[0],Right);
         for(int32 K=1;K<RingsPerTongue;++K)
         {
             const float V0=NeckFractions[K-1];
             const float V1=NeckFractions[K];
             const FVector WorldB=TongueCenterAt(T,Root,V1,Right);
-            FNeckSegment Neck;
-            Neck.Start=Project(WorldA);
-            Neck.End=Project(WorldB);
-            const float Phase=FMath::Lerp(T.PreviousPhase,T.Phase,
-                ASTFireLife::SmoothStep(T.Age/FMath::Max(.1f,T.GrowSeconds)));
-            auto RadiusAt=[&](float V)
-            {
-                const float Ridge=FMath::Clamp(.85f+.15f*
-                    FMath::Sin(V*13.8f+Phase+.57f*Elapsed),.4f,1.05f);
-                return FMath::Max(0.f,T.CurrentWidth*(.94f-.18f*V)*
-                    FMath::Pow(FMath::Max(0.f,1.f-V),.73f)*Ridge);
-            };
-            Neck.StartRadius=RadiusAt(V0);
-            Neck.EndRadius=RadiusAt(V1);
-            Neck.StartDepth=FVector::DotProduct(WorldA-Origin,Normal);
-            Neck.EndDepth=FVector::DotProduct(WorldB-Origin,Normal);
-            Neck.StartV=V0;
-            Neck.EndV=V1;
-            Necks.Add(Neck);
-            // Extend only the bounds; adding these to Samples would force
-            // Prim's MST to connect airborne tips into spurious flat bridges.
-            const float Extent=FMath::Max(Neck.StartRadius,Neck.EndRadius)+12.f;
-            MinX=FMath::Min(MinX,FMath::Min(float(Neck.Start.X),
-                float(Neck.End.X))-Extent);
-            MaxX=FMath::Max(MaxX,FMath::Max(float(Neck.Start.X),
-                float(Neck.End.X))+Extent);
-            MinY=FMath::Min(MinY,FMath::Min(float(Neck.Start.Y),
-                float(Neck.End.Y))-Extent);
-            MaxY=FMath::Max(MaxY,FMath::Max(float(Neck.Start.Y),
-                float(Neck.End.Y))+Extent);
+            AppendNeck(WorldA,WorldB,RadiusAt(V0),RadiusAt(V1),V0,V1);
             WorldA=WorldB;
+        }
+        // One or two bifurcating tip licks grow and die WITH the parent:
+        // no second timer, detached state, independent sprite or source.
+        const float ForkSeed=ASTFireLife::Hash(T.Seed*.173f);
+        const int32 ForkCount=ForkSeed>.82f?2:(ForkSeed>.28f?1:0);
+        for(int32 Fork=0;Fork<ForkCount;++Fork)
+        {
+            const float Attach=.58f+.16f*
+                ASTFireLife::Hash(T.Seed*.47f+Fork*2.1f);
+            const float Reach=FMath::Min(T.CurrentLength*
+                (.22f+.14f*ASTFireLife::Hash(T.Seed*.57f+Fork)),42.f);
+            const float Direction=(Fork==0?1.f:-1.f)*
+                (ASTFireLife::Hash(T.Seed*.73f)>.5f?1.f:-1.f);
+            const FVector BranchRoot=TongueCenterAt(T,Root,Attach,Right);
+            const FVector Mid=TongueCenterAt(T,Root,
+                FMath::Min(.96f,Attach+.095f),Right)+
+                Right*Direction*Reach*.48f;
+            const FVector Tip=TongueCenterAt(T,Root,
+                FMath::Min(.99f,Attach+.20f),Right)+
+                Right*Direction*(Reach+
+                    3.5f*FMath::Sin(Elapsed*4.5f+T.Seed+Fork))+
+                Up*Reach*.23f;
+            const float BranchRadius=RadiusAt(Attach)*
+                (.49f+.17f*ASTFireLife::Hash(T.Seed*.38f+Fork));
+            AppendNeck(BranchRoot,Mid,BranchRadius,
+                BranchRadius*.51f,Attach,Attach+.095f);
+            AppendNeck(Mid,Tip,BranchRadius*.51f,
+                0.f,Attach+.095f,Attach+.20f);
         }
     }
 
@@ -1250,7 +1340,8 @@ void UASTFireFreeFlameComponent::UpdateConnectedSource(
             for(const FNeckSegment& Neck:Necks)
             {
                 // Early cull keeps cost bounded for large animated meshes.
-                constexpr float MaxNeckReach=41.f;
+                const float MaxNeckReach=FMath::Max(41.f,
+                    FMath::Max(Neck.StartRadius,Neck.EndRadius)+12.f);
                 if(P.X<FMath::Min(Neck.Start.X,Neck.End.X)-MaxNeckReach ||
                    P.X>FMath::Max(Neck.Start.X,Neck.End.X)+MaxNeckReach ||
                    P.Y<FMath::Min(Neck.Start.Y,Neck.End.Y)-MaxNeckReach ||
@@ -1345,6 +1436,8 @@ void UASTFireFreeFlameComponent::TickComponent(
         VisualEnergy=FMath::FInterpTo(VisualEnergy,0.f,Dt,6.f);
         return;
     }
-    AdvanceSimulation(FMath::Min(Dt,.08f));
+    const float SimDt=FMath::Min(Dt,.08f);
+    AdvanceSimulation(SimDt);
+    UpdateDetachedVortices(SimDt);
     UpdateGeometry(false);
 }
