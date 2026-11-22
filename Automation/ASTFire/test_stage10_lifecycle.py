@@ -56,6 +56,15 @@ assert "T.bActive=true;" in c
 assert "Centers.Reserve(SurfaceClusters)" not in c
 assert "for (const FTongue& Tongue:Tongues)" not in c[c.index("void UASTFireFreeFlameComponent::UpdateSurfaceMap"):c.index("void UASTFireFreeFlameComponent::AddStrip")]
 assert "MaterialExpressionVertexInterpolator" in mat
+# The first real PIE compile exposed C0.w ... C7.w swizzle errors: the
+# MaterialExpressionVectorParameter output is RGB, not RGBA.
+assert '"float radius%d=R%d*grow%d;"' in mat
+assert "C%d.w" not in mat
+assert 'u.Name("FireClusterRadius%d"%i)' in mat
+assert '"R%d"%i for i in range(8)' in mat
+assert 'connect(surface,node,"R%d"%i,sc,sm)' in mat
+assert "FireClusterRadius%d" in c
+assert "P.A : 0.f" in c
 assert '"used_with_skeletal_mesh", True' in mat
 assert "get_material_expression_input_names(interpolated)" in mat
 assert '(interpolated,"P")' in mat

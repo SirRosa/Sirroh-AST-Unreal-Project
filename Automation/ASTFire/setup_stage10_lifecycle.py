@@ -159,19 +159,28 @@ try:
     flow.set_editor_property("default_value",u.LinearColor(0,0,0,0))
 
     clusters = []
+    cluster_radii = []
     for i in range(8):
         p=EDIT.create_material_expression(
-            surface,u.MaterialExpressionVectorParameter,-820,560+i*95)
-        require(p,"Surface hotspot parameter missing")
+            surface,u.MaterialExpressionVectorParameter,-820,560+i*110)
+        r=EDIT.create_material_expression(
+            surface,u.MaterialExpressionScalarParameter,-820,605+i*110)
+        require(p and r,"Surface hotspot or radius parameter missing")
         p.set_editor_property("parameter_name",u.Name("FireCluster%d"%i))
-        p.set_editor_property("default_value",u.LinearColor(0,0,0,-1))
+        # Unreal's vector parameter default output is RGB (float3).
+        # A former C%d.w access compiled with an out-of-bounds swizzle.
+        # Every cluster radius is now a separate float scalar parameter.
+        p.set_editor_property("default_value",u.LinearColor(0,0,0,0))
+        r.set_editor_property("parameter_name",u.Name("FireClusterRadius%d"%i))
+        r.set_editor_property("default_value",0.0)
         clusters.append(p)
+        cluster_radii.append(r)
 
     union = []
     for i in range(8):
         union.append(
             "float grow%d=smoothstep(%0.3f,%0.3f,Spread+.15);"
-            "float radius%d=C%d.w*grow%d;"
+            "float radius%d=R%d*grow%d;"
             "float cover%d=radius%d>0.1?"
             "saturate((radius%d-distance(p,C%d.xyz))/"
             "max(3.,radius%d*.33)):0.;"
@@ -193,7 +202,8 @@ try:
         "*n*I*(.85+.15*E));"
     )
     inputs=("P","T","I","E","Spread","Seed","M")+tuple(
-        "C%d"%i for i in range(8))
+        "C%d"%i for i in range(8))+tuple(
+        "R%d"%i for i in range(8))
     sc,sm=custom(surface,inputs,sfield+palette,
                  sfield+"return saturate((h-.10)*3.7);")
     for node, target in (
@@ -204,6 +214,8 @@ try:
         connect(surface,node,target,sc,sm)
     for i, node in enumerate(clusters):
         connect(surface,node,"C%d"%i,sc,sm)
+    for i, node in enumerate(cluster_radii):
+        connect(surface,node,"R%d"%i,sc,sm)
     finish(surface,sc,sm,is_overlay=True)
 
     # Configure only AST-owned actors. Runtime dynamically ignited arbitrary

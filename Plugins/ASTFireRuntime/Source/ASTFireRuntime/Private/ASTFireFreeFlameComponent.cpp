@@ -554,8 +554,13 @@ void UASTFireFreeFlameComponent::UpdateSurfaceMap(float Dt)
             P=FLinearColor(C.RestCenter.X,C.RestCenter.Y,C.RestCenter.Z,
                 FMath::Min(Radius,C.Radius));
         }
+        // Material VectorParameter's main output is RGB, not RGBA.
+        // The old .w used by the custom HLSL never compiled on PCD3D_SM6.
         SurfaceMID->SetVectorParameterValue(
             FName(*FString::Printf(TEXT("FireCluster%d"),I)),P);
+        SurfaceMID->SetScalarParameterValue(
+            FName(*FString::Printf(TEXT("FireClusterRadius%d"),I)),
+            BurnClusters.IsValidIndex(I) ? P.A : 0.f);
     }
     bClusterMapUploaded = true;
 }
