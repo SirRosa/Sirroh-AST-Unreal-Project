@@ -60,7 +60,7 @@ try:
         "color=lerp(color,float3(.88,.23,.025),step(.56,h));"
         "color=lerp(color,float3(1.00,.47,.055),step(.76,h));"
         "color=lerp(color,float3(1.00,.70,.18),step(.91,h));"
-        "return color*0.82;")
+        "return color*0.65;")
     opaque.set_editor_property("output_type", u.CustomMaterialOutputType.CMOT_FLOAT1)
     opaque.set_editor_property("inputs", [pin("C")])
     opaque.set_editor_property("code", "return step(.21,C.r);")

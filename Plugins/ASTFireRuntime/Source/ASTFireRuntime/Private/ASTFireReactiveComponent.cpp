@@ -365,6 +365,51 @@ namespace ASTHeat
         Field.bReady = true;
     }
 
+    // This envelope affects COVERAGE, not just color. Without it the last
+    // rows of the heat grid are hard-clipped into horizontal top/bottom edges.
+    // Unequal drifting peaks form a finite but irregular upper silhouette.
+    float ShapedCoverage(int32 X, int32 Y, float Time, float Seed)
+    {
+        const float U = (float(X) + 0.5f) / float(Width) * 2.0f - 1.0f;
+        const float V = (float(Y) + 0.5f) / float(Height);
+        const float PeakCenter = 0.07f + 0.115f * FMath::Sin(Time * 1.75f + Seed);
+        const float PeakLeft = -0.38f +
+            0.12f * FMath::Sin(Time * 2.03f + Seed * 0.71f);
+        const float PeakRight = 0.34f +
+            0.13f * FMath::Cos(Time * 1.51f + Seed * 1.21f);
+        const float CentralTip = (0.77f + 0.15f *
+            FMath::Exp(-FMath::Square((U - PeakCenter) / 0.18f)));
+        const float LeftTip = 0.56f + 0.25f *
+            FMath::Exp(-FMath::Square((U - PeakLeft) / 0.15f));
+        const float RightTip = 0.58f + 0.26f *
+            FMath::Exp(-FMath::Square((U - PeakRight) / 0.16f));
+        const float TipNoise = 0.025f * FMath::Sin(U * 19.0f + Time * 3.1f + Seed)
+            + 0.014f * FMath::Sin(U * 31.0f - Time * 2.2f + Seed * 0.43f);
+        const float TipY = FMath::Clamp(
+            FMath::Max3(CentralTip, LeftTip, RightTip) + TipNoise, 0.52f, 0.96f);
+
+        // Bottom is lowest in the hot centre and retreats around irregular
+        // side tongues. Unlike a rectangular tile strip it has no uniform row.
+        const float RootNoise = 0.019f *
+            FMath::Sin(U * 13.0f + Time * 2.5f + Seed) +
+            0.013f * FMath::Sin(U * 23.0f - Time * 1.3f + Seed * 0.8f);
+        const float RootY = FMath::Clamp(
+            0.014f + 0.082f * FMath::Pow(FMath::Abs(U), 1.4f) + RootNoise,
+            0.0f, 0.15f);
+
+        const float Bottom = FMath::Clamp(
+            (V - RootY) * float(Height) * 1.8f, 0.0f, 1.0f);
+        const float Top = FMath::Clamp(
+            (TipY - V) * float(Height) * 0.64f, 0.0f, 1.0f);
+        // Narrow higher levels, with moving asymmetry. Keep a broad, hot root.
+        const float CenterDrift = 0.085f * FMath::Sin(Time * 1.9f + V * 6.0f + Seed);
+        const float EdgeWidth = 0.82f - 0.39f * V +
+            0.035f * FMath::Sin(Time * 2.3f + V * 17.0f);
+        const float Side = FMath::Clamp(
+            (EdgeWidth - FMath::Abs(U - CenterDrift)) * 11.0f, 0.0f, 1.0f);
+        return Bottom * Top * Side;
+    }
+
     void AddQuad(
         TArray<FVector>& Vertices, TArray<int32>& Triangles,
         TArray<FVector2D>& UV, TArray<FLinearColor>& Colors, bool bCreate,
@@ -571,7 +616,11 @@ void UASTFireReactiveComponent::UpdateVolume(
             const float U = (float(X) + 0.5f) / float(ASTHeat::Width) - 0.5f;
             const FVector Center = Origin + Right * (U * RealWidth + Lag) +
                 WorldUp * (V * RealHeight);
-            const float T = Field.Temperature[Y * ASTHeat::Width + X];
+            // Shape the silhouette explicitly, in addition to advection.
+            // The fixed grid alone cannot guarantee tapered ends.
+            const float Seed = float((SimulationSeed + Index * 5381) % 1009) * 0.0137f;
+            const float T = Field.Temperature[Y * ASTHeat::Width + X] *
+                ASTHeat::ShapedCoverage(X, Y, Field.Time, Seed);
             ASTHeat::AddQuad(Vertices, Triangles, UV, Colors, bCreate,
                 Transform, Center, Right, WorldUp,
                 CellW * 0.503f, CellH * 0.503f, T, V);

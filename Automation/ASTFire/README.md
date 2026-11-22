@@ -85,3 +85,32 @@ W Stage 5 zmieniono renderer na **lokalne 22×30 pole temperatury na punkt spala
 - Commandlet konfigurujący: exit 0, `VOLUME_ASSET_CONFIGURED_REQUIRES_USER_VIEW`, `errors: []`, jeden komponent ASTFireReactive, dwa starsze Niagara wyłączone, dwa komponenty świateł ustawione. Log: `Saved/ChatGPT/NiagaraFire/Stage5/Stage5_Commandlet_20261122_041338.log`. Brak krytycznych błędów materiału/shaderów w odfiltrowanym logu.
 - Backup lokalny: `Saved/ChatGPT/NiagaraFire/Stage5/Backup_20261122_041338`.
 - **Jakość wizualna, zachowanie w PIE i multiplayer: NIEPOTWIERDZONE.** Wymagają osobistego testu użytkownika. Nie należy nazywać Stage 5 ukończonym silnikiem spalania.
+
+
+## Stage 6 — visual end contours + separate contact-igniter variant
+
+The Stage5 screenshot showed an unnaturally FLAT top and bottom despite a moving heat field.
+Stage6 multiplies each cell's *temperature coverage* (not only material color) by
+a time-varying **root contour**, three independent unequal **tip envelopes**,
+and a narrowing moving **side envelope**. All three are world-visual only.
+The top is bounded below the grid edge to avoid slicing the visible fire in half;
+the bottom has a curved, intermittent contact silhouette. Existing advection,
+wind reaction, pixel-grid style, and optional ignition via Blueprint library remain.
+
+Second actor: \`/Game/VFX/Fire/Blueprints/BP_AST_FireSource_Igniter\`.
+An independent duplicate of our own \`BP_AST_FireSource\`, plus the spawnable
+\`UASTFireIgnitionZoneComponent\` box. Server-authoritative begin-overlap ignites
+pawns/objects that provide overlaps, via existing \`IgniteActor\`. Bounds select
+1/2/4/6/8 flame points, clamped by MaxDistributedFlames (default 6).
+It tracks actors during overlap to avoid repeated impact points. Contact ignition
+does **not** add damage, char, fuel, or automatic area spread. If another actor
+has no overlap events/collision configured, no contact event is guaranteed;
+that limitation needs gameplay testing. Default: no ignition of objects already
+overlapping at spawn, to avoid torch igniting the entire static floor.
+
+Unreal Editor setup: \`Automation/ASTFire/setup_stage6_igniter.py\`, after
+building and deploying the ASTFireRuntime plugin. It only creates/updates
+\`BP_AST_FireSource_Igniter\`, never modifies base source or POIKit.
+GitHub Actions checks Python syntax, C++ structure, and dynamic contour metrics.
+Real UE5.8.1 build and headless commandlet are required before claiming deployed.
+Never claim visual/PIE gameplay validated without user screenshots.
