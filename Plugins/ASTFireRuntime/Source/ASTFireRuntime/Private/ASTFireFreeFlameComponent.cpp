@@ -864,7 +864,9 @@ void UASTFireFreeFlameComponent::UpdateConnectedSource(
     }
 
     TArray<FVector2D> Samples;
-    Samples.Reserve(MaxSourceAnchors+Tongues.Num());
+    TArray<float> SampleDepths;
+    Samples.Reserve(MaxSourceAnchors+Tongues.Num()*3+1);
+    SampleDepths.Reserve(MaxSourceAnchors+Tongues.Num()*3+1);
     float HighestDepth=-BIG_NUMBER;
     float MinX=BIG_NUMBER,MaxX=-BIG_NUMBER,MinY=BIG_NUMBER,MaxY=-BIG_NUMBER;
 
@@ -875,6 +877,7 @@ void UASTFireFreeFlameComponent::UpdateConnectedSource(
             FVector::DotProduct(Diff,Right),
             FVector::DotProduct(Diff,Up));
         Samples.Add(P);
+        SampleDepths.Add(float(FVector::DotProduct(Diff,Normal)));
         MinX=FMath::Min(MinX,float(P.X));
         MaxX=FMath::Max(MaxX,float(P.X));
         MinY=FMath::Min(MinY,float(P.Y));
@@ -885,16 +888,30 @@ void UASTFireFreeFlameComponent::UpdateConnectedSource(
 
     for (const FSourceAnchor& A:SourceAnchors)
     {
-        // Progressive ignition: surface samples become active as one
-        // cluster expands. Existing burning source never restarts.
-        if (Spread<.95f && !BurnClusters.IsEmpty())
+        // A local flame patch grows over the ACTUAL surface. The old
+        // all-mesh cluster radius illuminated the whole character at once.
+        // Gate sampled vertices by nearby live tongue anchors/contact hits.
+        if (Cast<UMeshComponent>(Source))
         {
-            bool bCovered=false;
-            for (const FBurnCluster& C:BurnClusters)
-                if (FVector::DistSquared(A.RestPosition,C.RestCenter)<
-                    FMath::Square(C.Radius*(.30f+Spread*1.35f)))
-                {bCovered=true;break;}
-            if (!bCovered) continue;
+            const float MaxDimension = IsValid(Source)
+                ? Source->Bounds.BoxExtent.GetMax()*2.f : 180.f;
+            const float BurnRadius = FMath::Clamp(
+                MaxDimension*.23f,24.f,125.f) *
+                (.52f + .90f*Spread);
+            bool bNearFlame=false;
+            for (const FTongue& Root:Tongues)
+            {
+                if (!Root.bActive) continue;
+                if (FVector::DistSquared(A.RestPosition,Root.RestPosition)
+                    <FMath::Square(BurnRadius))
+                {bNearFlame=true;break;}
+            }
+            if (!bNearFlame)
+                for (const FVector& Contact:IgnitionPoints)
+                    if (FVector::DistSquared(A.RestPosition,Contact)
+                        <FMath::Square(BurnRadius))
+                    {bNearFlame=true;break;}
+            if (!bNearFlame) continue;
         }
 
         FVector World=Source->GetComponentTransform().TransformPosition(
@@ -912,8 +929,17 @@ void UASTFireFreeFlameComponent::UpdateConnectedSource(
     // source even when no mesh is present (free-standing flame).
     for(const FTongue& T:Tongues)
         if(T.bActive && T.Age>=0.f)
-            Include(SampleRoot(T));
+        {
+            const FVector Root=SampleRoot(T);
+            Include(Root);
+            // Merge the first part of each approved tongue into a common
+            // burning body. Tongue/bridge geometry and lifetimes stay intact.
+            const float Rise=FMath::Clamp(T.CurrentLength*.23f,4.f,24.f);
+            Include(Root+FVector::UpVector*Rise);
+        }
 
+    if(!Cast<UMeshComponent>(Source))
+        Include(Origin); // no donut in free-standing fire
     if(Samples.IsEmpty())
         Include(Origin);
 
@@ -924,7 +950,7 @@ void UASTFireFreeFlameComponent::UpdateConnectedSource(
     const float Inner=FMath::Clamp(Radius*.65f,5.f,12.f);
     const float Margin=Radius+Outer+12.f;
     MinX-=Margin;MaxX+=Margin;MinY-=Margin;MaxY+=Margin;
-    HighestDepth+=3.f;
+    HighestDepth+=3.f; // fallback only; depth follows nearest skin points
 
     // Prim MST provides a connected supporting source, including long limbs
     // and compact fire without a physical mesh. Links are thickened small
@@ -974,10 +1000,26 @@ void UASTFireFreeFlameComponent::UpdateConnectedSource(
             // Two square roots per grid cell, NOT one per skin sample:
             // ~100x cheaper than repeatedly evaluating distances at 25Hz.
             float PointD2=BIG_NUMBER,EdgeD2=BIG_NUMBER;
+            // Interpolate the depth of nearby animated mesh samples, rather
+            // than drawing a floating plane at the furthest vertex.
+            float BestD2[3]={BIG_NUMBER,BIG_NUMBER,BIG_NUMBER};
+            float BestDepth[3]={0.f,0.f,0.f};
             for(int32 I=0;I<N;++I)
             {
-                PointD2=FMath::Min(PointD2,
-                    float(FVector2D::DistSquared(P,Samples[I])));
+                const float D2=float(FVector2D::DistSquared(P,Samples[I]));
+                PointD2=FMath::Min(PointD2,D2);
+                if(D2<BestD2[2])
+                {
+                    int32 Slot=2;
+                    while(Slot>0 && D2<BestD2[Slot-1])
+                    {
+                        BestD2[Slot]=BestD2[Slot-1];
+                        BestDepth[Slot]=BestDepth[Slot-1];
+                        --Slot;
+                    }
+                    BestD2[Slot]=D2;
+                    BestDepth[Slot]=SampleDepths[I];
+                }
                 const int32 J=Parent[I];
                 if(J==INDEX_NONE)continue;
                 const FVector2D A=Samples[I],B=Samples[J];
@@ -996,14 +1038,29 @@ void UASTFireFreeFlameComponent::UpdateConnectedSource(
                 (2.3f+2.5f*Heat)+
                 FMath::Sin(Y*.123f-X*.054f-Elapsed*9.4f)*1.8f;
             const float Dist=Distance-Curl;
-            const float Near=FMath::Clamp((Dist+Inner)/Inner,0.f,1.f);
-            const float Far=FMath::Clamp(1.f-Dist/Outer,0.f,1.f);
+            // Previous implementation multiplied Near*Far. Near==0 for
+            // points INSIDE a source, literally hollowing it into a ring.
+            // Fill the combustion body; only the OUTER edge fades to embers.
+            const float Fill=FMath::Clamp(1.f-Dist/Outer,0.f,1.f);
+            const float Core=FMath::Clamp((-Dist)/(Radius+Inner),0.f,1.f);
+            const float Flicker=.88f+
+                .09f*FMath::Sin(Elapsed*7.2f+X*.077f+Y*.039f)+
+                .08f*FMath::Sin(Y*.17f-X*.11f-Elapsed*5.4f);
             const float Thermal=FMath::Clamp(
-                Heat*Near*Far*(.91f+.08f*FMath::Sin(Elapsed*7.f+
-                X*.061f+Y*.029f)),0.f,1.f);
+                Heat*Fill*(.43f+.26f*Core+.13f*Spread)*Flicker,
+                0.f,1.f);
 
-            const FVector World=Origin+Right*X+Up*Y+
-                Normal*HighestDepth;
+            float WeightedDepth=0.f,TotalWeight=0.f;
+            for(int32 I=0;I<3;++I)
+            {
+                if(BestD2[I]>=BIG_NUMBER*.5f)continue;
+                const float Weight=1.f/(BestD2[I]+100.f);
+                WeightedDepth+=BestDepth[I]*Weight;
+                TotalWeight+=Weight;
+            }
+            const float Depth=TotalWeight>0.f
+                ? WeightedDepth/TotalWeight+4.5f : HighestDepth;
+            const FVector World=Origin+Right*X+Up*Y+Normal*Depth;
             Verts.Add(RenderTransform.InverseTransformPosition(World));
             // UV.x=.5 gives the same bright center as tongue ribbons;
             // UV.y adds the exact same 16-bit stepped palette variation.
