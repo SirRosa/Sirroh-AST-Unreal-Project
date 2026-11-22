@@ -43,8 +43,22 @@ assert "BW.Add(bBridge?Width*.31f*(1.f-BridgeAlpha)" in c
 assert "RootBlend=ASTFireLife::SmoothStep(V/.20f)" in c
 assert "BestSkeleton" in reactive
 assert "bClusterMapUploaded = false;" in c
-assert "Centers.Reserve(SurfaceClusters)" in c
-assert "IgnitionPoints.Num()-1" in c
+assert "BurnClusters.Reset()" in c
+assert "RebuildClusters();" in c
+assert "TArray<FBurnCluster> BurnClusters" in h
+assert "Tongue.ClusterIndex=Nearest" in c
+assert "Tongue.ActivationSpread" in c
+assert "for (const FVector& Hit:IgnitionPoints)" in c
+assert "if (BurnClusters.IsValidIndex(I))" in c
+assert "SurfaceMID->SetVectorParameterValue(" in c
+assert "if (Spread<T.ActivationSpread) continue;" in c
+assert "T.bActive=true;" in c
+assert "Centers.Reserve(SurfaceClusters)" not in c
+assert "for (const FTongue& Tongue:Tongues)" not in c[c.index("void UASTFireFreeFlameComponent::UpdateSurfaceMap"):c.index("void UASTFireFreeFlameComponent::AddStrip")]
+assert "MaterialExpressionVertexInterpolator" in mat
+assert '"used_with_skeletal_mesh", True' in mat
+assert "get_material_expression_input_names(interpolated)" in mat
+assert '(interpolated,"P")' in mat
 assert "FreeFlames->SetIgnitionPoints(ExtraLocalPoints)" in reactive
 assert "if (IsValid(FreeFlames))" in reactive
 assert "Tongues.Num()*2+MaxDetached" in c
@@ -131,6 +145,23 @@ assert lengths[0]==lengths[1]==lengths[2]
 assert all(lengths[i+1]<=lengths[i]+1e-8 for i in range(len(lengths)-1))
 assert lengths[-1]>=target_length-1
 assert lengths[4]>.90*split_length
+
+# A single local source supports multiple lifetimes; adding a nearby impact
+# extends that source instead of creating another tongue/cluster.
+def clusters(points, merge_distance):
+    out=[]
+    for p in points:
+        nearest=min(range(len(out)), key=lambda i:abs(p-out[i])) if out else None
+        if nearest is None or abs(p-out[nearest])>=merge_distance:
+            out.append(p)
+    return out
+assert clusters([0.,8.,12.,75.],25.)==[0.,75.]
+assert len(clusters([0.,8.,12.,75.],25.)) < 5
+# On a single burn source, the number of spawned tongues remains independent
+# of how many distinct vertex samples define the surface.
+tongue_per_cluster=[5]
+assert len(tongue_per_cluster)==1
+assert tongue_per_cluster[0]==5
 
 # Numeric surface union: two nearby burn patches must visually merge as their
 # supporting radii expand; this remains Euclidean, NOT topological geodesics.

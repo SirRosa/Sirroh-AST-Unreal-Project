@@ -354,3 +354,38 @@ real PIE verification. Original mesh slots and base materials remain intact.
 - Tip detachment now includes a short visible neck/bridge and smoothstep parent retraction, so parent length no longer instantaneously snaps from mature to short. New contacts join the same live source without restarting its growth cycles.
 - **NOT tested:** subjective quality/silhouette in PIE, exact mesh overlap on every actor, multiplayer gameplay, 1/10/30 actor frame rate. Those remain user's in-editor checks. Never claim visual quality from build/commandlets alone.
 
+
+
+### Source-first correction with verified fallback (2026-11-22)
+
+Before editing, preserved both a GitHub branch
+`backup/ast-fire-stage10-best-2026-11-22` at
+`b163652061fb398b7fbcfefb1e35c2a20b784b22` and a physical local
+project backup `Saved/ChatGPT/NiagaraFire/Stage10_BEST_20261122`
+containing complete `Plugins/ASTFireRuntime` and `Content/VFX/Fire`.
+
+**Found a real regression in PIE logs**: `M_AST_FireSurfaceLife` previously
+failed the PCD3D_SM6 shader compile with
+`(Node PreSkinnedPosition) External code identifier 'PreSkinnedPosition' is
+not available in the Pixel shader`. It also lacked the skeletal mesh usage
+flag. Thus the exact skinned surface visual was substituted with Unreal's
+default material, while the independent tongues remained visible. Stage10's
+material script now passes PreSkinnedPosition through a
+`MaterialExpressionVertexInterpolator` before the pixel shader and sets
+`used_with_skeletal_mesh=true`.
+
+**Source-first C++:** `FBurnCluster` represents a mesh-local source.
+Nearby world-contact hits merge into an existing cluster; distant hits add a
+new independent cluster, capped at 8. Tongues retain their OWN existing
+skinned mesh anchors but are associated with one shared cluster via
+`ClusterIndex`; multiple tongues may grow from one burning region instead
+of implicitly defining one GPU hotspot per tongue. Mesh overlay parameters
+are now sourced only from burn clusters, not tongue positions.
+Tongues become active as spread reaches their rest-pose skin positions,
+without restarting existing growth/split or detached fragments.
+This preserves the existing user-approved tongue lifecycle/bridge.
+
+**Still required**: actual material shader compilation with PCD3D_SM6,
+PIE validation of coverage on different meshes and performance, and checks
+for overlay conflicts. The initial CPU clustering uses rest-pose Euclidean
+distance, not a full mesh-topology flood solver.
