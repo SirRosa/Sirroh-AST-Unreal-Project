@@ -1248,25 +1248,28 @@ void UASTFireFreeFlameComponent::UpdateConnectedSource(
             ASTFireLife::SmoothStep(T.Age/FMath::Max(.1f,T.GrowSeconds)));
         auto RadiusAt=[&](float V)
         {
-            // A long, very narrow tongue looked like a hose. Preserve its
-            // generation-specific width and height but enforce a minimum
-            // physically plausible flame-plume aspect ratio at the source.
+            // Stage19: keep the anti-tentacle width floor, but remove the
+            // oversized balloon profile from Stage18. This affects the
+            // living source silhouette ONLY, never detached fragments.
             const float PlumeWidth=FMath::Max(T.CurrentWidth,
-                T.CurrentLength*(.098f+.017f*
+                T.CurrentLength*(.058f+.010f*
                     ASTFireLife::Hash(T.Seed*.51f)));
-            // Two independently moving bulges and a pinched waist produce
-            // an organic rising contour, not a uniform tapered capsule.
-            const float BulgeA=.46f*FMath::Exp(-FMath::Square(
-                (V-(.29f+.09f*ASTFireLife::Hash(T.Seed*.31f)))/.17f));
-            const float BulgeB=.55f*FMath::Exp(-FMath::Square(
-                (V-(.64f+.08f*ASTFireLife::Hash(T.Seed*.71f)))/.13f));
-            const float Waist=.22f*FMath::Exp(-FMath::Square(
-                (V-.52f)/.085f));
-            const float MovingRim=.18f*FMath::Sin(
-                V*20.f+T.Seed*.37f+Elapsed*3.8f)+
-                .11f*FMath::Sin(V*32.7f-T.Seed*.21f-Elapsed*5.3f);
+            // Place most volume in the lower third, retaining small moving
+            // asymmetry rather than a second broad upper oval.
+            const float BulgeA=.26f*FMath::Exp(-FMath::Square(
+                (V-(.28f+.04f*ASTFireLife::Hash(T.Seed*.31f)))/.18f));
+            const float BulgeB=.12f*FMath::Exp(-FMath::Square(
+                (V-(.46f+.03f*ASTFireLife::Hash(T.Seed*.71f)))/.16f));
+            const float Waist=.14f*FMath::Exp(-FMath::Square(
+                (V-.58f)/.09f));
+            const float UpperTaper=FMath::Lerp(1.f,.55f,
+                ASTFireLife::SmoothStep((V-.42f)/.40f));
+            const float MovingRim=.10f*FMath::Sin(
+                V*18.f+T.Seed*.37f+Elapsed*3.2f)+
+                .06f*FMath::Sin(V*31.f-T.Seed*.21f-Elapsed*4.8f);
             const float Profile=FMath::Clamp(
-                .87f+BulgeA+BulgeB-Waist+MovingRim,.53f,1.85f);
+                (.88f+BulgeA+BulgeB-Waist+MovingRim)*UpperTaper,
+                .42f,1.28f);
             return FMath::Max(0.f,PlumeWidth*
                 FMath::Pow(FMath::Max(0.f,1.f-V),.69f)*Profile);
         };

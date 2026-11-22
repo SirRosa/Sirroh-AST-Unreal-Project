@@ -20,33 +20,18 @@ assert "H.Add(0.f);" in geometry
 assert "Parent[J]=Best" not in field
 assert "TArray<FNeckSegment> Necks;" in field
 assert "AppendNeck(WorldA,WorldB,RadiusAt(V0),RadiusAt(V1),V0,V1);" in field
+# Stage19 adjusts the living profile only; keep this suite focused on
+# Stage18's preserved cross-section and palette. Detailed shape checks
+# belong to test_stage19_live_silhouette.py.
 assert "const float PlumeWidth=FMath::Max(T.CurrentWidth," in field
-assert "T.CurrentLength*(.098f+.017f*" in field
-assert "const float BulgeA=.46f*FMath::Exp(" in field
-assert "const float BulgeB=.55f*FMath::Exp(" in field
-assert "const float Waist=.22f*FMath::Exp(" in field
+assert "T.CurrentLength*(.058f+.010f*" in field
+assert "const float BulgeA=.26f*FMath::Exp(" in field
+assert "const float BulgeB=.12f*FMath::Exp(" in field
+assert "const float UpperTaper=FMath::Lerp(1.f,.55f," in field
 assert "const float Reach=FMath::Min(T.CurrentLength*" in field
 assert "Right*Direction*Reach*.48f" in field
 assert "Right*Direction*(Reach*.74f+Sway)" in field
-assert "Reach,42.f" not in field  # old rigid antenna branches
-
-# Effective half-width rises on tall, skinny flames; irregular bulges
-# prevent long parallel, uniform pipes in a .3-.8 height interval.
-def plume_width(width,length,hash_value=.5):
-    return max(width,length*(.098+.017*hash_value))
-def contour(v,width=8.,length=170.,seed_a=.5,seed_b=.5):
-    base=plume_width(width,length)
-    bulge_a=.46*exp(-((v-(.29+.09*seed_a))/.17)**2)
-    bulge_b=.55*exp(-((v-(.64+.08*seed_b))/.13)**2)
-    waist=.22*exp(-((v-.52)/.085)**2)
-    profile=max(.53,min(1.85,.87+bulge_a+bulge_b-waist))
-    return base*max(0.,1.-v)**.69*profile
-assert plume_width(8.,170.)>16
-assert contour(.38)>contour(.52)
-assert contour(.69)>contour(.80)
-assert contour(1.)==0.
-assert contour(.69)>contour(.52)  # distinct upper bulge
-assert contour(.38)/contour(.52)>1.3
+assert "Reach,42.f" not in field
 
 # The detached fragment is no longer a TWO-VERTEX-wide rectangle. Seven
 # radial columns sample the SAME smooth core/rim field as the living source;
@@ -91,4 +76,4 @@ assert (verts,tris)==(2435,3914)
 assert "T.Life = EFlameLife::Bridging;" in c
 assert "T.Life = EFlameLife::Retracting;" in c
 assert "T.Life = EFlameLife::Growing;" in c
-print("Stage18: plume contours and shared radial detached palette OK; topology under fixed budget")
+print("Stage18 preserved: detached thermal palette and topology unchanged, Stage19 silhouette check delegated")

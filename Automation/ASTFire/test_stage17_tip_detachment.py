@@ -36,9 +36,9 @@ for token in (
     "AppendNeck(BranchRoot,Mid,BranchRadius,",
     "AppendNeck(Mid,Tip,BranchRadius*.55f,",
     "const float PlumeWidth=FMath::Max(T.CurrentWidth,",
-    "const float BulgeA=.46f*FMath::Exp(",
-    "const float BulgeB=.55f*FMath::Exp(",
-    "const float Waist=.22f*FMath::Exp(",
+    "const float BulgeA=.26f*FMath::Exp(",
+    "const float BulgeB=.12f*FMath::Exp(",
+    "const float Waist=.14f*FMath::Exp(",
     "Necks.Reserve(Tongues.Num()*(RingsPerTongue+4));"):
     assert token in c,token
 assert c.count("H.Add(0.f);")==1

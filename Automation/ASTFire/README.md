@@ -605,3 +605,22 @@ transverse shading samples.
   vertices / 3914 triangles per 25Hz actor update, not a measured FPS figure.
 - Stage16 is stable `main`, Stage17 backup exists. Stage18 stays on
   `work/niagara-fire-stage2` until visual approval. No smoke or sparks yet.
+
+
+### Stage19 — approved corrective live silhouette taper (2026-11-22)
+
+User PIE screenshots of Stage18 showed over-round, balloon-shaped primary flames.
+ONLY `RadiusAt` in `UASTFireFreeFlameComponent::UpdateConnectedSource` is
+changed: length-based width floor .098–.115 becomes .058–.068;
+two excessive bulges (.46 and .55) become a lower main bulge (.26)
+and a weak middle support (.12). The waist becomes .14 and the upper
+contour receives a smooth taper down to .55 from V=.42–.82.
+Moving rim amplitudes are reduced to .10/.06. Root coverage, all
+life simulation/bridges, Stage18's 7-column detached palette, vortex and
+world-space movement remain exactly unchanged.
+
+`test_stage19_live_silhouette.py` locks the rest of UpdateConnectedSource,
+entire UpdateGeometry (including detached gradient), and AdvanceSimulation
+against Stage18 by exact FNV checksums; separately checks the slender
+contour numerically. Stage16 remains stable `main`, Stage18 is backed up.
+User PIE visual review is still required before promoting Stage19.
