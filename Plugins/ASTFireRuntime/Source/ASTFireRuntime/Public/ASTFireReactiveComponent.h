@@ -107,6 +107,22 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="AST Fire|Visuals")
     TSoftObjectPtr<UMaterialInterface> SurfaceMaterial;
 
+    /** Independent translucent char overlay (never replaces mesh material slots). */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="AST Fire|Charring")
+    bool bEnableCharring = true;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="AST Fire|Charring")
+    TSoftObjectPtr<UMaterialInterface> CharMaterial;
+
+    /** Persistent burn marks (also replicated to late-joining clients). */
+    UPROPERTY(ReplicatedUsing=OnRep_Burning, VisibleAnywhere, BlueprintReadOnly,
+        Category="AST Fire|Charring")
+    float CharProgress = 0.0f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="AST Fire|Charring",
+        meta=(ClampMin="0.1", ClampMax="5"))
+    float CharringRate = 1.5f;
+
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="AST Fire|Response")
     FVector AmbientWind = FVector::ZeroVector;
 

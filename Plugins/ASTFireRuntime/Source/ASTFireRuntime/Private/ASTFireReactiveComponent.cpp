@@ -76,6 +76,8 @@ UASTFireReactiveComponent::UASTFireReactiveComponent()
         FSoftObjectPath(TEXT("/Game/VFX/Fire/Materials/M_AST_FireTongue.M_AST_FireTongue")));
     SurfaceMaterial = TSoftObjectPtr<UMaterialInterface>(
         FSoftObjectPath(TEXT("/Game/VFX/Fire/Materials/M_AST_FireSurfaceLife.M_AST_FireSurfaceLife")));
+    CharMaterial = TSoftObjectPtr<UMaterialInterface>(
+        FSoftObjectPath(TEXT("/Game/VFX/Fire/Materials/M_AST_FireChar.M_AST_FireChar")));
     FlameMaterial = TSoftObjectPtr<UMaterialInterface>(
         FSoftObjectPath(TEXT("/Game/VFX/Fire/Materials/M_AST_FirePixel_Core.M_AST_FirePixel_Core")));
 }
@@ -90,6 +92,7 @@ void UASTFireReactiveComponent::GetLifetimeReplicatedProps(
     DOREPLIFETIME(UASTFireReactiveComponent, FlamePoints);
     DOREPLIFETIME(UASTFireReactiveComponent, ExtraLocalPoints);
     DOREPLIFETIME(UASTFireReactiveComponent, SimulationSeed);
+    DOREPLIFETIME(UASTFireReactiveComponent, CharProgress);
 }
 
 void UASTFireReactiveComponent::OnRep_Burning()
@@ -770,15 +773,15 @@ void UASTFireReactiveComponent::UpdateVolume(
 // makes it stick to limbs and the torso throughout sprint/animation frames.
 void UASTFireReactiveComponent::SetupSurfaceFire(USceneComponent* Parent)
 {
-    // Stage12's unified procedural source is geometry section 1 in the
-    // ORIGINAL pixel tongue material. The Stage11 mesh overlay/WPO created
-    // huge faceted orange crystals; never activate it alongside the mantle.
-    // Legacy nonprocedural effects can still opt into their own overlay.
-    if (bEnableProceduralFlames) return;
-    if (!bEnableSurfaceFire || !GetOwner()) return;
+    // Stage22 uses a translucent UV-anchored soot/cracks layer over the
+    // EXISTING mesh material: no WPO or changes to authored material slots.
+    // The old Stage11 WPO cloak remains disabled for procedural fire.
+    const bool bCharOverlay = bEnableProceduralFlames && bEnableCharring;
+    if ((!bCharOverlay && !bEnableSurfaceFire) || !GetOwner()) return;
     UMeshComponent* Mesh = Cast<UMeshComponent>(Parent);
     if (!IsValid(Mesh) || !Mesh->IsVisible()) return;
-    UMaterialInterface* Surface = SurfaceMaterial.LoadSynchronous();
+    UMaterialInterface* Surface = bCharOverlay
+        ? CharMaterial.LoadSynchronous() : SurfaceMaterial.LoadSynchronous();
     if (!Surface)
     {
         UE_LOG(LogTemp, Warning, TEXT("AST Fire: surface material missing for %s"),
@@ -797,6 +800,20 @@ void UASTFireReactiveComponent::SetupSurfaceFire(USceneComponent* Parent)
     if (!FireSurfaceMID) return;
     FireSurfaceMesh = Mesh;
     PreviousFireSurfaceOverlay = Existing;
+    if (bCharOverlay)
+    {
+        const float MeshSize=Cast<UPrimitiveComponent>(Mesh)
+            ? float(Mesh->Bounds.BoxExtent.GetMax())*2.f : 180.f;
+        FireSurfaceMID->SetScalarParameterValue(FName(TEXT("CharSeed")),
+            float((SimulationSeed + GetOwner()->GetUniqueID()) % 10007));
+        FireSurfaceMID->SetScalarParameterValue(FName(TEXT("CharProgress")),
+            CharProgress);
+        FireSurfaceMID->SetScalarParameterValue(FName(TEXT("CharGlow")), 0.f);
+        FireSurfaceMID->SetScalarParameterValue(FName(TEXT("CharTiling")),
+            FMath::Clamp(34.f*MeshSize/180.f,18.f,85.f));
+        UpdateSurfaceVisibility();
+        return;
+    }
     FireSurfaceMID->SetScalarParameterValue(FName(TEXT("FireSeed")),
         float((SimulationSeed + GetOwner()->GetUniqueID()) % 10007));
     FireSurfaceMID->SetScalarParameterValue(FName(TEXT("FireIntensity")),
@@ -823,8 +840,12 @@ void UASTFireReactiveComponent::UpdateSurfaceVisibility()
 {
     if (!IsValid(FireSurfaceMesh) || !IsValid(FireSurfaceMID)) return;
     UMaterialInterface* Current = FireSurfaceMesh->GetOverlayMaterial(false, 0);
-    if (bStartLit && Intensity > 0.005f)
+    const bool bShowChar = bEnableProceduralFlames && bEnableCharring &&
+        (CharProgress > .001f || (bStartLit && Intensity > .005f)
+            || SmoothIntensity > .02f);
+    if (bShowChar || (bStartLit && Intensity > 0.005f))
     {
+        // Do not steal overlays installed by unrelated gameplay systems.
         if (!Current || Current == PreviousFireSurfaceOverlay)
             FireSurfaceMesh->SetOverlayMaterial(FireSurfaceMID);
     }
@@ -1295,6 +1316,14 @@ void UASTFireReactiveComponent::TickComponent(
         }
     }
 
+    // Char accumulates on the server and survives extinguishing.
+    // Replication makes the amount deterministic for late-joining clients.
+    if (GetOwner()->HasAuthority() && bEnableCharring && bStartLit)
+        CharProgress=FMath::Clamp(CharProgress+
+            DeltaTime*FMath::Max(0.f,Intensity)*
+            FMath::Max(.1f,CharringRate)/FMath::Max(.25f,BurnDurationSeconds),
+            0.f,1.f);
+
     const FVector Position = GetOwner()->GetActorLocation();
     const FVector Velocity = (Position - LastOwnerPosition) / DeltaTime;
     LastOwnerPosition = Position;
@@ -1385,6 +1414,15 @@ void UASTFireReactiveComponent::TickComponent(
         .InverseTransformVectorNoScale(Wind);
     if (IsValid(FireSurfaceMID))
     {
+        if (bEnableProceduralFlames && bEnableCharring)
+        {
+            FireSurfaceMID->SetScalarParameterValue(
+                FName(TEXT("CharProgress")),CharProgress);
+            FireSurfaceMID->SetScalarParameterValue(
+                FName(TEXT("CharGlow")),
+                FMath::Clamp(SmoothIntensity*LightEnvelope,0.f,1.2f));
+            UpdateSurfaceVisibility(); // Keep cooled soot visible on the mesh.
+        }
         // Root texture, extending tongues and light share the same heat energy.
         FireSurfaceMID->SetScalarParameterValue(FName(TEXT("FireIntensity")),
             SmoothIntensity);
