@@ -177,8 +177,8 @@ void UASTFireFreeFlameComponent::BuildAnchors()
                             FVector::DistSquared(P, Existing.RestPosition));
                     // Contact points bias the first selected flame, not every
                     // root; growth thereafter merges nearby source regions.
-                    if (Tongues.IsEmpty() && IgnitionPoints.Num())
-                        Distance = -FVector::DistSquared(P, IgnitionPoints[0]);
+                    if (Slot < IgnitionPoints.Num())
+                        Distance = -FVector::DistSquared(P, IgnitionPoints[Slot]);
                     if (Distance > BestScore)
                     {
                         Best = Id;
@@ -201,6 +201,24 @@ void UASTFireFreeFlameComponent::BuildAnchors()
     {
         const FBoxSphereBounds Bounds = Static->CalcBounds(FTransform::Identity);
         const FVector Half = Bounds.BoxExtent.GetAbs();
+
+        // Explicit contact hits are already surface-local positions. Retain
+        // every distinct contact before distributing additional fire patches.
+        for (int32 I=0; I<IgnitionPoints.Num() && Tongues.Num()<DesiredCount; ++I)
+        {
+            const FVector Contact = IgnitionPoints[I];
+            bool bDuplicate=false;
+            for (const FTongue& Existing:Tongues)
+                if (FVector::DistSquared(Contact,Existing.RestPosition)<100.f)
+                    {bDuplicate=true;break;}
+            if (bDuplicate) continue;
+            FTongue Root;
+            Root.RestPosition=Contact;
+            Root.Seed=Uniform(I+680)*103.f;
+            Root.Scale=FMath::Clamp(Half.GetMax()/190.f,.45f,1.25f);
+            Tongues.Add(Root);
+        }
+
         for (int32 I=0; I<DesiredCount*4 && Tongues.Num()<DesiredCount; ++I)
         {
             const float A = Uniform(I*3+201)*1.84f-.92f;
