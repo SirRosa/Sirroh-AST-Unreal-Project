@@ -767,6 +767,11 @@ void UASTFireReactiveComponent::UpdateVolume(
 // makes it stick to limbs and the torso throughout sprint/animation frames.
 void UASTFireReactiveComponent::SetupSurfaceFire(USceneComponent* Parent)
 {
+    // Stage12's unified procedural source is geometry section 1 in the
+    // ORIGINAL pixel tongue material. The Stage11 mesh overlay/WPO created
+    // huge faceted orange crystals; never activate it alongside the mantle.
+    // Legacy nonprocedural effects can still opt into their own overlay.
+    if (bEnableProceduralFlames) return;
     if (!bEnableSurfaceFire || !GetOwner()) return;
     UMeshComponent* Mesh = Cast<UMeshComponent>(Parent);
     if (!IsValid(Mesh) || !Mesh->IsVisible()) return;
