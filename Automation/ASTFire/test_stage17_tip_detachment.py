@@ -34,7 +34,7 @@ for token in (
     "ForkSeed>.87f?2:(ForkSeed>.20f?1:0)",
     "AppendNeck(WorldA,WorldB,RadiusAt(V0),RadiusAt(V1),V0,V1);",
     "AppendNeck(BranchRoot,Mid,BranchRadius,",
-    "AppendNeck(Mid,Tip,BranchRadius*.51f,",
+    "AppendNeck(Mid,Tip,BranchRadius*.55f,",
     "const float PlumeWidth=FMath::Max(T.CurrentWidth,",
     "const float BulgeA=.46f*FMath::Exp(",
     "const float BulgeB=.55f*FMath::Exp(",
@@ -56,8 +56,8 @@ assert "const float LocalHeat=Cover*(.19f+" in c
 assert "Heat*D.Temperature*LocalHeat*" in c
 assert "FMath::Pow(Fade,.66f)" in c
 assert "static constexpr int32 DetachedColumns=7;" in c
-def heat(temp,v,fade):return temp*(1.04-.18*v)*fade**.66
-assert .9<heat(.95,.5,1.)<1.
+def heat(temp,v,fade):return temp*(1.-.19*v)*fade**.66
+assert .8<heat(.95,.5,1.)<.95
 assert heat(.95,.5,.5)>.5
 assert heat(.95,.5,0.)==0.
 # Curved world-space flight: separate vortex pass, preserved approved simulation.
