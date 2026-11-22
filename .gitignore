@@ -1,0 +1,24 @@
+# Unreal Engine generated output
+Binaries/
+DerivedDataCache/
+Intermediate/
+Saved/
+.vs/
+.vscode/
+.idea/
+
+# Generated IDE and build files
+*.sln
+*.suo
+*.sdf
+*.opensdf
+*.VC.db
+*.VC.opendb
+*.xcodeproj
+*.xcworkspace
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# Source and asset files (.cpp, .h, .uproject, .uasset, .umap) are intentionally not ignored.
