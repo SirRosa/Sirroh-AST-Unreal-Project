@@ -39,8 +39,10 @@ private:
     static constexpr int32 RingsPerTongue = 9;
     static constexpr int32 MaxDetached = 16;
     static constexpr int32 RingsPerDetached = 5;
+    static constexpr int32 BridgeRings = 4;
     static constexpr int32 SurfaceClusters = 8;
 
+    enum class EFlameLife : uint8 { Growing, Bridging, Retracting };
     struct FTongue
     {
         int32 SkinnedVertexIndex = INDEX_NONE;
@@ -55,6 +57,18 @@ private:
         float BaseWidth = 12.f;
         float RemainingFraction = 0.36f;
         float Phase = 0.f;
+        float PreviousPhase = 0.f;
+        float PreviousWidth = 0.f;
+        float CurrentLength = 0.f;
+        float CurrentWidth = 0.f;
+        float RestartLength = 0.f;
+        float SplitLength = 0.f;
+        float RetractTarget = 0.f;
+        float PhaseAge = 0.f;
+        float BridgeSeconds = .14f;
+        float RetractSeconds = .22f;
+        int32 BridgedChild = INDEX_NONE;
+        EFlameLife Life = EFlameLife::Growing;
         int32 Generation = 0;
         bool bActive = true;
     };
@@ -77,7 +91,7 @@ private:
     void AdvanceSimulation(float Dt);
     void UpdateGeometry(bool bCreate);
     void UpdateSurfaceMap(float Dt);
-    void EmitTip(FTongue& Tongue, const FVector& Base, float Length,
+    int32 EmitTip(FTongue& Tongue, const FVector& Base, float Length,
         const FVector& Flow);
     void ConfigureGeneration(FTongue& Tongue);
     float Uniform(int32 Salt) const;
@@ -103,7 +117,7 @@ private:
     float Energy = 0.75f;
     float VisualEnergy = 0.65f;
     float Elapsed = 0.f;
-    float Spread = 0.0f;
+    float Spread = .22f;
     int32 Seed = 1729;
     int32 DetachCursor = 0;
     bool bGenerated = false;

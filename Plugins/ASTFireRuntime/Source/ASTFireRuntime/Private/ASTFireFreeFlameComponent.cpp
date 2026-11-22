@@ -120,8 +120,9 @@ void UASTFireFreeFlameComponent::ConfigureGeneration(FTongue& Tongue)
     ++Tongue.Generation;
     const int32 Salt = Tongue.Generation * 113 + int32(Tongue.Seed * 917.f);
     Tongue.GrowSeconds = .48f + .76f * Uniform(Salt + 1);
-    Tongue.MaxLength = (38.f + 108.f * Uniform(Salt + 2)) * Tongue.Scale;
-    Tongue.BaseWidth = (6.5f + 14.f * Uniform(Salt + 3)) * Tongue.Scale;
+    // Avoid long identical tentacles: the mesh-wide mantle is the real source.
+    Tongue.MaxLength = (26.f + 80.f * Uniform(Salt + 2)) * Tongue.Scale;
+    Tongue.BaseWidth = (8.f + 18.f * Uniform(Salt + 3)) * Tongue.Scale;
     Tongue.RemainingFraction = .30f + .27f * Uniform(Salt + 4);
     Tongue.Phase = 6.283185f * Uniform(Salt + 5);
 }
@@ -266,6 +267,11 @@ void UASTFireFreeFlameComponent::BuildAnchors()
         FTongue& Root=Tongues[I];
         ConfigureGeneration(Root);
         Root.Age = -(.07f + Uniform(I+611)*.42f);
+        Root.CurrentLength = Root.MaxLength * Root.RemainingFraction;
+        Root.RestartLength = Root.CurrentLength;
+        Root.CurrentWidth = Root.BaseWidth;
+        Root.PreviousWidth = Root.BaseWidth;
+        Root.PreviousPhase = Root.Phase;
         Root.WorldPrevious = SampleRoot(Root);
     }
     UE_LOG(LogTemp, Log,TEXT("AST Fire Stage10: %s -> %d unique tongues on mesh surface"),
@@ -301,7 +307,7 @@ FVector UASTFireFreeFlameComponent::SampleRoot(const FTongue& Root) const
     return Source->GetComponentTransform().TransformPosition(Root.RestPosition);
 }
 
-void UASTFireFreeFlameComponent::EmitTip(
+int32 UASTFireFreeFlameComponent::EmitTip(
     FTongue& Tongue, const FVector& Base, float Length, const FVector& Flow)
 {
     FDetached& Child=Detached[DetachCursor % MaxDetached];
@@ -312,49 +318,104 @@ void UASTFireFreeFlameComponent::EmitTip(
     Child.Lifetime=.52f + .68f*Uniform(Salt+3);
     Child.Length=Length*(.22f+.21f*Uniform(Salt+4));
     Child.Width=Tongue.BaseWidth*(.48f+.28f*Uniform(Salt+5));
-    Child.Position=Base+FVector::UpVector*(Length*.82f)+
-        Flow*(.095f+.07f*Uniform(Salt+6));
+    // Detached tip starts exactly where the parent ended.
+    Child.Position=Base+FVector::UpVector*Length+Flow*.095f;
     Child.Velocity=FVector::UpVector*(65.f+60.f*Uniform(Salt+7))+
         Flow*.28f-Tongue.WorldVelocity*.12f;
     Child.Temperature=.70f + .19f*Uniform(Salt+8);
     Child.Seed=Uniform(Salt+9)*102.f;
     Child.Right=FVector::RightVector;
+    return (DetachCursor-1)%MaxDetached;
 }
 
 void UASTFireFreeFlameComponent::AdvanceSimulation(float Dt)
 {
-    Elapsed+=Dt;
-    Spread=FMath::Clamp(Spread+Dt*(Heat>.01f?.21f:0.f),0.f,1.f);
-    float SumEnergy=0.f;
+    Elapsed += Dt;
+    Spread = FMath::Clamp(Spread + Dt * (Heat > .01f ? .23f : 0.f), 0.f, 1.f);
+    float SumEnergy = 0.f;
     for (FTongue& T : Tongues)
     {
-        const FVector Current=SampleRoot(T);
-        const FVector Velocity=(Current-T.WorldPrevious)/FMath::Max(.004f,Dt);
-        T.WorldPrevious=Current;
-        T.WorldVelocity=FMath::VInterpTo(T.WorldVelocity,Velocity,Dt,13.f);
-        T.Age+=Dt;
-        if (T.Age<0.f || Heat<.015f) continue;
-        if (T.Age>=T.GrowSeconds)
+        const FVector Base = SampleRoot(T);
+        const FVector Velocity = (Base - T.WorldPrevious) / FMath::Max(.004f,Dt);
+        T.WorldPrevious = Base;
+        T.WorldVelocity = FMath::VInterpTo(T.WorldVelocity,Velocity,Dt,13.f);
+        if (T.Age < 0.f)
         {
-            const FVector Flow=(Wind-T.WorldVelocity*.65f).GetClampedToMaxSize(1600.f);
-            EmitTip(T,Current,T.MaxLength,Flow);
-            T.Age=0.f; // hot connected root remains, new upper tongue grows
-            ConfigureGeneration(T); // new silhouette each generation
+            T.Age += Dt;
+            continue;
         }
-        SumEnergy+=Heat*(.5f+.5f*ASTFireLife::SmoothStep(
-            T.Age/FMath::Max(.1f,T.GrowSeconds)));
+        if (Heat < .015f) continue;
+
+        switch (T.Life)
+        {
+        case EFlameLife::Growing:
+        {
+            T.Age += Dt;
+            const float Growth = ASTFireLife::SmoothStep(
+                T.Age / FMath::Max(.1f,T.GrowSeconds));
+            T.CurrentLength = FMath::Lerp(T.RestartLength,T.MaxLength,Growth);
+            T.CurrentWidth = FMath::Lerp(T.PreviousWidth,T.BaseWidth,Growth);
+            if (T.Age>=T.GrowSeconds)
+            {
+                const FVector Flow=(Wind-T.WorldVelocity*.65f)
+                    .GetClampedToMaxSize(1600.f);
+                T.SplitLength = T.CurrentLength = T.MaxLength;
+                T.BridgedChild = EmitTip(T,Base,T.SplitLength,Flow);
+                T.BridgeSeconds = .12f + Uniform(T.Generation*83+9)*.06f;
+                T.PhaseAge = 0.f;
+                T.Life = EFlameLife::Bridging;
+            }
+            break;
+        }
+        case EFlameLife::Bridging:
+        {
+            // Several visible frames: stretched neck, thinning, then rupture.
+            T.PhaseAge += Dt;
+            T.CurrentLength = T.SplitLength;
+            if (T.PhaseAge >= T.BridgeSeconds)
+            {
+                T.Life = EFlameLife::Retracting;
+                T.PhaseAge = 0.f;
+                T.RetractSeconds = .16f + Uniform(T.Generation*101+12)*.11f;
+                T.RetractTarget = T.SplitLength *
+                    FMath::Clamp(T.RemainingFraction,.30f,.60f);
+                T.BridgedChild = INDEX_NONE;
+            }
+            break;
+        }
+        case EFlameLife::Retracting:
+        {
+            T.PhaseAge += Dt;
+            const float Ease = ASTFireLife::SmoothStep(
+                T.PhaseAge / FMath::Max(.01f,T.RetractSeconds));
+            T.CurrentLength = FMath::Lerp(T.SplitLength,T.RetractTarget,Ease);
+            if (T.PhaseAge >= T.RetractSeconds)
+            {
+                T.CurrentLength = T.RetractTarget;
+                T.RestartLength = T.CurrentLength;
+                T.PreviousWidth = T.CurrentWidth;
+                T.PreviousPhase = T.Phase;
+                T.Age = 0.f;
+                ConfigureGeneration(T);
+                T.PhaseAge = 0.f;
+                T.Life = EFlameLife::Growing;
+            }
+            break;
+        }
+        }
+        SumEnergy += Heat*(.40f + .60f*FMath::Clamp(
+            T.CurrentLength/FMath::Max(1.f,T.MaxLength),0.f,1.2f));
     }
-    for (FDetached& D : Detached)
+    for (FDetached& D:Detached)
     {
         if (!D.bAlive) continue;
-        D.Age+=Dt;
+        D.Age += Dt;
         if (D.Age>=D.Lifetime || Heat<.01f)
         {
             D.bAlive=false;
             continue;
         }
         const float Fade=1.f-D.Age/D.Lifetime;
-        // Decreasing mass = faster uplift, smaller/colder visible fragment.
         D.Velocity+=(FVector::UpVector*(160.f+210.f*(1.f-Fade))+
             Wind*.09f)*Dt;
         D.Position+=D.Velocity*Dt;
@@ -362,8 +423,7 @@ void UASTFireFreeFlameComponent::AdvanceSimulation(float Dt)
     }
     VisualEnergy=FMath::FInterpTo(VisualEnergy,
         Tongues.IsEmpty()?0.f:FMath::Clamp(
-            SumEnergy/FMath::Max(1,Tongues.Num())*.81f,.05f,1.2f),
-        Dt,8.f);
+            SumEnergy/FMath::Max(1,Tongues.Num())*.81f,.05f,1.2f),Dt,8.f);
     UpdateSurfaceMap(Dt);
 }
 
