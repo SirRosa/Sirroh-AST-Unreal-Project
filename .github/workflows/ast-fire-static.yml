@@ -52,6 +52,8 @@ jobs:
           python Automation/ASTFire/test_stage16_coverage_variance.py
           python -m py_compile Automation/ASTFire/test_stage17_tip_detachment.py
           python Automation/ASTFire/test_stage17_tip_detachment.py
+          python -m py_compile Automation/ASTFire/test_stage18_palette_plume.py
+          python Automation/ASTFire/test_stage18_palette_plume.py
           python Automation/ASTFire/test_stage4_source.py
       - name: Parse PowerShell deployment script
         shell: pwsh

@@ -67,7 +67,9 @@ assert "Parent[J]=Best" not in src
 assert "FMath::Sqrt(PointD2)" not in src
 assert "FMath::Sqrt(EdgeD2)" not in src
 assert "H.Add(0.f);" in ribbon
-assert ribbon.count("AddStrip(C,W,H")==2  # attached hidden; detached unchanged
+assert ribbon.count("AddStrip(C,W,H")==1  # attached hidden; detached now volumetric thermal grid
+assert "static constexpr int32 DetachedColumns=7;" in ribbon
+assert "check(Offset==Verts.Num());" in ribbon
 assert ribbon.count("AddStrip(BC,BW,BH")==1
 assert ribbon.index("UpdateConnectedSource(bCreate, View, Right)") < ribbon.index(
     "const FVector Base=ConnectedRoots.IsValidIndex(I)")

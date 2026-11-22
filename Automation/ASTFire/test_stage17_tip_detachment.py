@@ -31,11 +31,14 @@ for token in (
     "const float TipHook=Upper*",
     "Lean*V+Dance+TipHook",
     "const float ForkSeed=ASTFireLife::Hash(T.Seed*.173f);",
-    "ForkSeed>.82f?2:(ForkSeed>.28f?1:0)",
+    "ForkSeed>.87f?2:(ForkSeed>.20f?1:0)",
     "AppendNeck(WorldA,WorldB,RadiusAt(V0),RadiusAt(V1),V0,V1);",
     "AppendNeck(BranchRoot,Mid,BranchRadius,",
     "AppendNeck(Mid,Tip,BranchRadius*.51f,",
-    "const float Tips=FMath::Clamp(1.f+Upper*(",
+    "const float PlumeWidth=FMath::Max(T.CurrentWidth,",
+    "const float BulgeA=.46f*FMath::Exp(",
+    "const float BulgeB=.55f*FMath::Exp(",
+    "const float Waist=.22f*FMath::Exp(",
     "Necks.Reserve(Tongues.Num()*(RingsPerTongue+4));"):
     assert token in c,token
 assert c.count("H.Add(0.f);")==1
@@ -49,8 +52,10 @@ for stop in (".12,h", ".24,h", ".43,h", ".61,h", ".77,h", ".90,h"):
     assert stop in m
 assert "Child.Temperature=.92f + .07f*Uniform(Salt+8);" in c
 assert "D.Temperature=.70f" not in c
-assert "H.Add(D.Temperature*(1.04f-.18f*V)*" in c
+assert "const float LocalHeat=Cover*(.19f+" in c
+assert "Heat*D.Temperature*LocalHeat*" in c
 assert "FMath::Pow(Fade,.66f)" in c
+assert "static constexpr int32 DetachedColumns=7;" in c
 def heat(temp,v,fade):return temp*(1.04-.18*v)*fade**.66
 assert .9<heat(.95,.5,1.)<1.
 assert heat(.95,.5,.5)>.5

@@ -739,7 +739,8 @@ void UASTFireFreeFlameComponent::UpdateGeometry(bool bCreate)
     TArray<FVector2D> UVs;
     TArray<FLinearColor> Colors;
     const int32 Vertices=(Tongues.Num()*(RingsPerTongue+BridgeRings)+
-        MaxDetached*RingsPerDetached)*2;
+        MaxDetached*RingsPerDetached)*2 +
+        MaxDetached*RingsPerDetached*7;
     Verts.Reserve(Vertices);
     UVs.Reserve(Vertices);
     Colors.Reserve(Vertices);
@@ -814,12 +815,18 @@ void UASTFireFreeFlameComponent::UpdateGeometry(bool bCreate)
         AddStrip(BC,BW,BH,T.Seed,1.f,Right,Verts,UVs,Colors);
     }
 
+    // Stage18: detached fire must use the SAME radial hot-core/red-rim
+    // field as the continuous mantle. Stage17's TWO vertices per row
+    // could only interpolate two uniformly orange boundary temperatures;
+    // changing Child.Temperature alone could never fix this palette.
+    static constexpr int32 DetachedColumns=7;
+    const FTransform RenderTransform=Render->GetComponentTransform();
     for (const FDetached& D:Detached)
     {
         TArray<FVector> C;
         TArray<float> W;
-        TArray<float> H;
-        const float Age=D.bAlive?FMath::Clamp(D.Age/D.Lifetime,0.f,1.f):1.f;
+        const float Age=D.bAlive
+            ? FMath::Clamp(D.Age/FMath::Max(.1f,D.Lifetime),0.f,1.f):1.f;
         const float Fade=D.bAlive?1.f-Age:0.f;
         const float SpinSpeed=3.3f+5.f*ASTFireLife::Hash(D.Seed*.37f);
         const float Spin=D.Seed*.11f+D.Age*SpinSpeed;
@@ -841,26 +848,50 @@ void UASTFireFreeFlameComponent::UpdateGeometry(bool bCreate)
                 .17f*FMath::Sin(V*24.4f-Spin*.54f),.43f,1.35f);
             W.Add(D.Width*FMath::Pow(Fade,.72f)*
                 FMath::Sin(PI*(.08f+.88f*V))*Lobes);
-            // The parent and its detached piece feed the SAME pixel shader
-            // with comparable vertex heat. The ember cools mainly at the
-            // end of life rather than instantly becoming dark red.
-            H.Add(D.Temperature*(1.04f-.18f*V)*
-                FMath::Pow(Fade,.66f));
         }
-        AddStrip(C,W,H,D.Seed,1.f,LocalSide,Verts,UVs,Colors);
+        // Seven columns provide real red edges, orange transition, and a
+        // yellow/white core. No extra material or independent sprite pass.
+        // Vertex colors now follow the same Cover/Core heat equation used
+        // by UpdateConnectedSource(), with identical 16-bit palette steps.
+        for(int32 K=0;K<RingsPerDetached;++K)
+        {
+            const float V=float(K)/float(RingsPerDetached-1);
+            const float Radius=FMath::Max(.001f,W[K]);
+            const float EdgeWidth=FMath::Max(4.f,Radius*.45f);
+            for(int32 X=0;X<DetachedColumns;++X)
+            {
+                const float U=float(X)/float(DetachedColumns-1);
+                const float Side=U*2.f-1.f;
+                const float DFromCenter=FMath::Abs(Side)*
+                    (Radius+EdgeWidth*.04f);
+                const float Cover=FMath::Clamp(1.f-
+                    (DFromCenter-Radius)/EdgeWidth,0.f,1.f);
+                const float Core=FMath::Clamp((Radius-DFromCenter)/
+                    FMath::Max(1.f,Radius),0.f,1.f);
+                const float LocalHeat=Cover*(.19f+
+                    .81f*FMath::Pow(Core,.56f))*(1.f-.19f*V);
+                const float Thermal=FMath::Clamp(
+                    Heat*D.Temperature*LocalHeat*
+                    FMath::Pow(Fade,.66f),0.f,1.f);
+                const FVector World=C[K]+LocalSide*
+                    (Side*(Radius+EdgeWidth*.04f));
+                Verts.Add(RenderTransform.InverseTransformPosition(World));
+                UVs.Add(FVector2D(U,V));
+                Colors.Add(FLinearColor(Thermal,V,
+                    FMath::Frac(D.Seed*.017f),1.f));
+            }
+        }
     }
 
     TArray<int32> Triangles;
-    const int32 StripCount=Tongues.Num()*2+MaxDetached;
-    Triangles.Reserve((Tongues.Num()*(RingsPerTongue+BridgeRings-2)+
-        MaxDetached*(RingsPerDetached-1))*6);
+    const int32 StripCount=Tongues.Num()*2;
+    Triangles.Reserve((Tongues.Num()*(RingsPerTongue+BridgeRings-2))*6+
+        MaxDetached*(RingsPerDetached-1)*(DetachedColumns-1)*6);
     int32 Offset=0;
-    for (int32 I=0;I<StripCount;++I)
+    for(int32 I=0;I<StripCount;++I)
     {
-        const int32 N=I<Tongues.Num()*2
-            ? (I%2==0?RingsPerTongue:BridgeRings)
-            : RingsPerDetached;
-        for (int32 K=0;K<N-1;++K)
+        const int32 N=I%2==0?RingsPerTongue:BridgeRings;
+        for(int32 K=0;K<N-1;++K)
         {
             const int32 A=Offset+2*K;
             Triangles.Add(A);Triangles.Add(A+1);Triangles.Add(A+2);
@@ -868,6 +899,24 @@ void UASTFireFreeFlameComponent::UpdateGeometry(bool bCreate)
         }
         Offset+=N*2;
     }
+    // Unlike the original two-column strip, each detached fragment
+    // has its own continuous, fixed-topology transverse heat gradient.
+    for(int32 I=0;I<MaxDetached;++I)
+    {
+        for(int32 K=0;K<RingsPerDetached-1;++K)
+            for(int32 X=0;X<DetachedColumns-1;++X)
+            {
+                const int32 A=Offset+K*DetachedColumns+X;
+                Triangles.Add(A);
+                Triangles.Add(A+1);
+                Triangles.Add(A+DetachedColumns);
+                Triangles.Add(A+1);
+                Triangles.Add(A+DetachedColumns+1);
+                Triangles.Add(A+DetachedColumns);
+            }
+        Offset+=RingsPerDetached*DetachedColumns;
+    }
+    check(Offset==Verts.Num());
     TArray<FVector> Normals;
     TArray<FProcMeshTangent> Tangents;
     Normals.Init(FVector::ForwardVector,Verts.Num());
@@ -1199,17 +1248,27 @@ void UASTFireFreeFlameComponent::UpdateConnectedSource(
             ASTFireLife::SmoothStep(T.Age/FMath::Max(.1f,T.GrowSeconds)));
         auto RadiusAt=[&](float V)
         {
-            const float Ridge=FMath::Clamp(.85f+.15f*
-                FMath::Sin(V*13.8f+Phase+.57f*Elapsed),.4f,1.05f);
-            // Asymmetric narrowing near the tip: irregular side notches
-            // instead of a single smooth cone/tentacle on every generation.
-            const float Upper=ASTFireLife::SmoothStep((V-.48f)/.43f);
-            const float Tips=FMath::Clamp(1.f+Upper*(
-                .27f*FMath::Sin(V*19.4f+T.Seed*.23f+Elapsed*4.1f)+
-                .16f*FMath::Sin(V*29.3f-T.Seed*.13f-Elapsed*3.6f)),
-                .46f,1.38f);
-            return FMath::Max(0.f,T.CurrentWidth*(.94f-.18f*V)*
-                FMath::Pow(FMath::Max(0.f,1.f-V),.73f)*Ridge*Tips);
+            // A long, very narrow tongue looked like a hose. Preserve its
+            // generation-specific width and height but enforce a minimum
+            // physically plausible flame-plume aspect ratio at the source.
+            const float PlumeWidth=FMath::Max(T.CurrentWidth,
+                T.CurrentLength*(.098f+.017f*
+                    ASTFireLife::Hash(T.Seed*.51f)));
+            // Two independently moving bulges and a pinched waist produce
+            // an organic rising contour, not a uniform tapered capsule.
+            const float BulgeA=.46f*FMath::Exp(-FMath::Square(
+                (V-(.29f+.09f*ASTFireLife::Hash(T.Seed*.31f)))/.17f));
+            const float BulgeB=.55f*FMath::Exp(-FMath::Square(
+                (V-(.64f+.08f*ASTFireLife::Hash(T.Seed*.71f)))/.13f));
+            const float Waist=.22f*FMath::Exp(-FMath::Square(
+                (V-.52f)/.085f));
+            const float MovingRim=.18f*FMath::Sin(
+                V*20.f+T.Seed*.37f+Elapsed*3.8f)+
+                .11f*FMath::Sin(V*32.7f-T.Seed*.21f-Elapsed*5.3f);
+            const float Profile=FMath::Clamp(
+                .87f+BulgeA+BulgeB-Waist+MovingRim,.53f,1.85f);
+            return FMath::Max(0.f,PlumeWidth*
+                FMath::Pow(FMath::Max(0.f,1.f-V),.69f)*Profile);
         };
         FVector WorldA=TongueCenterAt(T,Root,NeckFractions[0],Right);
         for(int32 K=1;K<RingsPerTongue;++K)
@@ -1220,33 +1279,30 @@ void UASTFireFreeFlameComponent::UpdateConnectedSource(
             AppendNeck(WorldA,WorldB,RadiusAt(V0),RadiusAt(V1),V0,V1);
             WorldA=WorldB;
         }
-        // One or two bifurcating tip licks grow and die WITH the parent:
-        // no second timer, detached state, independent sprite or source.
+        // Short swept lobes curve upward out of the SAME living plume,
+        // rather than rigid horizontal antennae sticking off a thin shaft.
         const float ForkSeed=ASTFireLife::Hash(T.Seed*.173f);
-        const int32 ForkCount=ForkSeed>.82f?2:(ForkSeed>.28f?1:0);
+        const int32 ForkCount=ForkSeed>.87f?2:(ForkSeed>.20f?1:0);
         for(int32 Fork=0;Fork<ForkCount;++Fork)
         {
-            const float Attach=.58f+.16f*
+            const float Attach=.37f+.33f*
                 ASTFireLife::Hash(T.Seed*.47f+Fork*2.1f);
             const float Reach=FMath::Min(T.CurrentLength*
-                (.22f+.14f*ASTFireLife::Hash(T.Seed*.57f+Fork)),42.f);
+                (.13f+.13f*ASTFireLife::Hash(T.Seed*.57f+Fork)),34.f);
             const float Direction=(Fork==0?1.f:-1.f)*
                 (ASTFireLife::Hash(T.Seed*.73f)>.5f?1.f:-1.f);
             const FVector BranchRoot=TongueCenterAt(T,Root,Attach,Right);
-            const FVector Mid=TongueCenterAt(T,Root,
-                FMath::Min(.96f,Attach+.095f),Right)+
+            const float Sway=FMath::Sin(Elapsed*3.7f+T.Seed+Fork)*3.4f;
+            const FVector Mid=BranchRoot+Up*Reach*.54f+
                 Right*Direction*Reach*.48f;
-            const FVector Tip=TongueCenterAt(T,Root,
-                FMath::Min(.99f,Attach+.20f),Right)+
-                Right*Direction*(Reach+
-                    3.5f*FMath::Sin(Elapsed*4.5f+T.Seed+Fork))+
-                Up*Reach*.23f;
+            const FVector Tip=BranchRoot+Up*Reach*1.15f+
+                Right*Direction*(Reach*.74f+Sway);
             const float BranchRadius=RadiusAt(Attach)*
-                (.49f+.17f*ASTFireLife::Hash(T.Seed*.38f+Fork));
+                (.59f+.16f*ASTFireLife::Hash(T.Seed*.38f+Fork));
             AppendNeck(BranchRoot,Mid,BranchRadius,
-                BranchRadius*.51f,Attach,Attach+.095f);
-            AppendNeck(Mid,Tip,BranchRadius*.51f,
-                0.f,Attach+.095f,Attach+.20f);
+                BranchRadius*.55f,Attach,Attach+.09f);
+            AppendNeck(Mid,Tip,BranchRadius*.55f,
+                0.f,Attach+.09f,Attach+.20f);
         }
     }
 

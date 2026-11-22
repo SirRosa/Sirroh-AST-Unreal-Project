@@ -158,9 +158,12 @@ assert all(length[i+1]<=length[i]+1.e-8 for i in range(10))
 assert length[4]>90.
 
 # Fixed topology and bounds. Size assertions are NOT benchmark results.
-verts=(32+1)*(44+1)+2*(15*(9+4)+16*5)
-tris=32*44*2 + 2*(15*(9+4-2)+16*(5-1))
-assert verts<=2100 and tris<=3300
+# Stage18: detached field has seven transverse thermal-gradient columns
+# rather than two uniformly colored strip vertices.
+verts=(32+1)*(44+1)+2*15*(9+4)+16*5*7
+tris=32*44*2+15*(9+4-2)*2+16*(5-1)*(7-1)*2
+assert verts==2435 and tris==3914
+assert verts<=2600 and tris<=4100
 assert verts>2*(15*(9+4)+16*5)
 for n in (1,10,30):
     print(f"Stage12 max {n} actors: {n*verts} verts, "

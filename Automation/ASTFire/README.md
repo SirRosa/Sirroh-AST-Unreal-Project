@@ -578,3 +578,30 @@ Stage16 changes only the work branch:
   detached spawn thermal/RHS frame, live rendering and flight vortex are new.
 - GPU shader/render appearance and performance require separate validation;
   no automatic gameplay/PIE.
+
+
+### Stage18 — less tentacular source and shared detached thermals (2026-11-22)
+
+User screenshot after Stage17 showed long, hose-like branches and bright,
+almost flat-colored detached pieces. Root cause of palette mismatch: detached
+fragments used only 2 transverse mesh vertices and a uniform longitudinal
+temperature. The established pixel shader had no data for an inner hot core
+and cooler outer rim; raising spawn temperature cannot replace missing
+transverse shading samples.
+
+- Keep the entire Stage16/17 growth, bridge, retraction, detached-lifetime
+  and vortex behaviors. Three protected C++ function hashes remain unchanged.
+- Long, abnormally narrow living tongues get a modest length-proportional
+  width floor. Distinct moving bulges, waist constriction and shorter swept
+  secondary lobes replace the long thin shaft/horizontal antenna shape.
+  They still share the same Stage15/16/17 live field.
+- Detached visual strips use **7 columns x 5 rings** instead of the previous
+  2-column geometry. Each column computes the same Core/Cover thermal
+  envelope as the live source; edge vertices are dark red in the SAME
+  `M_AST_FireTongue` masked material, interior cores remain hot yellow/
+  white, and temperature cools over the existing lifetime. This is a
+  geometric palette correction, not a new color preset/material.
+- Vertex/triangle estimate (max 15 tongues, 16 detached): 2435
+  vertices / 3914 triangles per 25Hz actor update, not a measured FPS figure.
+- Stage16 is stable `main`, Stage17 backup exists. Stage18 stays on
+  `work/niagara-fire-stage2` until visual approval. No smoke or sparks yet.
