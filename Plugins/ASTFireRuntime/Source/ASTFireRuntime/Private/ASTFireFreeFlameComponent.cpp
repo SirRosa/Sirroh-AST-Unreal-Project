@@ -100,9 +100,11 @@ void UASTFireFreeFlameComponent::OnRegister()
     Render->SetCastShadow(false);
     Render->SetupAttachment(GetOwner()->GetRootComponent());
     Render->SetMaterial(0, Material);
+    Render->SetMaterial(1, Material); // unified mesh-bound source, same pixels
     Render->RegisterComponent();
 
     BuildAnchors();
+    BuildSourceAnchors();
     if (Tongues.Num() == 0)
     {
         UE_LOG(LogTemp, Warning, TEXT("AST Fire: no valid skin/surface samples for %s; using mesh overlay only"),
@@ -119,6 +121,7 @@ void UASTFireFreeFlameComponent::OnUnregister()
     Render = nullptr;
     Tongues.Reset();
     BurnClusters.Reset();
+    SourceAnchors.Reset();
     bGenerated = false;
     Super::OnUnregister();
 }
@@ -721,6 +724,311 @@ void UASTFireFreeFlameComponent::UpdateGeometry(bool bCreate)
             Colors,Tangents,false);
     else
         Render->UpdateMeshSection_LinearColor(0,Verts,Normals,UVs,Colors,Tangents);
+
+    // Render one continuous source (section 1) in the exact tongue material.
+    // It is NOT a WPO shell made from the original low-poly triangles.
+    UpdateConnectedSource(bCreate, View, Right);
+}
+
+
+void UASTFireFreeFlameComponent::BuildSourceAnchors()
+{
+    SourceAnchors.Reset();
+    if (!IsValid(Source)) return;
+    auto Add = [this](const FVector& Rest, int32 VertexIndex)
+    {
+        if (SourceAnchors.Num() >= MaxSourceAnchors) return;
+        for (const FSourceAnchor& Existing:SourceAnchors)
+            if ((VertexIndex!=INDEX_NONE &&
+                 Existing.SkinnedVertexIndex==VertexIndex) ||
+                (VertexIndex==INDEX_NONE &&
+                 Existing.SkinnedVertexIndex==INDEX_NONE &&
+                 FVector::DistSquared(Existing.RestPosition,Rest)<36.f))
+                return;
+        FSourceAnchor A;
+        A.RestPosition=Rest;
+        A.SkinnedVertexIndex=VertexIndex;
+        SourceAnchors.Add(A);
+    };
+
+    // Always include existing true surface ignition roots. Adding a source
+    // must never change a tongue's length/split/birth state.
+    for (const FTongue& T:Tongues)
+        Add(T.RestPosition,T.SkinnedVertexIndex);
+
+    if (USkeletalMeshComponent* Skel=Cast<USkeletalMeshComponent>(Source))
+    {
+        USkeletalMesh* Asset=Skel->GetSkeletalMeshAsset();
+        FSkeletalMeshRenderData* Data=Asset?Asset->GetResourceForRendering():nullptr;
+        if (Data && Data->LODRenderData.Num()>0)
+        {
+            const FSkeletalMeshLODRenderData& Lod=Data->LODRenderData[0];
+            const int32 Count=int32(Lod.GetNumVertices());
+            const int32 Requested=FMath::Min(84,Count);
+            for (int32 i=0;i<Requested;++i)
+            {
+                const int32 Index=FMath::Clamp(
+                    (i*Count+Count/2)/Requested,0,Count-1);
+                Add(FVector(Lod.StaticVertexBuffers.PositionVertexBuffer
+                    .VertexPosition(Index)),Index);
+            }
+        }
+    }
+    else if (UStaticMeshComponent* Static=Cast<UStaticMeshComponent>(Source))
+    {
+        // Collision samples are ACTUAL geometry/primitive hits in local
+        // space. Do not rely on CPU access to StaticMesh render buffers,
+        // which may be stripped in cooked builds.
+        const FBoxSphereBounds Box=Static->CalcBounds(FTransform::Identity);
+        const FVector H=Box.BoxExtent.GetAbs();
+        const FTransform Transform=Static->GetComponentTransform();
+        const float Far=H.GetMax()*2.8f+20.f;
+        FCollisionQueryParams Query;
+        Query.bTraceComplex=true;
+        for (int32 Face=0;Face<6 && SourceAnchors.Num()<MaxSourceAnchors;++Face)
+            for(int32 A=0;A<4;++A)
+                for(int32 B=0;B<4;++B)
+                {
+                    const float U=(float(A)/3.f)*1.76f-.88f;
+                    const float V=(float(B)/3.f)*1.76f-.88f;
+                    FVector Point=Box.Origin;
+                    FVector Normal=FVector::UpVector;
+                    switch(Face)
+                    {
+                    case 0: Normal=FVector(1,0,0);
+                        Point+=FVector(H.X,U*H.Y,V*H.Z);break;
+                    case 1: Normal=FVector(-1,0,0);
+                        Point+=FVector(-H.X,U*H.Y,V*H.Z);break;
+                    case 2: Normal=FVector(0,1,0);
+                        Point+=FVector(U*H.X,H.Y,V*H.Z);break;
+                    case 3: Normal=FVector(0,-1,0);
+                        Point+=FVector(U*H.X,-H.Y,V*H.Z);break;
+                    case 4: Point+=FVector(U*H.X,V*H.Y,H.Z);break;
+                    default: Normal=FVector(0,0,-1);
+                        Point+=FVector(U*H.X,V*H.Y,-H.Z);break;
+                    }
+                    FHitResult Hit;
+                    if(Static->LineTraceComponent(Hit,
+                        Transform.TransformPosition(Point+Normal*14.f),
+                        Transform.TransformPosition(Point-Normal*Far),Query))
+                    {
+                        Add(Transform.InverseTransformPosition(
+                            FVector(Hit.ImpactPoint)),INDEX_NONE);
+                    }
+                }
+    }
+
+    if(SourceAnchors.IsEmpty())
+    {
+        for(int32 i=0;i<7;++i)
+        {
+            const float A=2.f*PI*float(i)/7.f;
+            Add(FVector(FMath::Cos(A)*16.f,FMath::Sin(A)*16.f,0.f),
+                INDEX_NONE);
+        }
+    }
+    UE_LOG(LogTemp,Log,
+        TEXT("AST Fire: source-first mantle %s uses %d skin/surface anchors"),
+        *GetOwner()->GetName(),SourceAnchors.Num());
+}
+
+// CPU-updated screen-facing silhouette layer. No rectangular mask:
+// outer grid cells are completely masked and discarded by the SAME
+// M_AST_FireTongue palette as the existing tongue/bridge geometry.
+// Mesh projection is sampled from CURRENT skinned vertices, so running,
+// sprinting, and limb movement deform the single shared source.
+void UASTFireFreeFlameComponent::UpdateConnectedSource(
+    bool bCreate,const FVector& View,const FVector& Right)
+{
+    if (!IsValid(Render)) return;
+    const FVector Up=FVector::UpVector;
+    FVector Normal=FVector::CrossProduct(Right,Up).GetSafeNormal();
+    if (Normal.IsNearlyZero()) Normal=View;
+    const FVector Origin=Source.IsValid()?Source->GetComponentLocation():
+        GetOwner()->GetActorLocation();
+    const FTransform RenderTransform=Render->GetComponentTransform();
+
+    const USkeletalMeshComponent* Skel=Cast<USkeletalMeshComponent>(Source);
+    const FSkeletalMeshLODRenderData* Lod=nullptr;
+    FSkinWeightVertexBuffer* Weights=nullptr;
+    if (Skel)
+    {
+        if (USkeletalMesh* Asset=Skel->GetSkeletalMeshAsset())
+            if (FSkeletalMeshRenderData* Data=Asset->GetResourceForRendering())
+                if(Data->LODRenderData.Num()>0)
+                {
+                    Lod=&Data->LODRenderData[0];
+                    Weights=const_cast<FSkeletalMeshLODRenderData*>(Lod)
+                        ->GetSkinWeightVertexBuffer();
+                }
+    }
+
+    TArray<FVector2D> Samples;
+    Samples.Reserve(MaxSourceAnchors+Tongues.Num());
+    float HighestDepth=-BIG_NUMBER;
+    float MinX=BIG_NUMBER,MaxX=-BIG_NUMBER,MinY=BIG_NUMBER,MaxY=-BIG_NUMBER;
+
+    auto Include=[&](const FVector& World)
+    {
+        const FVector Diff=World-Origin;
+        const FVector2D P(
+            FVector::DotProduct(Diff,Right),
+            FVector::DotProduct(Diff,Up));
+        Samples.Add(P);
+        MinX=FMath::Min(MinX,float(P.X));
+        MaxX=FMath::Max(MaxX,float(P.X));
+        MinY=FMath::Min(MinY,float(P.Y));
+        MaxY=FMath::Max(MaxY,float(P.Y));
+        HighestDepth=FMath::Max(HighestDepth,
+            float(FVector::DotProduct(Diff,Normal)));
+    };
+
+    for (const FSourceAnchor& A:SourceAnchors)
+    {
+        // Progressive ignition: surface samples become active as one
+        // cluster expands. Existing burning source never restarts.
+        if (Spread<.95f && !BurnClusters.IsEmpty())
+        {
+            bool bCovered=false;
+            for (const FBurnCluster& C:BurnClusters)
+                if (FVector::DistSquared(A.RestPosition,C.RestCenter)<
+                    FMath::Square(C.Radius*(.30f+Spread*1.35f)))
+                {bCovered=true;break;}
+            if (!bCovered) continue;
+        }
+
+        FVector World=Source->GetComponentTransform().TransformPosition(
+            A.RestPosition);
+        if(Skel && Lod && Weights && A.SkinnedVertexIndex>=0 &&
+            A.SkinnedVertexIndex<int32(Lod->GetNumVertices()))
+        {
+            const FVector3f P=USkinnedMeshComponent::GetSkinnedVertexPosition(
+                Skel,A.SkinnedVertexIndex,*Lod,*Weights);
+            World=Skel->GetComponentTransform().TransformPosition(FVector(P));
+        }
+        Include(World);
+    }
+    // All living tongue roots are guaranteed part of the SAME connected
+    // source even when no mesh is present (free-standing flame).
+    for(const FTongue& T:Tongues)
+        if(T.bActive && T.Age>=0.f)
+            Include(SampleRoot(T));
+
+    if(Samples.IsEmpty())
+        Include(Origin);
+
+    const float Extent=FMath::Max(20.f,FMath::Max(MaxX-MinX,MaxY-MinY));
+    const float Radius=FMath::Clamp(
+        Extent/(FMath::Sqrt(float(Samples.Num()))*1.5f),10.f,26.f);
+    const float Outer=FMath::Clamp(Radius*.85f,9.f,18.f);
+    const float Inner=FMath::Clamp(Radius*.65f,5.f,12.f);
+    const float Margin=Radius+Outer+12.f;
+    MinX-=Margin;MaxX+=Margin;MinY-=Margin;MaxY+=Margin;
+    HighestDepth+=3.f;
+
+    // Prim MST provides a connected supporting source, including long limbs
+    // and compact fire without a physical mesh. Links are thickened small
+    // capsules, not stand-alone flame cards/independent "tentacles".
+    const int32 N=Samples.Num();
+    TArray<int32> Parent;
+    Parent.Init(INDEX_NONE,N);
+    TArray<uint8> Added;
+    Added.Init(0,N);
+    TArray<float> Nearest;
+    Nearest.Init(BIG_NUMBER,N);
+    Nearest[0]=0.f;
+    for(int32 Iter=0;Iter<N;++Iter)
+    {
+        int32 Best=INDEX_NONE;
+        float Score=BIG_NUMBER;
+        for(int32 J=0;J<N;++J)
+            if(!Added[J] && Nearest[J]<Score)
+            {Best=J;Score=Nearest[J];}
+        if(Best==INDEX_NONE)break;
+        Added[Best]=1;
+        for(int32 J=0;J<N;++J)
+            if(!Added[J])
+            {
+                const float D=FVector2D::DistSquared(
+                    Samples[Best],Samples[J]);
+                if(D<Nearest[J])
+                {Nearest[J]=D;Parent[J]=Best;}
+            }
+    }
+
+    const int32 Width=SourceGridX+1,Height=SourceGridY+1;
+    TArray<FVector> Verts;
+    TArray<FVector2D> UVs;
+    TArray<FLinearColor> Colors;
+    Verts.Reserve(Width*Height);
+    UVs.Reserve(Width*Height);
+    Colors.Reserve(Width*Height);
+    for(int32 Row=0;Row<Height;++Row)
+        for(int32 Col=0;Col<Width;++Col)
+        {
+            const float X=FMath::Lerp(MinX,MaxX,
+                float(Col)/float(SourceGridX));
+            const float Y=FMath::Lerp(MinY,MaxY,
+                float(Row)/float(SourceGridY));
+            const FVector2D P(X,Y);
+            float Distance=BIG_NUMBER;
+            for(int32 I=0;I<N;++I)
+            {
+                Distance=FMath::Min(Distance,
+                    FVector2D::Distance(P,Samples[I])-Radius);
+                const int32 J=Parent[I];
+                if(J==INDEX_NONE)continue;
+                const FVector2D A=Samples[I],B=Samples[J];
+                const FVector2D AB=B-A;
+                const float T=FMath::Clamp(
+                    FVector2D::DotProduct(P-A,AB)/
+                    FMath::Max(1.f,AB.SizeSquared()),0.f,1.f);
+                const float D=(P-(A+AB*T)).Size()-Radius*.68f;
+                Distance=FMath::Min(Distance,D);
+            }
+            // Small bounded flicker: never a 30cm WPO polygon extrusion.
+            const float Curl=FMath::Sin(X*.091f+Elapsed*6.6f+Seed*.023f)*
+                (2.3f+2.5f*Heat)+
+                FMath::Sin(Y*.123f-X*.054f-Elapsed*9.4f)*1.8f;
+            const float Dist=Distance-Curl;
+            const float Near=FMath::Clamp((Dist+Inner)/Inner,0.f,1.f);
+            const float Far=FMath::Clamp(1.f-Dist/Outer,0.f,1.f);
+            const float Thermal=FMath::Clamp(
+                Heat*Near*Far*(.91f+.08f*FMath::Sin(Elapsed*7.f+
+                X*.061f+Y*.029f)),0.f,1.f);
+
+            const FVector World=Origin+Right*X+Up*Y+
+                Normal*HighestDepth;
+            Verts.Add(RenderTransform.InverseTransformPosition(World));
+            // UV.x=.5 gives the same bright center as tongue ribbons;
+            // UV.y adds the exact same 16-bit stepped palette variation.
+            UVs.Add(FVector2D(.5f,float(Row)/float(SourceGridY)));
+            Colors.Add(FLinearColor(Thermal,.12f,FMath::Frac(
+                (Seed+Col*7+Row*13)*.017f),1.f));
+        }
+
+    TArray<int32> Tris;
+    if(bCreate)
+    {
+        Tris.Reserve(SourceGridX*SourceGridY*6);
+        for(int32 Y=0;Y<SourceGridY;++Y)
+            for(int32 X=0;X<SourceGridX;++X)
+            {
+                const int32 A=Y*Width+X;
+                Tris.Add(A);Tris.Add(A+Width);Tris.Add(A+1);
+                Tris.Add(A+1);Tris.Add(A+Width);Tris.Add(A+Width+1);
+            }
+    }
+    TArray<FVector> Normals;
+    Normals.Init(Normal,Verts.Num());
+    TArray<FProcMeshTangent> Tangents;
+    Tangents.Init(FProcMeshTangent(1,0,0),Verts.Num());
+    if(bCreate)
+        Render->CreateMeshSection_LinearColor(
+            1,Verts,Tris,Normals,UVs,Colors,Tangents,false);
+    else
+        Render->UpdateMeshSection_LinearColor(
+            1,Verts,Normals,UVs,Colors,Tangents);
 }
 
 void UASTFireFreeFlameComponent::TickComponent(

@@ -41,6 +41,11 @@ private:
     static constexpr int32 RingsPerDetached = 5;
     static constexpr int32 BridgeRings = 4;
     static constexpr int32 SurfaceClusters = 8;
+    // Shared source silhouette uses a fixed topology and the SAME color
+    // material as the approved tongue and split-bridge geometry.
+    static constexpr int32 SourceGridX = 32;
+    static constexpr int32 SourceGridY = 44;
+    static constexpr int32 MaxSourceAnchors = 96;
 
     enum class EFlameLife : uint8 { Growing, Bridging, Retracting };
     // One physical source may support several independently-lived tongues.
@@ -50,6 +55,12 @@ private:
         FVector RestCenter = FVector::ZeroVector;
         float Radius = 70.f;
         int32 Members = 1;
+    };
+
+    struct FSourceAnchor
+    {
+        int32 SkinnedVertexIndex = INDEX_NONE;
+        FVector RestPosition = FVector::ZeroVector;
     };
 
     struct FTongue
@@ -99,6 +110,9 @@ private:
 
     void BuildAnchors();
     void RebuildClusters();
+    void BuildSourceAnchors();
+    void UpdateConnectedSource(bool bCreate, const FVector& View,
+        const FVector& Right);
     FVector SampleRoot(const FTongue& Tongue) const;
     void AdvanceSimulation(float Dt);
     void UpdateGeometry(bool bCreate);
@@ -123,6 +137,7 @@ private:
 
     TArray<FTongue> Tongues;
     TArray<FBurnCluster> BurnClusters;
+    TArray<FSourceAnchor> SourceAnchors;
     TArray<FDetached> Detached;
     TArray<FVector> IgnitionPoints;
     FVector Wind = FVector::ZeroVector;
