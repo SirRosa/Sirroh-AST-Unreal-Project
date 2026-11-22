@@ -58,6 +58,8 @@ jobs:
           python Automation/ASTFire/test_stage19_live_silhouette.py
           python -m py_compile Automation/ASTFire/test_stage20_detached_billboard.py
           python Automation/ASTFire/test_stage20_detached_billboard.py
+          python -m py_compile Automation/ASTFire/test_stage21_burn_lifetime.py
+          python Automation/ASTFire/test_stage21_burn_lifetime.py
           python Automation/ASTFire/test_stage4_source.py
       - name: Parse PowerShell deployment script
         shell: pwsh

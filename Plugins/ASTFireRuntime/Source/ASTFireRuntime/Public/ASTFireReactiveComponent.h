@@ -158,6 +158,23 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="AST Fire|Response", meta=(ClampMin="0", ClampMax="45"))
     float MaxLeanDegrees = 16.0f;
 
+    /** Server-authoritative fire lifetime. Standard 180 cm object lasts ~3 s. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="AST Fire|Burn", meta=(ClampMin="0"))
+    bool bAutoExtinguish = true;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="AST Fire|Burn", meta=(ClampMin="0.1", ClampMax="30"))
+    float BaseBurnSeconds = 3.0f;
+
+    /** Terminal temperature ramp; the mesh remains visible during afterglow. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="AST Fire|Burn", meta=(ClampMin="0.1", ClampMax="5"))
+    float BurnFadeSeconds = 0.8f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="AST Fire|Burn", meta=(ClampMin="10"))
+    float ReferenceSizeCm = 180.0f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="AST Fire|Burn", meta=(ClampMin="1", ClampMax="6"))
+    float MaxBurnSizeMultiplier = 3.5f;
+
     /** A unified API for objects that can burn; gameplay damage/spread is separate. */
     UFUNCTION(BlueprintCallable, Category="AST Fire")
     void Ignite(float NewIntensity = 1.0f);
@@ -220,6 +237,7 @@ private:
         FVector LocalPosition, float Scale, UMaterialInterface* Material);
     void UpdateVolume(UProceduralMeshComponent* Volume, int32 Index, bool bCreate, float StepSeconds = 0.0f);
     void UpdateVisibility();
+    float ComputeBurnDuration() const;
 
     UPROPERTY(Transient)
     TArray<TObjectPtr<UNiagaraComponent>> FireFX;
@@ -271,6 +289,9 @@ private:
     float Disturbance = 0.0f;
     float LightEnvelope = 0.65f;
     float SmoothIntensity = 0.0f;
+    float BurnElapsedSeconds = 0.0f;
+    float BurnDurationSeconds = 0.0f;
+    float InitialBurnIntensity = 1.0f;
     bool bInitialized = false;
     bool bPlaying = false;
 };

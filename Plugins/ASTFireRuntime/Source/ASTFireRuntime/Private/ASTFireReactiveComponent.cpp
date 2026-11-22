@@ -128,6 +128,9 @@ void UASTFireReactiveComponent::BeginPlay()
     bPlaying = true;
     bStartLit = bStartLit && Intensity > 0.005f;
     SmoothIntensity = bStartLit ? Intensity : 0.0f;
+    BurnElapsedSeconds = 0.0f;
+    BurnDurationSeconds = ComputeBurnDuration();
+    InitialBurnIntensity = Intensity;
     InitializeFire();
 
     if (Light) Light->SetIntensity(LightPower * SmoothIntensity);
@@ -1127,12 +1130,42 @@ void UASTFireReactiveComponent::RefreshFireVisuals()
     InitializeFire();
 }
 
+float UASTFireReactiveComponent::ComputeBurnDuration() const
+{
+    float SizeCm = FMath::Max(10.f, ReferenceSizeCm);
+    if (const UPrimitiveComponent* Primitive =
+        Cast<UPrimitiveComponent>(FindTargetComponent()))
+    {
+        // World-space mesh bounds work for StaticMesh and animated SkeletalMesh;
+        // use the largest dimension, not unbounded cubic volume scaling.
+        SizeCm = FMath::Max(10.f, float(
+            Primitive->Bounds.BoxExtent.GetMax()) * 2.f);
+    }
+    const float RelativeSize = SizeCm / FMath::Max(10.f, ReferenceSizeCm);
+    const float Factor = FMath::Clamp(FMath::Pow(RelativeSize, .42f),
+        .7f, FMath::Max(1.f, MaxBurnSizeMultiplier));
+    return FMath::Max(.1f, BaseBurnSeconds) * Factor;
+}
+
 void UASTFireReactiveComponent::SetFireIntensity(float NewIntensity)
 {
     if (bPlaying && GetOwner() && GetOwner()->GetNetMode() == NM_Client)
         return; // Fire gameplay state is server authoritative.
+    const bool bWasLit = bStartLit && Intensity > 0.005f;
     Intensity = FMath::Clamp(NewIntensity, 0.0f, 1.0f);
     bStartLit = Intensity > 0.005f;
+    if (bStartLit && !bWasLit)
+    {
+        // Explicit re-ignition starts a fresh fuel clock.
+        BurnElapsedSeconds = 0.f;
+        BurnDurationSeconds = ComputeBurnDuration();
+        InitialBurnIntensity = Intensity;
+    }
+    else if (bStartLit && bAutoExtinguish)
+    {
+        // An external intensity adjustment changes fuel heat, not elapsed age.
+        InitialBurnIntensity = FMath::Max(InitialBurnIntensity, Intensity);
+    }
     UpdateVisibility();
 }
 
@@ -1177,8 +1210,12 @@ void UASTFireReactiveComponent::IgniteAtWorldPosition(FVector WorldPosition)
 void UASTFireReactiveComponent::UpdateVisibility()
 {
     const bool bLit = bStartLit && Intensity > 0.005f;
+    // Never cut the living mesh/lights abruptly at the authoritative timer.
+    // Its smooth thermal tail and already-detached children finish naturally.
+    const bool bAfterglow = bPlaying && SmoothIntensity > .012f;
+    const bool bShowFire = bLit || bAfterglow;
     UpdateSurfaceVisibility();
-    if (IsValid(FreeFlames)) FreeFlames->SetFlamesVisible(bLit);
+    if (IsValid(FreeFlames)) FreeFlames->SetFlamesVisible(bShowFire);
     for (UStaticMeshComponent* Card : FireCards)
         if (IsValid(Card)) Card->SetVisibility(bLit);
     for (UProceduralMeshComponent* Volume : FireVolumes)
@@ -1192,8 +1229,8 @@ void UASTFireReactiveComponent::UpdateVisibility()
     }
     if (IsValid(Light))
     {
-        Light->SetVisibility(bLit);
-        if (!bLit) Light->SetIntensity(0.0f);
+        Light->SetVisibility(bShowFire);
+        if (!bShowFire) Light->SetIntensity(0.0f);
         else if (!bPlaying) Light->SetIntensity(LightPower * Intensity);
     }
 }
@@ -1230,6 +1267,33 @@ void UASTFireReactiveComponent::TickComponent(
     if (!bPlaying || !GetOwner() || !GetWorld() || DeltaTime <= KINDA_SMALL_NUMBER)
         return;
     if (!bInitialized) InitializeFire();
+
+    // Only the authoritative instance consumes fuel and changes replicated
+    // burning state; clients use the replicated Intensity and local smoothing.
+    if (GetOwner()->HasAuthority() && bAutoExtinguish && bStartLit)
+    {
+        if (BurnDurationSeconds <= 0.f)
+        {
+            BurnDurationSeconds = ComputeBurnDuration();
+            InitialBurnIntensity = Intensity;
+        }
+        BurnElapsedSeconds += DeltaTime;
+        const float FadeStart = FMath::Max(0.f,
+            BurnDurationSeconds - FMath::Max(.1f, BurnFadeSeconds));
+        if (BurnElapsedSeconds >= FadeStart)
+        {
+            const float Fade = FMath::Clamp(
+                (BurnDurationSeconds - BurnElapsedSeconds) /
+                FMath::Max(.01f, BurnDurationSeconds - FadeStart), 0.f, 1.f);
+            Intensity = InitialBurnIntensity * FMath::Pow(Fade, 1.2f);
+            if (BurnElapsedSeconds >= BurnDurationSeconds)
+            {
+                Intensity = 0.f;
+                bStartLit = false;
+                UpdateVisibility();
+            }
+        }
+    }
 
     const FVector Position = GetOwner()->GetActorLocation();
     const FVector Velocity = (Position - LastOwnerPosition) / DeltaTime;
@@ -1298,7 +1362,9 @@ void UASTFireReactiveComponent::TickComponent(
         LocalDisturbance > Disturbance ? 17.0f : 4.0f);
     const float TargetIntensity = bStartLit ? Intensity : 0.0f;
     SmoothIntensity = FMath::FInterpTo(
-        SmoothIntensity, TargetIntensity, DeltaTime, 6.0f);
+        SmoothIntensity, TargetIntensity, DeltaTime, 8.0f);
+    if (!bStartLit && SmoothIntensity < .012f)
+        UpdateVisibility(); // Hide only once the residual flame has faded.
 
     const float Time = GetWorld()->GetTimeSeconds();
     const float Pulse = 0.55f + 0.22f * FMath::Sin(Time * 5.8f)
