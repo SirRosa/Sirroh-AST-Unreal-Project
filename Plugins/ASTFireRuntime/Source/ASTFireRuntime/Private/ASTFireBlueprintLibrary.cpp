@@ -1,0 +1,55 @@
+#include "ASTFireBlueprintLibrary.h"
+#include "ASTFireReactiveComponent.h"
+#include "GameFramework/Actor.h"
+
+UASTFireReactiveComponent* UASTFireBlueprintLibrary::FindFireComponent(
+    const AActor* Target)
+{
+    return IsValid(Target)
+        ? Target->FindComponentByClass<UASTFireReactiveComponent>()
+        : nullptr;
+}
+
+UASTFireReactiveComponent* UASTFireBlueprintLibrary::IgniteActor(
+    AActor* Target, FVector HitWorldPosition, float Strength, int32 DesiredFlamePoints)
+{
+    if (!IsValid(Target))
+        return nullptr;
+
+    UASTFireReactiveComponent* Fire = FindFireComponent(Target);
+    if (!IsValid(Fire))
+    {
+        // Runtime-only component: leave the actor's authored components intact.
+        Fire = NewObject<UASTFireReactiveComponent>(
+            Target, NAME_None, RF_Transient);
+        if (!Fire) return nullptr;
+        Fire->Intensity = 0.0f;
+        Fire->bStartLit = false;
+        Target->AddInstanceComponent(Fire);
+        Fire->RegisterComponent();
+    }
+
+    if (DesiredFlamePoints > 1)
+    {
+        Fire->SetFireCoverage(
+            EASTFireCoverage::Bounds,
+            FMath::Clamp(DesiredFlamePoints, 1, 16));
+    }
+
+    Fire->Ignite(FMath::Clamp(Strength, 0.05f, 1.0f));
+    Fire->IgniteAtWorldPosition(HitWorldPosition);
+    return Fire;
+}
+
+void UASTFireBlueprintLibrary::ExtinguishActor(AActor* Target)
+{
+    if (UASTFireReactiveComponent* Fire = FindFireComponent(Target))
+        Fire->Extinguish();
+}
+
+bool UASTFireBlueprintLibrary::IsActorBurning(const AActor* Target)
+{
+    if (const UASTFireReactiveComponent* Fire = FindFireComponent(Target))
+        return Fire->bStartLit && Fire->Intensity > 0.005f;
+    return false;
+}
