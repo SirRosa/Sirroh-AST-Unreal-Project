@@ -114,3 +114,13 @@ building and deploying the ASTFireRuntime plugin. It only creates/updates
 GitHub Actions checks Python syntax, C++ structure, and dynamic contour metrics.
 Real UE5.8.1 build and headless commandlet are required before claiming deployed.
 Never claim visual/PIE gameplay validated without user screenshots.
+
+
+### Stage 6: verified UE5.8.1 build, editor assets (2026-11-22)
+
+- Plugin C++ commit: 41392d01e4a42c2c7e60eeaf0fa42bbfe6cab2d5. BuildPlugin on Win64 succeeded, two editor DLLs deployed. Small-file backup: Saved/ChatGPT/NiagaraFire/Stage6/Backup_20261122_043841.
+- setup_stage4_volume.py: UE commandlet exit 0, VOLUME_ASSET_CONFIGURED_REQUIRES_USER_VIEW, no errors.
+- Python asset setup fix: ec5843b753c622036ec5f60e16fa2cf04c4a6ebb. setup_stage6_igniter.py: exit 0, IGNITER_CREATED_REQUIRES_CONTACT_TEST, exactly one ASTFireIgnitionZoneComponent and one ASTFireReactiveComponent, errors []. Result: Saved/ChatGPT/NiagaraFire/Stage6/stage6_result.json. Run log: stage6_dedup_retry.log.
+- Saved variant: /Game/VFX/Fire/Blueprints/BP_AST_FireSource_Igniter. Original base fire source and unrelated maps unaffected except intended Stage6 material/visual configuration.
+- UE CDO crash fixed by moving ALL collision/scene setters out of component constructor into BeginPlay. Unreal SubobjectData handles duplicate object paths, so script deduplicates before validating/adding.
+- Important: neither visual quality of the flame's top/bottom nor actual contact gameplay has yet been tested in PIE. No char/damage logic is implemented. For contact to work, the other actor must have compatible collision and generate overlap events. Unreplicated actors are not guaranteed to share ignition state across multiplayer clients.
