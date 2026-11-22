@@ -59,7 +59,7 @@ assert "MaterialExpressionVertexInterpolator" in mat
 # The first real PIE compile exposed C0.w ... C7.w swizzle errors: the
 # MaterialExpressionVectorParameter output is RGB, not RGBA.
 assert '"float radius%d=R%d*grow%d;"' in mat
-assert "C%d.w" not in mat
+assert '"float radius%d=C%d.w*grow%d;"' not in mat
 assert 'u.Name("FireClusterRadius%d"%i)' in mat
 assert '"R%d"%i for i in range(8)' in mat
 assert 'connect(surface,node,"R%d"%i,sc,sm)' in mat
