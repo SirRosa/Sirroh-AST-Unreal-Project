@@ -28,6 +28,18 @@ jobs:
         run: |
           python -m py_compile Automation/ASTFire/fix_stage2_materials.py
           python -m py_compile Automation/ASTFire/finalize_stage2.py
+      - name: Parse PowerShell deployment script
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          $path = "Automation/ASTFire/deploy_stage2_windows.ps1"
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            $path, [ref]$tokens, [ref]$errors) | Out-Null
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error $_.Message }
+            exit 1
+          }
       - name: Verify intended project boundaries
         shell: python
         run: |
