@@ -389,3 +389,24 @@ This preserves the existing user-approved tongue lifecycle/bridge.
 PIE validation of coverage on different meshes and performance, and checks
 for overlay conflicts. The initial CPU clustering uses rest-pose Euclidean
 distance, not a full mesh-topology flood solver.
+
+
+### Shader validation resource limit / status (2026-11-22)
+
+After the source-first fix, compiled and installed exact SHA
+`9f0f00b62a800a25ce4a2111dfc5a68457b6d07d` on UE 5.8.1:
+BuildPlugin EXIT 0; deployed 2 DLLs; all four NullRHI asset commandlets
+reported Exit 0. Prior successful backup remains at
+`Saved/ChatGPT/NiagaraFire/Stage10_BEST_20261122`, the new deployment
+made its own backup under `Stage10/Backup_20261122_073139`.
+Static GitHub CI passed both checks for that revision.
+
+The new full RHI verification started tens of thousands of unrelated
+WorldGrid/Nanite/global shader permutations due to missing warm shader
+cache and XGE fallback. The attempt and a narrower CompileShadersTestBed
+attempt were safely stopped; **do not claim that GPU shader compile or
+appearance passed**. Exact original PIE failure was corrected in script
+by passing PreSkinnedPosition through a VertexInterpolator and setting
+`used_with_skeletal_mesh=true`; this remains to be confirmed at runtime.
+`deploy_stage10_windows.ps1` now uses an opt-in `-ValidateGPU` switch,
+avoiding expensive cold DDC compilation on every install.

@@ -90,6 +90,9 @@ assert "M_AST_FireTongue.uasset" in install
 assert "M_AST_FireSurfaceLife.uasset" in install
 assert "STAGE10_BUILD_EXIT" in install
 assert "verify_stage10_gpu.py" in install
+assert "[switch]$ValidateGPU" in install
+assert "if($ValidateGPU){" in install
+assert "STAGE10_GPU_SHADER_UNVERIFIED_OPT_IN_VALIDATEGPU" in install
 assert "-AllowCommandletRendering" in install
 assert "-RenderOffscreen" in install
 assert "Failed to compile Material" in install

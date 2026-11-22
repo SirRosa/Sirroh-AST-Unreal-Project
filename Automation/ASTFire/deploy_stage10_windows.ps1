@@ -3,7 +3,8 @@
 param(
   [string]$ProjectRoot = 'D:\0 Sirro\Unreal Projects\AST_V1_18',
   [string]$EngineRoot = 'D:\0 Sirro\UE 5.8.1\UE_5.8',
-  [string]$Revision = ''
+  [string]$Revision = '',
+  [switch]$ValidateGPU
 )
 $ErrorActionPreference='Stop'
 $ProgressPreference='SilentlyContinue'
@@ -127,6 +128,7 @@ foreach($step in $steps){
     throw ('Commandlet failed '+$step.Name)
   }
 }
+if($ValidateGPU){
 # NullRHI commandlets do not catch pixel shader errors. Prior UE PIE
 # reported PreSkinnedPosition used in pixel stage and missing SkeletalMesh
 # usage even though all four commandlets returned Exit 0.
@@ -147,5 +149,11 @@ if($gpuExit -ne 0 -or $gpuJson.status -ne 'STAGE10_GPU_GRAPH_AND_USAGE_CHECKED_S
   $shaderErrors | Select-Object -Last 12 | ForEach-Object {$_.Line}
   Get-Content -LiteralPath $gpuLog -Tail 30
   throw 'Real-RHI GPU material check failed; do not claim visual success'
+}
+}else{
+  # Real RHI initializes many thousands of unrelated default/Nanite/global
+  # shader permutations on cold DDC. This is opt-in and must not block
+  # ordinary rebuild/deploy. Manual PIE still validates its visual result.
+  Write-Output 'STAGE10_GPU_SHADER_UNVERIFIED_OPT_IN_VALIDATEGPU'
 }
 Write-Output 'STAGE10_INSTALL_SUCCESS_VISUAL_AND_CONTACT_TEST_PENDING'
