@@ -131,10 +131,14 @@ void UASTFireFreeFlameComponent::ConfigureGeneration(FTongue& Tongue)
 {
     ++Tongue.Generation;
     const int32 Salt = Tongue.Generation * 113 + int32(Tongue.Seed * 917.f);
+    // Preserve the approved growing/bridging/retracting timing. Only the
+    // per-generation shape is diversified: some short/thin licks, some
+    // long broad tongues, all within the same living source field.
     Tongue.GrowSeconds = .48f + .76f * Uniform(Salt + 1);
-    // Avoid long identical tentacles: the mesh-wide mantle is the real source.
-    Tongue.MaxLength = (26.f + 80.f * Uniform(Salt + 2)) * Tongue.Scale;
-    Tongue.BaseWidth = (8.f + 18.f * Uniform(Salt + 3)) * Tongue.Scale;
+    Tongue.MaxLength = (19.f + 158.f *
+        FMath::Pow(Uniform(Salt + 2),1.34f)) * Tongue.Scale;
+    Tongue.BaseWidth = (5.5f + 38.f *
+        FMath::Pow(Uniform(Salt + 3),1.65f)) * Tongue.Scale;
     Tongue.RemainingFraction = .30f + .27f * Uniform(Salt + 4);
     Tongue.Phase = 6.283185f * Uniform(Salt + 5);
 }
@@ -234,19 +238,20 @@ void UASTFireFreeFlameComponent::BuildAnchors()
 {
     Tongues.Reset();
     if (!IsValid(Source)) return;
-    int32 DesiredCount = 5; // animated characters: 3–6
+    int32 DesiredCount = 5; // retain compact free-standing fire
     if (Cast<USkeletalMeshComponent>(Source))
     {
-        DesiredCount = 3 + FMath::RoundToInt(Uniform(731) * 3.f);
+        // A whole character needs head/torso/arms/legs, not 3 foot roots.
+        DesiredCount = 10 + FMath::RoundToInt(Uniform(731) * 4.f);
     }
     else if (const UStaticMeshComponent* Static = Cast<UStaticMeshComponent>(Source))
     {
         const FVector Size = Static->Bounds.BoxExtent * 2.f;
         const float Area = 2.f * (Size.X * Size.Y + Size.Y * Size.Z + Size.Z * Size.X);
         const float MaxSide = Size.GetMax();
-        DesiredCount = MaxSide < 140.f ? 4 + FMath::RoundToInt(Uniform(732))
-            : MaxSide > 340.f ? 10 + FMath::RoundToInt(Uniform(733) * 5.f)
-            : FMath::Clamp(FMath::RoundToInt(Area / 21000.f) + 4, 5, 10);
+        DesiredCount = MaxSide < 140.f ? 8 + FMath::RoundToInt(Uniform(732)*3.f)
+            : MaxSide > 340.f ? 12 + FMath::RoundToInt(Uniform(733)*3.f)
+            : FMath::Clamp(FMath::RoundToInt(Area / 14500.f) + 7, 9, 14);
     }
     DesiredCount = FMath::Clamp(DesiredCount, 3, MaxTongues);
 
@@ -266,6 +271,14 @@ void UASTFireFreeFlameComponent::BuildAnchors()
                     Candidates.Add(FMath::Clamp(
                         (I * N + N / 3) / Cap, 0, N-1));
             }
+            // Surface-centered first ignition, then farthest-point sampling
+            // over the ENTIRE rest mesh. Never confine later roots to the
+            // initial 38-78cm patch (which isolated only the character feet).
+            FBox CandidateBounds(ForceInit);
+            for (const int32 Id:Candidates)
+                CandidateBounds+=FVector(
+                    LOD.StaticVertexBuffers.PositionVertexBuffer.VertexPosition(Id));
+            const FVector SurfaceCenter=CandidateBounds.GetCenter();
             for (int32 Slot=0; Slot<DesiredCount && Candidates.Num()>0; ++Slot)
             {
                 int32 Best = INDEX_NONE;
@@ -273,17 +286,8 @@ void UASTFireFreeFlameComponent::BuildAnchors()
                 for (int32 Id : Candidates)
                 {
                     const FVector P(LOD.StaticVertexBuffers.PositionVertexBuffer.VertexPosition(Id));
-                    // Nearby skinned roots belong to ONE source. The previous
-                    // farthest-point sampling scattered one flame per limb.
-                    if (!Tongues.IsEmpty())
-                    {
-                        const float PatchRadius=FMath::Clamp(
-                            Skeletal->Bounds.BoxExtent.GetMax()*.42f,38.f,78.f);
-                        if (FVector::DistSquared(P,Tongues[0].RestPosition)>
-                            FMath::Square(PatchRadius)) continue;
-                    }
                     double Distance = Tongues.IsEmpty()
-                        ? -FVector::DistSquared(P, FVector::ZeroVector)
+                        ? -FVector::DistSquared(P, SurfaceCenter)
                         : TNumericLimits<double>::Max();
                     for (const FTongue& Existing : Tongues)
                         Distance = FMath::Min(Distance,
@@ -304,7 +308,7 @@ void UASTFireFreeFlameComponent::BuildAnchors()
                 Root.RestPosition = FVector(
                     LOD.StaticVertexBuffers.PositionVertexBuffer.VertexPosition(Best));
                 Root.Seed = Uniform(Slot + 180) * 103.f;
-                Root.Scale = .65f + .38f * Uniform(Slot + 270);
+                Root.Scale = .65f + .57f * Uniform(Slot + 270);
                 Tongues.Add(Root);
                 Candidates.Remove(Best);
             }
@@ -332,32 +336,71 @@ void UASTFireFreeFlameComponent::BuildAnchors()
             Tongues.Add(Root);
         }
 
-        for (int32 I=0; I<DesiredCount*4 && Tongues.Num()<DesiredCount; ++I)
+        // Deterministic 6-face surface lattice (96 once-only complex traces),
+        // then farthest-point selection. Avoid pseudo-random hot specks on
+        // just two cube faces while preserving precise real hit positions.
+        TArray<FVector> SurfaceCandidates;
+        SurfaceCandidates.Reserve(96);
+        const FTransform Transform=Static->GetComponentTransform();
+        const float Far=2.6f*Half.GetMax()+12.f;
+        FCollisionQueryParams Query;
+        Query.bTraceComplex=true;
+        for(int32 Face=0;Face<6;++Face)
+            for(int32 A=0;A<4;++A)
+                for(int32 B=0;B<4;++B)
+                {
+                    const float U=(float(A)/3.f)*1.72f-.86f;
+                    const float V=(float(B)/3.f)*1.72f-.86f;
+                    FVector Normal=FVector::UpVector,Point=Bounds.Origin;
+                    switch(Face)
+                    {
+                    case 0: Point+=FVector(U*Half.X,V*Half.Y,Half.Z);break;
+                    case 1: Normal=FVector(1,0,0);
+                        Point+=FVector(Half.X,U*Half.Y,V*Half.Z);break;
+                    case 2: Normal=FVector(-1,0,0);
+                        Point+=FVector(-Half.X,U*Half.Y,V*Half.Z);break;
+                    case 3: Normal=FVector(0,1,0);
+                        Point+=FVector(U*Half.X,Half.Y,V*Half.Z);break;
+                    case 4: Normal=FVector(0,-1,0);
+                        Point+=FVector(U*Half.X,-Half.Y,V*Half.Z);break;
+                    default: Normal=FVector(0,0,-1);
+                        Point+=FVector(U*Half.X,V*Half.Y,-Half.Z);break;
+                    }
+                    FHitResult Hit;
+                    if(!Static->LineTraceComponent(Hit,
+                        Transform.TransformPosition(Point+Normal*18.f),
+                        Transform.TransformPosition(Point-Normal*Far),Query))
+                        continue; // Never invent anchors outside real collision.
+                    const FVector Rest=Transform.InverseTransformPosition(
+                        FVector(Hit.ImpactPoint));
+                    bool bDuplicate=false;
+                    for(const FVector& Existing:SurfaceCandidates)
+                        if(FVector::DistSquared(Existing,Rest)<FMath::Square(8.f))
+                        {bDuplicate=true;break;}
+                    if(!bDuplicate) SurfaceCandidates.Add(Rest);
+                }
+        while(Tongues.Num()<DesiredCount && !SurfaceCandidates.IsEmpty())
         {
-            const float A = Uniform(I*3+201)*1.84f-.92f;
-            const float B = Uniform(I*3+202)*1.84f-.92f;
-            const int32 Face = I%5;
-            FVector Normal = FVector::UpVector, Point=Bounds.Origin;
-            if (Face==0) Point+=FVector(A*Half.X,B*Half.Y,Half.Z);
-            if (Face==1) {Normal=FVector(1,0,0);Point+=FVector(Half.X,A*Half.Y,B*Half.Z);}
-            if (Face==2) {Normal=FVector(-1,0,0);Point+=FVector(-Half.X,A*Half.Y,B*Half.Z);}
-            if (Face==3) {Normal=FVector(0,1,0);Point+=FVector(A*Half.X,Half.Y,B*Half.Z);}
-            if (Face==4) {Normal=FVector(0,-1,0);Point+=FVector(A*Half.X,-Half.Y,B*Half.Z);}
-            const float Far=2.6f*Half.GetMax()+12.f;
-            FHitResult Hit;
-            FCollisionQueryParams Query;
-            Query.bTraceComplex=true;
-            const FTransform Transform=Static->GetComponentTransform();
-            if (!Static->LineTraceComponent(Hit,
-                Transform.TransformPosition(Point+Normal*18.f),
-                Transform.TransformPosition(Point-Normal*Far),Query))
-                continue; // No fabricated points when collision is missing.
-            const FVector WorldHit(Hit.ImpactPoint.X,Hit.ImpactPoint.Y,Hit.ImpactPoint.Z);
+            int32 Best=INDEX_NONE;
+            double BestScore=-TNumericLimits<double>::Max();
+            for(int32 I=0;I<SurfaceCandidates.Num();++I)
+            {
+                const FVector& P=SurfaceCandidates[I];
+                double Score=Tongues.IsEmpty()
+                    ? -FVector::DistSquared(P,Bounds.Origin)
+                    : TNumericLimits<double>::Max();
+                for(const FTongue& Existing:Tongues)
+                    Score=FMath::Min(Score,
+                        FVector::DistSquared(P,Existing.RestPosition));
+                if(Score>BestScore){BestScore=Score;Best=I;}
+            }
+            if(Best==INDEX_NONE)break;
             FTongue Root;
-            Root.RestPosition = Transform.InverseTransformPosition(WorldHit);
-            Root.Seed = Uniform(I+380)*103.f;
-            Root.Scale = FMath::Clamp(Half.GetMax()/190.f,.45f,1.25f);
+            Root.RestPosition=SurfaceCandidates[Best];
+            Root.Seed=Uniform(Tongues.Num()+380)*103.f;
+            Root.Scale=FMath::Clamp(Half.GetMax()/190.f,.45f,1.25f);
             Tongues.Add(Root);
+            SurfaceCandidates.RemoveAtSwap(Best);
         }
     }
     if (Tongues.IsEmpty() && !Cast<UMeshComponent>(Source))
@@ -437,8 +480,18 @@ FVector UASTFireFreeFlameComponent::TongueCenterAt(
         V*V*(1.2f+5.f*Tongue.Scale);
     const float Curl2=FMath::Sin(V*13.3f-Elapsed*5.1f+Tongue.Seed)*
         V*(.9f+2.8f*Tongue.Scale);
+    // Per-tongue buoyant oscillation and a persistent sideways inclination.
+    // Root stays fixed (V=0); tips dance independently in wind and inertia.
+    const float SwaySpeed=1.7f+3.6f*ASTFireLife::Hash(Tongue.Seed*.31f);
+    const float SwayAmplitude=(7.f+23.f*
+        ASTFireLife::Hash(Tongue.Seed*.47f))*Tongue.Scale;
+    const float Lean=(ASTFireLife::Hash(Tongue.Seed*.79f)*2.f-1.f)*
+        FMath::Min(Tongue.CurrentLength*.34f,42.f);
+    const float Dance=(FMath::Sin(Elapsed*SwaySpeed+Phase)+
+        .37f*FMath::Sin(Elapsed*SwaySpeed*1.81f+Tongue.Seed))*
+        SwayAmplitude*FMath::Pow(V,1.35f);
     return Base+FVector::UpVector*Tongue.CurrentLength*V+
-        Flow*V*V*.095f+Right*(Curl+Curl2);
+        Flow*V*V*.095f+Right*(Curl+Curl2+Lean*V+Dance);
 }
 
 int32 UASTFireFreeFlameComponent::EmitTip(
@@ -450,12 +503,27 @@ int32 UASTFireFreeFlameComponent::EmitTip(
     Child.bAlive=true;
     Child.Age=0.f;
     Child.Lifetime=.52f + .68f*Uniform(Salt+3);
-    Child.Length=Length*(.22f+.21f*Uniform(Salt+4));
-    Child.Width=Tongue.BaseWidth*(.48f+.28f*Uniform(Salt+5));
-    // Detached tip starts exactly where the parent ended.
-    Child.Position=Base+FVector::UpVector*Length+Flow*.095f;
+    // Preserve phase timing. Match the visible detached mass to the
+    // (1 - remaining fraction) of the mother tongue about to retract.
+    Child.Length=Length*(1.f-Tongue.RemainingFraction)*
+        (.82f+.25f*Uniform(Salt+4));
+    Child.Width=Tongue.CurrentWidth*(.76f+.36f*Uniform(Salt+5));
+    // The detached piece starts at the EXACT current dancing curve tip,
+    // otherwise introducing independent sway would break the approved bridge.
+    FVector View=FVector::ForwardVector;
+    if(const UWorld* World=GetWorld())
+        if(const APlayerController* PC=World->GetFirstPlayerController())
+            if(const APlayerCameraManager* Cam=PC->PlayerCameraManager)
+                View=(Cam->GetCameraLocation()-GetOwner()->GetActorLocation())
+                    .GetSafeNormal();
+    FVector Right=FVector::CrossProduct(FVector::UpVector,View).GetSafeNormal();
+    if(Right.IsNearlyZero())Right=FVector::RightVector;
+    Child.Position=TongueCenterAt(Tongue,Base,1.f,Right);
+    // Distinct lateral ejection even in still air; old rise/heat/life remains.
     Child.Velocity=FVector::UpVector*(65.f+60.f*Uniform(Salt+7))+
-        Flow*.28f-Tongue.WorldVelocity*.12f;
+        Flow*.28f-Tongue.WorldVelocity*.12f+
+        FVector::RightVector*(Uniform(Salt+10)*2.f-1.f)*110.f+
+        FVector::ForwardVector*(Uniform(Salt+11)*2.f-1.f)*95.f;
     Child.Temperature=.70f + .19f*Uniform(Salt+8);
     Child.Seed=Uniform(Salt+9)*102.f;
     Child.Right=FVector::RightVector;

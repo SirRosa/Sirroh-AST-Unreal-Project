@@ -1,8 +1,9 @@
 """Stage14: protect approved life cycle and test mantle-to-tongue continuity.
 
 This is a structural/numerical test, not a visual, RHI, or PIE validation.
-All lifecycle reference hashes were captured from the protected backup
-b53ecb7906823f93f2d8c67941e1e7b1467ffc27.
+Generation distribution and detached mass are intentionally modified in Stage16.
+The transition/state machine (AdvanceSimulation) and AddStrip hashes remain
+bit-identical to protected Stage15 c8ebec3f3ef805bd43c1d88db2337db56b7cceb4.
 """
 from pathlib import Path
 from math import sqrt
@@ -19,12 +20,12 @@ LOCKS = [
     {
         "start": "void UASTFireFreeFlameComponent::ConfigureGeneration(",
         "end": "void UASTFireFreeFlameComponent::RebuildClusters(",
-        "hash": "f29d248e"
+        "hash": "957fd72e"
     },
     {
         "start": "int32 UASTFireFreeFlameComponent::EmitTip(",
         "end": "void UASTFireFreeFlameComponent::AdvanceSimulation(",
-        "hash": "e09c2831"
+        "hash": "479d3642"
     },
     {
         "start": "void UASTFireFreeFlameComponent::AdvanceSimulation(",
@@ -70,7 +71,9 @@ assert ribbon.count("AddStrip(C,W,H")==2  # attached hidden; detached unchanged
 assert ribbon.count("AddStrip(BC,BW,BH")==1
 assert ribbon.index("UpdateConnectedSource(bCreate, View, Right)") < ribbon.index(
     "const FVector Base=ConnectedRoots.IsValidIndex(I)")
-assert "PatchRadius=FMath::Clamp(" in c
+assert "FBox CandidateBounds(ForceInit);" in c
+assert "SurfaceCandidates.Reserve(96);" in c
+assert "PatchRadius=FMath::Clamp(" not in c
 
 from math import sin
 def radius(v,width=18.):
@@ -88,4 +91,4 @@ assert heat_at(21.,14.)==0
 assert "static constexpr int32 SourceGridX = 32;" in Path(
     "Plugins/ASTFireRuntime/Source/ASTFireRuntime/Public/ASTFireFreeFlameComponent.h"
 ).read_text()
-print("Stage15: lifecycle hashes intact, single living field, no full-body MST/blanket")
+print("Stage16: State machine hash intact; coverage/variation and Stage15 field guards OK")

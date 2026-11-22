@@ -530,3 +530,31 @@ world-space detached geometry are preserved exactly as before.
   bridging, retraction, split trajectories and heat palette intact.
 - This is still a 2.5D camera-facing style, **not a 3D fluid simulation**.
 - Visual appearance and gameplay must be checked by the user in PIE.
+
+
+### Stage16 — full-body coverage and dancing tongues (2026-11-22)
+
+**Stage15 is the first stable GitHub `main`**, fixed at
+`c8ebec3f3ef805bd43c1d88db2337db56b7cceb4`.
+Stage16 changes only the work branch:
+
+- Skeleton: replace the previous 38–78cm first-anchor patch restriction,
+  which confined fire to the feet, with 10–14 true skinned-vertex roots
+  distributed over the entire sampled skeleton (surface-centered seed +
+  3D farthest-point coverage). Each root remains attached to the animated
+  surface, using the Stage15 shared 2.5D heat silhouette.
+- Static meshes: 8–15 roots from a deterministic, six-face 4×4 complex
+  collision-ray lattice, selecting farthest uncovered surface points.
+  Missing collision does not create invented flying anchors.
+- Tongues: broad randomized generation-specific length (19–177cm x scale),
+  width (5.5–43.5cm x scale), individual horizontal lean and multi-frequency
+  turbulence; their origins stay fixed to their surface roots.
+- Detached: length proportional to the **actual lost mother-tongue height**
+  (82–107% of the removed segment), corresponding width, individual lateral
+  ejection vectors, and precise placement at the fully swaying visual tip.
+- Kept unchanged by byte-hash regression: `AdvanceSimulation` state
+  transitions/growth/bridging/retraction/detached motion and `AddStrip`.
+  New shape/launch parameters are deliberately protected by updated
+  tests. The original Stage15 `main` and backup remain untouched.
+- Still requires real UE 5.8.1 BuildPlugin and user PIE visual checks before
+  claiming success or acceptable performance. No CFD or gameplay physics.
