@@ -38,6 +38,7 @@ private:
     static constexpr int32 MaxTongues = 15;
     static constexpr int32 RingsPerTongue = 9;
     static constexpr int32 MaxDetached = 16;
+    static constexpr int32 MaxSparks = 24;
     static constexpr int32 RingsPerDetached = 5;
     static constexpr int32 BridgeRings = 4;
     static constexpr int32 SurfaceClusters = 8;
@@ -108,6 +109,17 @@ private:
         bool bAlive = false;
     };
 
+    struct FSpark
+    {
+        FVector Position = FVector::ZeroVector;
+        FVector Velocity = FVector::ZeroVector;
+        float Age = 0.f;
+        float Lifetime = .4f;
+        float Size = 2.f;
+        float Seed = 0.f;
+        bool bAlive = false;
+    };
+
     void BuildAnchors();
     void RebuildClusters();
     void BuildSourceAnchors();
@@ -118,6 +130,7 @@ private:
         float Fraction, const FVector& Right) const;
     void AdvanceSimulation(float Dt);
     void UpdateDetachedVortices(float Dt);
+    void UpdateSparks(float Dt);
     void UpdateGeometry(bool bCreate);
     void UpdateSurfaceMap(float Dt);
     int32 EmitTip(FTongue& Tongue, const FVector& Base, float Length,
@@ -145,6 +158,9 @@ private:
     // as mesh section 1. A tongue must not start on a different depth plane.
     TArray<FVector> ConnectedRoots;
     TArray<FDetached> Detached;
+    TArray<FSpark> Sparks;
+    float SparkSpawnDebt = 0.f;
+    int32 SparkCursor = 0;
     TArray<FVector> IgnitionPoints;
     FVector Wind = FVector::ZeroVector;
     float Heat = 1.f;

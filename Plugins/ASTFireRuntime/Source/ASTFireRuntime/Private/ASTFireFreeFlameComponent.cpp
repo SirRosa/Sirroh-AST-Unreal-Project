@@ -35,6 +35,7 @@ UASTFireFreeFlameComponent::UASTFireFreeFlameComponent()
     PrimaryComponentTick.TickInterval = .04f; // 25 Hz, visual only
     PrimaryComponentTick.TickGroup = TG_PostUpdateWork;
     Detached.SetNum(MaxDetached);
+    Sparks.SetNum(MaxSparks);
 }
 
 void UASTFireFreeFlameComponent::SetSource(
@@ -101,8 +102,10 @@ void UASTFireFreeFlameComponent::OnRegister()
     Render->SetupAttachment(GetOwner()->GetRootComponent());
     Render->SetMaterial(0, Material);
     Render->SetMaterial(1, Material); // unified mesh-bound source, same pixels
+    Render->SetMaterial(2, Material); // tiny bright embers in matching palette
     Render->RegisterComponent();
 
+    Sparks.SetNum(MaxSparks);
     BuildAnchors();
     BuildSourceAnchors();
     if (Tongues.Num() == 0)
@@ -123,6 +126,8 @@ void UASTFireFreeFlameComponent::OnUnregister()
     BurnClusters.Reset();
     SourceAnchors.Reset();
     ConnectedRoots.Reset();
+    Sparks.Reset();
+    SparkSpawnDebt = 0.f;
     bGenerated = false;
     Super::OnUnregister();
 }
@@ -682,6 +687,54 @@ void UASTFireFreeFlameComponent::UpdateSurfaceMap(float Dt)
     bClusterMapUploaded = true;
 }
 
+// Stage23: independent short-lived ember pool. Does not modify tongue/bridge
+// cycles or the approved detached vortices. Fixed topology and 25 Hz updates.
+void UASTFireFreeFlameComponent::UpdateSparks(float Dt)
+{
+    for (FSpark& S:Sparks)
+    {
+        if (!S.bAlive) continue;
+        S.Age+=Dt;
+        if (S.Age>=S.Lifetime) { S.bAlive=false; continue; }
+        const float Phase=S.Seed*.17f+S.Age*(12.f+S.Seed*.003f);
+        const FVector Whirl(
+            FMath::Sin(Phase)*75.f,FMath::Cos(Phase*1.37f)*55.f,
+            225.f+45.f*FMath::Sin(Phase*.67f));
+        S.Velocity+=(Whirl+Wind*.12f)*Dt;
+        S.Velocity=S.Velocity.GetClampedToMaxSize(750.f);
+        S.Position+=S.Velocity*Dt;
+    }
+    if (!bVisible || Heat<.15f || Tongues.IsEmpty()) return;
+    SparkSpawnDebt=FMath::Min(3.f,SparkSpawnDebt+
+        Dt*(2.2f+9.f*Heat*FMath::Clamp(Energy,.2f,1.2f)));
+    const int32 Born=FMath::Min(2,FMath::FloorToInt(SparkSpawnDebt));
+    SparkSpawnDebt-=Born;
+    for (int32 I=0;I<Born;++I)
+    {
+        FSpark& S=Sparks[SparkCursor%MaxSparks];
+        const int32 Salt=SparkCursor++;
+        const FTongue& T=Tongues[Salt%Tongues.Num()];
+        if (!T.bActive || T.Age<0.f) { S.bAlive=false; continue; }
+        const float Random=ASTFireLife::Hash(float(Salt)+T.Seed*.91f);
+        const float Other=ASTFireLife::Hash(float(Salt)*.71f+T.Seed);
+        const FVector Root=SampleRoot(T);
+        S.Seed=float(Salt)*.731f+T.Seed*.38f;
+        S.Position=Root+FVector::UpVector*
+            (T.CurrentLength*(.28f+.55f*Random));
+        S.Position+=FVector(
+            (Other-.5f)*T.CurrentWidth,
+            (Random-.5f)*T.CurrentWidth,
+            0.f);
+        S.Velocity=FVector(
+            (Other-.5f)*170.f,(Random-.5f)*150.f,
+            120.f+170.f*Random)+T.WorldVelocity*.16f+Wind*.07f;
+        S.Size=1.1f+2.1f*Other;
+        S.Lifetime=.21f+.45f*Random;
+        S.Age=0.f;
+        S.bAlive=true;
+    }
+}
+
 // Applied AFTER the approved life simulation. The age, cooling, death,
 // buoyancy and state machine above remain byte-for-byte unchanged.
 void UASTFireFreeFlameComponent::UpdateDetachedVortices(float Dt)
@@ -957,6 +1010,65 @@ void UASTFireFreeFlameComponent::UpdateGeometry(bool bCreate)
             Colors,Tangents,false);
     else
         Render->UpdateMeshSection_LinearColor(0,Verts,Normals,UVs,Colors,Tangents);
+
+    // Stage23: compact pixel-hot sparks, in fixed-size quad section 2.
+    // Even dead particles contribute degenerate, fully masked geometry;
+    // section topology never changes at runtime.
+    TArray<FVector> SV;
+    TArray<FVector2D> SU;
+    TArray<FLinearColor> SC;
+    TArray<int32> ST;
+    SV.Reserve(MaxSparks*4);SU.Reserve(MaxSparks*4);
+    SC.Reserve(MaxSparks*4);
+    if (bCreate) ST.Reserve(MaxSparks*6);
+    for (int32 I=0;I<MaxSparks;++I)
+    {
+        const FSpark& S=Sparks[I];
+        const float Fade=S.bAlive?FMath::Pow(FMath::Clamp(
+            1.f-S.Age/FMath::Max(.05f,S.Lifetime),0.f,1.f),.72f):0.f;
+        const FVector ToCamera=(CameraLocation-S.Position).GetSafeNormal();
+        const FVector N=ToCamera.IsNearlyZero()?View:ToCamera;
+        FVector Side=(CameraRight-N*
+            FVector::DotProduct(CameraRight,N)).GetSafeNormal();
+        if (Side.IsNearlyZero())
+            Side=FVector::CrossProduct(FVector::UpVector,N).GetSafeNormal();
+        if (Side.IsNearlyZero())
+            Side=FVector::CrossProduct(FVector::ForwardVector,N).GetSafeNormal();
+        const FVector Up=FVector::CrossProduct(N,Side).GetSafeNormal();
+        const float W=S.Size*(.45f+.55f*Fade);
+        const float L=S.Size*(1.5f+.65f*Fade);
+        const FVector Direction=(Up+S.Velocity.GetSafeNormal()*.25f)
+            .GetSafeNormal();
+        const FVector A=S.Position-Side*W;
+        const FVector B=S.Position+Side*W;
+        const FVector C=S.Position+Direction*L-Side*W*.38f;
+        const FVector D=S.Position+Direction*L+Side*W*.38f;
+        const FVector World[4]={A,B,C,D};
+        for (int32 J=0;J<4;++J)
+        {
+            SV.Add(RenderTransform.InverseTransformPosition(World[J]));
+            SU.Add(FVector2D((J%2)?1.f:0.f,(J/2)?1.f:0.f));
+            SC.Add(FLinearColor(Heat*Fade*(.87f+.13f*
+                ASTFireLife::Hash(S.Seed)),0.15f,
+                FMath::Frac(S.Seed*.017f),1.f));
+        }
+        if(bCreate)
+        {
+            const int32 K=I*4;
+            ST.Add(K);ST.Add(K+1);ST.Add(K+2);
+            ST.Add(K+1);ST.Add(K+3);ST.Add(K+2);
+        }
+    }
+    TArray<FVector> SN;
+    TArray<FProcMeshTangent> SX;
+    SN.Init(FVector::ForwardVector,SV.Num());
+    SX.Init(FProcMeshTangent(1,0,0),SV.Num());
+    if (bCreate)
+        Render->CreateMeshSection_LinearColor(
+            2,SV,ST,SN,SU,SC,SX,false);
+    else
+        Render->UpdateMeshSection_LinearColor(
+            2,SV,SN,SU,SC,SX);
 
     // Section 1 was authored before this section, so each tongue's
     // zero-width starting point lies inside the same filled fire source.
@@ -1520,14 +1632,20 @@ void UASTFireFreeFlameComponent::TickComponent(
 {
     Super::TickComponent(Dt,LevelTick,Function);
     if (!bGenerated || !IsValid(Render) || Dt<=KINDA_SMALL_NUMBER) return;
-    if (!bVisible || Heat<.005f)
+    bool bHasSparks=false;
+    for (const FSpark& S:Sparks)
+        if (S.bAlive) { bHasSparks=true; break; }
+    if ((!bVisible || Heat<.005f) && !bHasSparks)
     {
-        // no ticking geometry off-screen or when extinguished
+        // No active fire or embers: skip expensive field reconstruction.
         VisualEnergy=FMath::FInterpTo(VisualEnergy,0.f,Dt,6.f);
+        if (IsValid(Render)) Render->SetVisibility(false);
         return;
     }
     const float SimDt=FMath::Min(Dt,.08f);
     AdvanceSimulation(SimDt);
     UpdateDetachedVortices(SimDt);
+    UpdateSparks(SimDt);
     UpdateGeometry(false);
+    if (IsValid(Render)) Render->SetVisibility(true);
 }
