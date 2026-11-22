@@ -56,9 +56,14 @@ void UASTFireIgnitionZoneComponent::HandleBeginOverlap(
     bool bFromSweep, const FHitResult& SweepResult)
 {
     if (!IsValid(OtherActor) || !IsValid(OtherComponent)) return;
-    const FVector Point = (bFromSweep && !SweepResult.ImpactPoint.IsNearlyZero())
-        ? SweepResult.ImpactPoint
-        : OtherComponent->Bounds.Origin;
+    FVector Point = OtherComponent->Bounds.Origin;
+    if (bFromSweep && !SweepResult.ImpactPoint.IsNearlyZero())
+    {
+        // UE 5.8 HitResult stores a quantized vector; do not use a ternary
+        // with a large-world-coordinate FVector (incompatible scalar types).
+        Point = FVector(SweepResult.ImpactPoint.X,
+            SweepResult.ImpactPoint.Y, SweepResult.ImpactPoint.Z);
+    }
     IgniteTarget(OtherActor, Point);
 }
 
