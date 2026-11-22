@@ -341,3 +341,16 @@ Stage10 now authors the **surface-only** material as
 `MP_OPACITY`, and keeps the rising tongue material Masked. This is
 a targeted fix based on Epic's documented overlay API; still requires
 real PIE verification. Original mesh slots and base materials remain intact.
+
+
+### Stage10 connected-source / bridged-split hotfix — verified installation 2026-11-22
+
+- **Installed exact code revision:** `f3581e2b8469ce0e637e6c9fac7965c545ff3ed8`. GitHub Actions both `success`; actual Unreal Engine 5.8.1 BuildPlugin Win64 returned `STAGE10_BUILD_EXIT=0`.
+- Both runtime/editor DLLs deployed (`STAGE10_DEPLOYED_DLLS=2`); source assets and DLLs backed up to `Saved/ChatGPT/NiagaraFire/Stage10/Backup_20261122_070735`. The Unreal Editor was not running when files were replaced.
+- All four Unreal commandlets completed at exit 0 (Stage4 volume, Stage6 contact, Stage8 old surface, Stage10 final materials). Installer exit 0, `STAGE10_INSTALL_SUCCESS_VISUAL_AND_CONTACT_TEST_PENDING`.
+- Final `stage10_result.json`: `errors: []`, two owned fire Blueprints updated, `M_AST_FireTongue.uasset` (9382 B) and `M_AST_FireSurfaceLife.uasset` (34598 B) saved.
+- Final material commandlet log `setup_stage10_lifecycle.py_20261122_070735.log`: **0** matching critical Python/material/shader error lines. Material now authored as `BLEND_TRANSLUCENT` using `MP_OPACITY`, as required by Unreal's documented `UMeshComponent::OverlayMaterial` translucent pass; tongue ribbons remain Masked.
+- Runtime surface selection prioritizes the actual SkeletalMesh over large attachments, and the source's root region expands/merges on mesh triangles while tongue roots have no planar flat-bottom geometry.
+- Tip detachment now includes a short visible neck/bridge and smoothstep parent retraction, so parent length no longer instantaneously snaps from mature to short. New contacts join the same live source without restarting its growth cycles.
+- **NOT tested:** subjective quality/silhouette in PIE, exact mesh overlap on every actor, multiplayer gameplay, 1/10/30 actor frame rate. Those remain user's in-editor checks. Never claim visual quality from build/commandlets alone.
+
