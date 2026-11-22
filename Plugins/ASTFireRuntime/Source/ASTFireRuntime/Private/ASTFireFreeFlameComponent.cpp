@@ -132,7 +132,7 @@ void UASTFireFreeFlameComponent::BuildAnchors()
                 *GetOwner()->GetName(), Roots.Num());
         }
     }
-    else if (const UStaticMeshComponent* Static = Cast<UStaticMeshComponent>(Source))
+    else if (UStaticMeshComponent* Static = Cast<UStaticMeshComponent>(Source))
     {
         const FBoxSphereBounds Box = Static->CalcBounds(FTransform::Identity);
         const FVector Half = Box.BoxExtent.GetAbs();
