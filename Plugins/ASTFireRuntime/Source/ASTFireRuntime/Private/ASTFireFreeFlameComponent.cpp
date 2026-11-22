@@ -746,10 +746,20 @@ void UASTFireFreeFlameComponent::UpdateGeometry(bool bCreate)
     Colors.Reserve(Vertices);
 
     FVector View=FVector::ForwardVector;
+    // Source remains actor-facing. Detached fragments use their OWN
+    // camera ray and the camera's screen-right vector below.
+    FVector CameraLocation=GetOwner()->GetActorLocation()+
+        FVector::ForwardVector*1000.f;
+    FVector CameraRight=FVector::RightVector;
     if (const UWorld* World=GetWorld())
         if (const APlayerController* PC=World->GetFirstPlayerController())
             if (const APlayerCameraManager* Cam=PC->PlayerCameraManager)
-                View=(Cam->GetCameraLocation()-GetOwner()->GetActorLocation()).GetSafeNormal();
+            {
+                CameraLocation=Cam->GetCameraLocation();
+                CameraRight=Cam->GetCameraRotation().RotateVector(
+                    FVector::RightVector);
+                View=(CameraLocation-GetOwner()->GetActorLocation()).GetSafeNormal();
+            }
     FVector Right=FVector::CrossProduct(FVector::UpVector,View).GetSafeNormal();
     if (Right.IsNearlyZero()) Right=FVector::RightVector;
 
@@ -831,10 +841,31 @@ void UASTFireFreeFlameComponent::UpdateGeometry(bool bCreate)
         const float SpinSpeed=3.3f+5.f*ASTFireLife::Hash(D.Seed*.37f);
         const float Spin=D.Seed*.11f+D.Age*SpinSpeed;
         const float Angle=FMath::Sin(Spin)*.75f;
-        const FVector LocalUp=(FVector::UpVector*FMath::Cos(Angle)+
-            Right*FMath::Sin(Angle)).GetSafeNormal();
-        const FVector LocalSide=(Right*FMath::Cos(Angle)-
-            FVector::UpVector*FMath::Sin(Angle)).GetSafeNormal();
+        // Perspective-correct billboard centered on THIS fragment, not
+        // the actor root. Project camera screen-right onto its view plane.
+        // Unlike world-up crossing, this remains stable directly overhead.
+        const FVector ToCamera=(CameraLocation-D.Position).GetSafeNormal();
+        const FVector BillboardView=ToCamera.IsNearlyZero()?View:ToCamera;
+        const FVector ProjectedRight=CameraRight-BillboardView*
+            FVector::DotProduct(CameraRight,BillboardView);
+        FVector BillboardRight=ProjectedRight.GetSafeNormal();
+        if (BillboardRight.IsNearlyZero())
+            BillboardRight=FVector::CrossProduct(
+                FVector::UpVector,BillboardView).GetSafeNormal();
+        if (BillboardRight.IsNearlyZero())
+            BillboardRight=FVector::CrossProduct(
+                FVector::ForwardVector,BillboardView).GetSafeNormal();
+        if (BillboardRight.IsNearlyZero())
+            BillboardRight=FVector::CrossProduct(
+                FVector::RightVector,BillboardView).GetSafeNormal();
+        const FVector BillboardUp=FVector::CrossProduct(
+            BillboardView,BillboardRight).GetSafeNormal();
+        // Keep the approved independent spin and irregular silhouette,
+        // but rotate in the actual camera-facing billboard plane.
+        const FVector LocalUp=(BillboardUp*FMath::Cos(Angle)+
+            BillboardRight*FMath::Sin(Angle)).GetSafeNormal();
+        const FVector LocalSide=(BillboardRight*FMath::Cos(Angle)-
+            BillboardUp*FMath::Sin(Angle)).GetSafeNormal();
         for (int32 K=0;K<RingsPerDetached;++K)
         {
             const float V=float(K)/float(RingsPerDetached-1);
