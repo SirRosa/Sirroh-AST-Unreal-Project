@@ -14,11 +14,11 @@ class ASTFIREEDITOR_API UASTFireEditorLibrary : public UBlueprintFunctionLibrary
 {
     GENERATED_BODY()
 public:
-    UFUNCTION(BlueprintCallable, Category="AST Fire")
     /** Increase bounds so flames are not culled when fountain particles rise. */
     UFUNCTION(BlueprintCallable, Category="AST Fire")
     static FString RepairVisibilityBounds(UNiagaraSystem* System, float Radius = 1200.0f);
 
+    UFUNCTION(BlueprintCallable, Category="AST Fire")
     static FString BuildSystem(
         UNiagaraSystem* System,
         UNiagaraEmitter* Core,
