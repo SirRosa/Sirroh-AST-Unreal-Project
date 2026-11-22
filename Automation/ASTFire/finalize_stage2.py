@@ -73,23 +73,16 @@ def create_materials():
 
 
 def prepare_emitter(kind):
-    destination = ROOT + "/Emitters/NE_AST_Fire_" + kind
-    backup = ROOT + "/Backup/NE_AST_Fire_" + kind + "_FactoryBlank"
+    # Never replace or rename existing factory emitters. New V2 templates use
+    # distinct names, so a rerun cannot damage pre-existing assets/redirectors.
+    destination = ROOT + "/Emitters/NE_AST_Fire_" + kind + "_V2"
     template = "/Niagara/DefaultAssets/Templates/Emitters/Fountain"
-    ASSET_LIB.make_directory(ROOT + "/Backup")
-
-    if ASSET_LIB.does_asset_exist(backup):
-        # A previous run already backed up the original. Never replace it.
-        if ASSET_LIB.does_asset_exist(destination):
-            return load(destination), "existing-after-backup"
 
     if ASSET_LIB.does_asset_exist(destination):
-        # The Stage 2 factory emitter was blank. Preserve it for recovery.
-        require(not ASSET_LIB.does_asset_exist(backup),
-                "Backup collision: " + backup)
-        require(ASSET_LIB.rename_asset(destination, backup),
-                "Cannot back up factory emitter " + kind)
-        log_step("backup_" + kind, {"original": destination, "backup": backup})
+        obj = load(destination)
+        require(isinstance(obj, u.NiagaraEmitter),
+                "Existing V2 asset is not NiagaraEmitter: " + destination)
+        return obj, "existing-V2"
 
     require(ASSET_LIB.does_asset_exist(template),
             "Niagara built-in template Fountain is unavailable: " + template)
@@ -98,7 +91,7 @@ def prepare_emitter(kind):
     obj = load(destination)
     require(isinstance(obj, u.NiagaraEmitter),
             "Template copy is not NiagaraEmitter: " + destination)
-    return obj, "duplicated-Fountain"
+    return obj, "duplicated-Fountain-V2"
 
 
 def prepare_emitters():
