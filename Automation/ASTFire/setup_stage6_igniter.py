@@ -39,11 +39,15 @@ try:
     def gather():
         handles = list(subsys.k2_gather_subobject_data_for_blueprint(blueprint))
         result = []
+        seen_paths = set()
         for handle in handles:
             try:
                 component = funcs.get_object(funcs.get_data(handle))
                 if component is not None:
-                    result.append((handle, component))
+                    identity = str(component.get_path_name())
+                    if identity not in seen_paths:
+                        seen_paths.add(identity)
+                        result.append((handle, component))
             except Exception:
                 continue
         return handles, result
@@ -66,7 +70,9 @@ try:
              if obj.get_class().get_name() == "ASTFireIgnitionZoneComponent"]
     fire = [obj for _, obj in components
             if obj.get_class().get_name() == "ASTFireReactiveComponent"]
-    require(len(zones) == 1, "Expected exactly one ignition zone, found " + str(len(zones)))
+    RESULT["zone_paths"] = [str(obj.get_path_name()) for obj in zones]
+    require(len(zones) == 1, "Expected exactly one ignition zone, found "
+            + str(len(zones)) + ": " + str(RESULT["zone_paths"]))
     require(len(fire) == 1, "Expected exactly one reactive fire component")
     # Native constructor already sets QueryOnly, all-object-channel overlaps,
     # 75x75x84 extent around its attachment; no movement in its constructor.

@@ -33,6 +33,8 @@ assert "BP_AST_FireSource_Igniter" in builder
 assert "ASSET.duplicate_asset(SOURCE, TARGET)" in builder
 assert "BP_Torch_U" not in igniterC
 assert "duplicate_asset(SOURCE, TARGET)" in builder
+assert "seen_paths = set()" in builder
+assert "identity not in seen_paths" in builder
 assert "ASSET.save_loaded_asset(blueprint" in builder
 
 # Independent low-cost numerical silhouette reference across time and seeds.
