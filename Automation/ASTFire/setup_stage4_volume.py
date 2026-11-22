@@ -61,7 +61,7 @@ try:
         "a=lerp(a,float3(1,.93,.45),step(.91,v));"
         "return a*2.5;")
     for label, src, output, dest in (
-        ("color", col, "RGB", "C"),
+        ("color", col, "", "C"),
         ("uv", uv, "", "UV"),
         ("time", time, "", "T")):
         require(EDIT.connect_material_expressions(src, output, shader, dest),
