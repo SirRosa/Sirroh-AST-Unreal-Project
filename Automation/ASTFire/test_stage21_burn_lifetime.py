@@ -38,7 +38,7 @@ assert abs(duration(180.)-3.)<1.e-10
 assert 1.9<duration(60.)<2.2
 assert duration(1200.)>3.
 assert duration(1e9)<=10.5
-assert duration(1.)==2.1
+assert abs(duration(1.)-2.1)<1.e-9
 for seconds in (2.1,3.,10.5):
     fade_start=max(0.,seconds-.8)
     levels=[max(0.,min(1.,(seconds-i*.01)/max(.01,seconds-fade_start)))**1.2
