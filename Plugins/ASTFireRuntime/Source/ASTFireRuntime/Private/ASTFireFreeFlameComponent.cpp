@@ -848,7 +848,7 @@ void UASTFireFreeFlameComponent::UpdateConnectedSource(
         GetOwner()->GetActorLocation();
     const FTransform RenderTransform=Render->GetComponentTransform();
 
-    const USkeletalMeshComponent* Skel=Cast<USkeletalMeshComponent>(Source);
+    USkeletalMeshComponent* Skel=Cast<USkeletalMeshComponent>(Source);
     const FSkeletalMeshLODRenderData* Lod=nullptr;
     FSkinWeightVertexBuffer* Weights=nullptr;
     if (Skel)
