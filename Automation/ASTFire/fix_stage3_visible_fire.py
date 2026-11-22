@@ -69,8 +69,8 @@ def main():
             tag="ASTFireOwnedLight"
         else:
             obj.set_editor_property("start_lit",True)
-            obj.set_editor_property("enable_flame_cards",True)
-            obj.set_editor_property("enable_niagara",True)
+            obj.set_editor_property("enable_flame_cards",False)
+            obj.set_editor_property("enable_niagara",False)
             obj.set_editor_property("editor_preview",True)
             obj.set_editor_property("flame_size",1.0)
             obj.set_editor_property("flame_points",1)

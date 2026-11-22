@@ -2,6 +2,10 @@
 
 #include "NiagaraComponent.h"
 #include "NiagaraSystem.h"
+#include "ProceduralMeshComponent.h"
+#include "Net/UnrealNetwork.h"
+#include "GameFramework/PlayerController.h"
+#include "Camera/PlayerCameraManager.h"
 #include "Components/PointLightComponent.h"
 #include "Components/PrimitiveComponent.h"
 #include "Components/MeshComponent.h"
@@ -28,11 +32,37 @@ namespace ASTFire
 UASTFireReactiveComponent::UASTFireReactiveComponent()
 {
     PrimaryComponentTick.bCanEverTick = true;
-    PrimaryComponentTick.TickInterval = 0.04f; // 25 Hz regardless of flame count
+    PrimaryComponentTick.TickInterval = 0.04f; // 25 Hz max, volume updates LOD-throttled
+    SetIsReplicatedByDefault(true);
     FireSystem = TSoftObjectPtr<UNiagaraSystem>(
         FSoftObjectPath(TEXT("/Game/VFX/Fire/Systems/NS_Fire_Master.NS_Fire_Master")));
+    VolumeMaterial = TSoftObjectPtr<UMaterialInterface>(
+        FSoftObjectPath(TEXT("/Game/VFX/Fire/Materials/M_AST_FirePixel_Volume.M_AST_FirePixel_Volume")));
     FlameMaterial = TSoftObjectPtr<UMaterialInterface>(
         FSoftObjectPath(TEXT("/Game/VFX/Fire/Materials/M_AST_FirePixel_Core.M_AST_FirePixel_Core")));
+}
+
+void UASTFireReactiveComponent::GetLifetimeReplicatedProps(
+    TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+    Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+    DOREPLIFETIME(UASTFireReactiveComponent, Intensity);
+    DOREPLIFETIME(UASTFireReactiveComponent, bStartLit);
+    DOREPLIFETIME(UASTFireReactiveComponent, Coverage);
+    DOREPLIFETIME(UASTFireReactiveComponent, FlamePoints);
+    DOREPLIFETIME(UASTFireReactiveComponent, ExtraLocalPoints);
+    DOREPLIFETIME(UASTFireReactiveComponent, SimulationSeed);
+}
+
+void UASTFireReactiveComponent::OnRep_Burning()
+{
+    if (!bInitialized) InitializeFire();
+    UpdateVisibility();
+}
+
+void UASTFireReactiveComponent::OnRep_BurnAnchors()
+{
+    if (bInitialized) RefreshFireVisuals();
 }
 
 void UASTFireReactiveComponent::OnRegister()
@@ -69,6 +99,8 @@ void UASTFireReactiveComponent::BeginPlay()
     AActor* Owner = GetOwner();
     if (!Owner) return;
     LastOwnerPosition = Owner->GetActorLocation();
+    LastOwnerRotation = Owner->GetActorQuat();
+    LastOwnerVelocity = Owner->GetVelocity();
 
     InfluenceSphere = NewObject<USphereComponent>(
         Owner, NAME_None, RF_Transient);
@@ -175,13 +207,19 @@ UNiagaraComponent* UASTFireReactiveComponent::FindExistingFireFX() const
 void UASTFireReactiveComponent::AddFlamePoint(
     USceneComponent* Parent, FName Socket, FVector LocalPosition,
     float CardScale, UNiagaraSystem* System, UStaticMesh* PlaneMesh,
-    UMaterialInterface* Material, bool bUseExistingFX)
+    UMaterialInterface* Material, UMaterialInterface* ProceduralMaterial,
+    bool bUseExistingFX)
 {
     AActor* Owner = GetOwner();
     if (!Owner || !Parent) return;
     const bool bLit = bStartLit && Intensity > 0.005f;
 
-    if (bEnableFlameCards && PlaneMesh && Material)
+    if (bEnableProceduralFlames && ProceduralMaterial)
+    {
+        AddVolume(Parent, Socket, LocalPosition, CardScale, ProceduralMaterial);
+    }
+
+    if (bEnableFlameCards && !bEnableProceduralFlames && PlaneMesh && Material)
     {
         for (int32 Cross = 0; Cross != 2; ++Cross)
         {
@@ -233,23 +271,166 @@ void UASTFireReactiveComponent::AddFlamePoint(
     }
 }
 
+
+// Stage 4 - lightweight 3D procedural flame geometry. One CPU mesh section per
+// burn anchor, no per-spark ticks, particle transforms or simulation-grid readbacks.
+void UASTFireReactiveComponent::AddVolume(
+    USceneComponent* Parent, FName Socket, FVector LocalPosition,
+    float Scale, UMaterialInterface* Material)
+{
+    AActor* Owner = GetOwner();
+    if (!Owner || !Parent || !Material) return;
+
+    UProceduralMeshComponent* Volume = NewObject<UProceduralMeshComponent>(
+        Owner, NAME_None, RF_Transient);
+    if (!Volume) return;
+    Volume->SetMobility(EComponentMobility::Movable);
+    Volume->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+    Volume->SetGenerateOverlapEvents(false);
+    Volume->SetCastShadow(false);
+    Volume->SetupAttachment(Parent, Socket);
+    Volume->SetRelativeLocation(LocalPosition);
+    Volume->SetMaterial(0, Material);
+    Volume->RegisterComponent();
+    FireVolumes.Add(Volume);
+    FireVolumeScales.Add(FMath::Max(0.12f, Scale * FlameSize));
+    UpdateVolume(Volume, FireVolumes.Num() - 1, true);
+    Volume->SetVisibility(bStartLit && Intensity > 0.005f);
+}
+
+void UASTFireReactiveComponent::UpdateVolume(
+    UProceduralMeshComponent* Volume, int32 Index, bool bCreate)
+{
+    if (!IsValid(Volume) || !FireVolumeScales.IsValidIndex(Index)) return;
+
+    // Vertex budget: 5 connected and branching tongues x 8 rings x 7 sides.
+    // Topology never changes, so a single mesh section is updated in-place.
+    constexpr int32 Tongues = 5;
+    constexpr int32 Rings = 8;
+    constexpr int32 Sides = 7;
+    TArray<FVector> Vertices;
+    TArray<FVector2D> UVs;
+    TArray<FLinearColor> Colors;
+    TArray<int32> Triangles;
+    TArray<FVector> Normals;
+    TArray<FProcMeshTangent> Tangents;
+    Vertices.Reserve(Tongues * Rings * Sides);
+    UVs.Reserve(Tongues * Rings * Sides);
+    Colors.Reserve(Tongues * Rings * Sides);
+    if (bCreate) Triangles.Reserve(Tongues * (Rings - 1) * Sides * 6);
+
+    const FTransform Transform = Volume->GetComponentTransform();
+    const FVector Up = Transform.InverseTransformVectorNoScale(FVector::UpVector).GetSafeNormal();
+    const FVector Reference = FMath::Abs(Up.Z) > 0.95f ? FVector::ForwardVector : FVector::UpVector;
+    const FVector Right = FVector::CrossProduct(Reference, Up).GetSafeNormal();
+    const FVector Forward = FVector::CrossProduct(Up, Right).GetSafeNormal();
+    const FVector OwnerPos = GetOwner() ? GetOwner()->GetActorLocation() : FVector::ZeroVector;
+    const FVector TangentialVelocity = -FVector::CrossProduct(
+        SmoothedAngularVelocity, Volume->GetComponentLocation() - OwnerPos);
+    const FVector Flow = Transform.InverseTransformVectorNoScale(
+        (SmoothedFlow + TangentialVelocity * 0.5f).GetClampedToMaxSize(800.0f));
+    const float T = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
+    const float Scale = FireVolumeScales[Index];
+    const float Heat = FMath::Clamp(bPlaying ? SmoothIntensity : Intensity, 0.0f, 1.0f);
+    const float BurnScale = 0.28f + 0.72f * Heat;
+
+    for (int32 Tongue = 0; Tongue < Tongues; ++Tongue)
+    {
+        const float Phase = (float(SimulationSeed % 997) * 0.017f) +
+            float(Index * 7 + Tongue) * 2.39996323f;
+        const float BranchAngle = Phase + 0.16f * FMath::Sin(T * 1.9f + Phase);
+        const FVector Branch = Tongue == 0 ? FVector::ZeroVector :
+            (Right * FMath::Cos(BranchAngle) + Forward * FMath::Sin(BranchAngle)) *
+            (12.0f + float(Tongue % 2) * 6.0f) * Scale;
+        const float HeightVariation = 0.93f + 0.07f * FMath::Sin(
+            T * (2.1f + 0.29f * Tongue) + Phase);
+        const float Height = (Tongue == 0 ? 145.0f :
+            86.0f + float((Tongue * 13 + Index * 3) % 5) * 14.0f) *
+            Scale * BurnScale * HeightVariation;
+        const float Radius = (Tongue == 0 ? 26.0f : 14.0f) * Scale *
+            FMath::Sqrt(BurnScale);
+
+        for (int32 Ring = 0; Ring < Rings; ++Ring)
+        {
+            const float H = float(Ring) / float(Rings - 1);
+            const float Sway = H * H;
+            const float Bend = 7.0f * Scale * Sway;
+            const FVector Eddy = Bend * (
+                Right * FMath::Sin(Phase + T * 3.1f + H * 7.0f) +
+                Forward * FMath::Cos(Phase * 0.73f + T * 2.4f + H * 9.0f));
+            const FVector Center = Branch * (1.0f - 0.28f * H) +
+                Up * Height * H + Flow * (0.22f * Sway) + Eddy;
+            const float Taper = FMath::Max(0.025f,
+                FMath::Pow(1.0f - H, 0.82f) * (0.72f + 0.28f * FMath::Sin(PI * H)));
+            const float RingRadius = Radius * Taper *
+                (0.94f + 0.06f * FMath::Sin(T * 5.2f + Phase + H * 14.0f));
+
+            for (int32 Side = 0; Side < Sides; ++Side)
+            {
+                const float A = 2.0f * PI * float(Side) / float(Sides);
+                const FVector Radial = Right * FMath::Cos(A) + Forward * FMath::Sin(A);
+                const float Jagged = 1.0f + 0.075f *
+                    FMath::Sin(A * 3.0f + Phase * 2.0f + H * 11.0f + T * 4.0f);
+                Vertices.Add(Center + Radial * RingRadius * Jagged);
+                UVs.Add(FVector2D(float(Side) / float(Sides), H));
+                const float Temperature = FMath::Clamp(
+                    0.96f - H * 0.51f - float(Tongue > 0) * 0.11f +
+                    0.11f * FMath::Sin(Phase + T * 3.4f + H * 12.0f), 0.0f, 1.0f);
+                Colors.Add(FLinearColor(Temperature, H, float(Tongue) / Tongues, 1.0f));
+
+                if (bCreate && Ring < Rings - 1)
+                {
+                    const int32 Here = (Tongue * Rings + Ring) * Sides + Side;
+                    const int32 NextSide = (Tongue * Rings + Ring) * Sides +
+                        (Side + 1) % Sides;
+                    const int32 Above = Here + Sides;
+                    const int32 AboveNext = NextSide + Sides;
+                    Triangles.Add(Here); Triangles.Add(NextSide); Triangles.Add(Above);
+                    Triangles.Add(NextSide); Triangles.Add(AboveNext); Triangles.Add(Above);
+                }
+            }
+        }
+    }
+
+    if (bCreate)
+    {
+        Volume->CreateMeshSection_LinearColor(
+            0, Vertices, Triangles, Normals, UVs, Colors, Tangents, false);
+    }
+    else
+    {
+        Volume->UpdateMeshSection_LinearColor(
+            0, Vertices, Normals, UVs, Colors, Tangents);
+    }
+}
+
 void UASTFireReactiveComponent::InitializeFire()
 {
     if (bInitialized || IsTemplate() || !GetOwner()) return;
     AActor* Owner = GetOwner();
+    // Dedicated servers own combustion state but never allocate visual mesh/light/FX.
+    if (GetWorld() && GetWorld()->GetNetMode() == NM_DedicatedServer)
+    {
+        bInitialized = true;
+        return;
+    }
     USceneComponent* Parent = FindTargetComponent();
     if (!Parent) return;
 
     // No dependence on user-provided torch/character materials or project mesh assets.
-    UStaticMesh* PlaneMesh = bEnableFlameCards
+    UStaticMesh* PlaneMesh = bEnableFlameCards && !bEnableProceduralFlames
         ? LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Plane.Plane"))
         : nullptr;
-    UMaterialInterface* Material = bEnableFlameCards
+    UMaterialInterface* Material = bEnableFlameCards && !bEnableProceduralFlames
         ? FlameMaterial.LoadSynchronous() : nullptr;
+    UMaterialInterface* ProceduralMaterial = bEnableProceduralFlames
+        ? VolumeMaterial.LoadSynchronous() : nullptr;
+    if (bEnableProceduralFlames && !ProceduralMaterial)
+        UE_LOG(LogTemp, Error, TEXT("AST Fire: M_AST_FirePixel_Volume missing; run setup_stage4_volume.py"));
     UNiagaraSystem* System = bEnableNiagara
         ? FireSystem.LoadSynchronous() : nullptr;
 
-    if (bEnableFlameCards && (!PlaneMesh || !Material))
+    if (bEnableFlameCards && !bEnableProceduralFlames && (!PlaneMesh || !Material))
     {
         UE_LOG(LogTemp, Error, TEXT("AST Fire: original flame material/engine plane unavailable for %s"),
             *Owner->GetName());
@@ -319,7 +500,7 @@ void UASTFireReactiveComponent::InitializeFire()
     if (Points.IsEmpty())
         Points.Add({NAME_None, PointOffset, 1.0f});
 
-    for (const FVector& HitOffset : ExtraLocalPoints)
+    for (const FVector_NetQuantize10& HitOffset : ExtraLocalPoints)
     {
         if (Points.Num() >= 16) break;
         Points.Add({NAME_None, HitOffset, 0.72f});
@@ -327,7 +508,7 @@ void UASTFireReactiveComponent::InitializeFire()
     for (int32 i = 0; i < Points.Num(); ++i)
     {
         AddFlamePoint(Parent, Points[i].Socket, Points[i].Offset,
-            Points[i].Size, System, PlaneMesh, Material, i == 0);
+            Points[i].Size, System, PlaneMesh, Material, ProceduralMaterial, i == 0);
     }
 
     bInitialized = true;
@@ -345,6 +526,12 @@ void UASTFireReactiveComponent::RemoveGeneratedVisuals()
         if (IsValid(Card)) Card->DestroyComponent();
     FireCards.Empty();
 
+    for (UProceduralMeshComponent* Volume : FireVolumes)
+        if (IsValid(Volume)) Volume->DestroyComponent();
+    FireVolumes.Empty();
+    FireVolumeScales.Empty();
+    VolumeUpdateDebt = 0.0f;
+
     if (IsValid(GeneratedLight))
         GeneratedLight->DestroyComponent();
     GeneratedLight = nullptr;
@@ -360,6 +547,8 @@ void UASTFireReactiveComponent::RefreshFireVisuals()
 
 void UASTFireReactiveComponent::SetFireIntensity(float NewIntensity)
 {
+    if (bPlaying && GetOwner() && GetOwner()->GetNetMode() == NM_Client)
+        return; // Fire gameplay state is server authoritative.
     Intensity = FMath::Clamp(NewIntensity, 0.0f, 1.0f);
     bStartLit = Intensity > 0.005f;
     UpdateVisibility();
@@ -379,6 +568,8 @@ void UASTFireReactiveComponent::Extinguish()
 void UASTFireReactiveComponent::SetFireCoverage(
     EASTFireCoverage NewCoverage, int32 NewFlamePoints)
 {
+    if (bPlaying && GetOwner() && GetOwner()->GetNetMode() == NM_Client)
+        return;
     Coverage = NewCoverage;
     FlamePoints = FMath::Clamp(NewFlamePoints, 1, 16);
     RefreshFireVisuals();
@@ -386,6 +577,8 @@ void UASTFireReactiveComponent::SetFireCoverage(
 
 void UASTFireReactiveComponent::IgniteAtWorldPosition(FVector WorldPosition)
 {
+    if (bPlaying && GetOwner() && GetOwner()->GetNetMode() == NM_Client)
+        return;
     if (USceneComponent* Parent = FindTargetComponent())
     {
         if (ExtraLocalPoints.Num() >= 15) ExtraLocalPoints.RemoveAt(0);
@@ -401,6 +594,8 @@ void UASTFireReactiveComponent::UpdateVisibility()
     const bool bLit = bStartLit && Intensity > 0.005f;
     for (UStaticMeshComponent* Card : FireCards)
         if (IsValid(Card)) Card->SetVisibility(bLit);
+    for (UProceduralMeshComponent* Volume : FireVolumes)
+        if (IsValid(Volume)) Volume->SetVisibility(bLit);
     for (UNiagaraComponent* FX : FireFX)
     {
         if (!IsValid(FX)) continue;
@@ -445,6 +640,18 @@ void UASTFireReactiveComponent::TickComponent(
     const FVector Position = GetOwner()->GetActorLocation();
     const FVector Velocity = (Position - LastOwnerPosition) / DeltaTime;
     LastOwnerPosition = Position;
+    const FVector Acceleration = (Velocity - LastOwnerVelocity) / DeltaTime;
+    LastOwnerVelocity = Velocity;
+
+    const FQuat CurrentRotation = GetOwner()->GetActorQuat();
+    const FQuat RotationDelta = CurrentRotation * LastOwnerRotation.Inverse();
+    LastOwnerRotation = CurrentRotation;
+    FVector RotationAxis = FVector::UpVector;
+    float RotationAngle = 0.0f;
+    RotationDelta.ToAxisAndAngle(RotationAxis, RotationAngle);
+    if (RotationAngle > PI) RotationAngle -= 2.0f * PI;
+    const FVector AngularVelocity = RotationAxis.GetSafeNormal() *
+        FMath::Clamp(RotationAngle / DeltaTime, -12.0f, 12.0f);
 
     float LocalDisturbance = 0.0f;
     FVector LocalWind = FVector::ZeroVector;
@@ -482,7 +689,13 @@ void UASTFireReactiveComponent::TickComponent(
         + 0.025f * FMath::Sin(Time * 18.9f);
     const float Movement = FMath::Clamp(Velocity.Size() / 600.0f, 0.0f, 1.0f);
     const float Response = FMath::Max(Movement, Disturbance);
-    const FVector Wind = -Velocity * 0.4f + LocalWind * 0.18f;
+    const FVector Wind = -Velocity * 0.48f - Acceleration.GetClampedToMaxSize(5000.0f) * 0.025f
+        + LocalWind * 0.18f + AmbientWind;
+    const float ResponseRate = Response > 0.1f ? 5.0f : 2.5f;
+    SmoothedFlow = FMath::VInterpTo(SmoothedFlow, Wind.GetClampedToMaxSize(800.0f),
+        DeltaTime, ResponseRate);
+    SmoothedAngularVelocity = FMath::VInterpTo(
+        SmoothedAngularVelocity, AngularVelocity, DeltaTime, 4.0f);
     const FVector LocalWindVec = GetOwner()->GetActorTransform()
         .InverseTransformVectorNoScale(Wind);
 
@@ -508,6 +721,25 @@ void UASTFireReactiveComponent::TickComponent(
         FX->SetVariableFloat(FName(TEXT("User.FireIntensity")), SmoothIntensity);
         FX->SetVariableFloat(FName(TEXT("User.DisturbanceStrength")), Response);
         FX->SetVariableFloat(FName(TEXT("User.FlamePulse")), Pulse);
-        FX->SetVariableVec3(FName(TEXT("User.WindVector")), Wind);
+        FX->SetVariableVec3(FName(TEXT("User.WindVector")), SmoothedFlow);
+    }
+
+    // Volume has its own deformable geometry; these parameters affect actual vertices,
+    // not merely the rotation of a billboard or an unconnected Niagara User variable.
+    if (FireVolumes.Num() && SmoothIntensity > 0.004f)
+    {
+        float DistanceSquared = 0.0f;
+        if (const APlayerController* PC = GetWorld()->GetFirstPlayerController())
+            if (const APlayerCameraManager* Camera = PC->PlayerCameraManager)
+                DistanceSquared = FVector::DistSquared(Position, Camera->GetCameraLocation());
+        const float UpdateInterval = DistanceSquared > FMath::Square(9000.0f) ? 0.40f :
+            (DistanceSquared > FMath::Square(3500.0f) ? 0.16f : 0.04f);
+        VolumeUpdateDebt += DeltaTime;
+        if (VolumeUpdateDebt >= UpdateInterval)
+        {
+            VolumeUpdateDebt = 0.0f;
+            for (int32 i = 0; i < FireVolumes.Num(); ++i)
+                if (IsValid(FireVolumes[i])) UpdateVolume(FireVolumes[i], i, false);
+        }
     }
 }

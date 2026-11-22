@@ -7,7 +7,7 @@ public class ASTFireRuntime : ModuleRules
         PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
         PublicDependencyModuleNames.AddRange(new string[]
         {
-            "Core", "CoreUObject", "Engine", "Niagara"
+            "Core", "CoreUObject", "Engine", "Niagara", "ProceduralMeshComponent"
         });
     }
 }

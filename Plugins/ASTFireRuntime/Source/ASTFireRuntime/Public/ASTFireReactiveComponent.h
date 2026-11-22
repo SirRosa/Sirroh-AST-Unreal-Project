@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
 #include "UObject/SoftObjectPtr.h"
+#include "Engine/NetSerialization.h"
 #include "ASTFireReactiveComponent.generated.h"
 
 class AActor;
@@ -17,6 +18,8 @@ class UMeshComponent;
 class UStaticMesh;
 class UStaticMeshComponent;
 class UMaterialInterface;
+class UProceduralMeshComponent;
+struct FLifetimeProperty;
 
 /** Placement options shared by torches, characters, trees, furniture and physics actors. */
 UENUM(BlueprintType)
@@ -42,18 +45,33 @@ public:
     UASTFireReactiveComponent();
 
     /** Intensity represents active fire, not temperature or damage. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="AST Fire", meta=(ClampMin="0", ClampMax="1"))
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, ReplicatedUsing=OnRep_Burning, Category="AST Fire", meta=(ClampMin="0", ClampMax="1"))
     float Intensity = 1.0f;
 
     /** Disable to have an actor begin unlit; call Ignite in Blueprint on demand. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="AST Fire")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, ReplicatedUsing=OnRep_Burning, Category="AST Fire")
     bool bStartLit = true;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="AST Fire|Visuals")
-    bool bEnableFlameCards = true;
+    bool bEnableFlameCards = false;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="AST Fire|Visuals")
-    bool bEnableNiagara = true;
+    bool bEnableNiagara = false;
+
+    /** Procedural 3D flame geometry; replaces intersecting flat cards. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="AST Fire|Visuals")
+    bool bEnableProceduralFlames = true;
+
+    /** Authored material generated under /Game/VFX/Fire/Materials by Stage 4 commandlet. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="AST Fire|Visuals")
+    TSoftObjectPtr<UMaterialInterface> VolumeMaterial;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="AST Fire|Response")
+    FVector AmbientWind = FVector::ZeroVector;
+
+    /** Deterministic seed for visual shape variation, not gameplay authority. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Replicated, Category="AST Fire|Visuals")
+    int32 SimulationSeed = 1729;
 
     /** Original project fire system; defaults to /Game/VFX/Fire/Systems/NS_Fire_Master. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="AST Fire|Visuals")
@@ -69,10 +87,10 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="AST Fire|Visuals")
     bool bEditorPreview = true;
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="AST Fire|Coverage")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, ReplicatedUsing=OnRep_BurnAnchors, Category="AST Fire|Coverage")
     EASTFireCoverage Coverage = EASTFireCoverage::Point;
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="AST Fire|Coverage", meta=(ClampMin="1", ClampMax="16"))
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, ReplicatedUsing=OnRep_BurnAnchors, Category="AST Fire|Coverage", meta=(ClampMin="1", ClampMax="16"))
     int32 FlamePoints = 1;
 
     /** Optional precise target (e.g. SkeletalMeshComponent or trunk). Otherwise auto-select. */
@@ -121,12 +139,19 @@ public:
     void RefreshFireVisuals();
 
 protected:
+    virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
     virtual void OnRegister() override;
     virtual void OnUnregister() override;
     virtual void BeginPlay() override;
     virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
     virtual void TickComponent(float DeltaTime, ELevelTick TickType,
         FActorComponentTickFunction* ThisTickFunction) override;
+
+    UFUNCTION()
+    void OnRep_Burning();
+
+    UFUNCTION()
+    void OnRep_BurnAnchors();
 
     UFUNCTION()
     void OnInfluenceBegin(UPrimitiveComponent* Overlapped, AActor* OtherActor,
@@ -145,7 +170,11 @@ private:
     UNiagaraComponent* FindExistingFireFX() const;
     void AddFlamePoint(USceneComponent* Parent, FName Socket, FVector LocalPosition,
         float CardScale, UNiagaraSystem* System, UStaticMesh* PlaneMesh,
-        UMaterialInterface* Material, bool bUseExistingFX);
+        UMaterialInterface* Material, UMaterialInterface* ProceduralMaterial,
+        bool bUseExistingFX);
+    void AddVolume(USceneComponent* Parent, FName Socket,
+        FVector LocalPosition, float Scale, UMaterialInterface* Material);
+    void UpdateVolume(UProceduralMeshComponent* Volume, int32 Index, bool bCreate);
     void UpdateVisibility();
 
     UPROPERTY(Transient)
@@ -158,6 +187,11 @@ private:
     TArray<TObjectPtr<UStaticMeshComponent>> FireCards;
 
     UPROPERTY(Transient)
+    TArray<TObjectPtr<UProceduralMeshComponent>> FireVolumes;
+
+    TArray<float> FireVolumeScales;
+
+    UPROPERTY(Transient)
     TObjectPtr<UPointLightComponent> Light = nullptr;
 
     UPROPERTY(Transient)
@@ -166,12 +200,16 @@ private:
     UPROPERTY(Transient)
     TObjectPtr<USphereComponent> InfluenceSphere = nullptr;
 
-    UPROPERTY(Transient)
-    TArray<FVector> ExtraLocalPoints;
+    UPROPERTY(ReplicatedUsing=OnRep_BurnAnchors)
+    TArray<FVector_NetQuantize10> ExtraLocalPoints;
 
     TSet<TWeakObjectPtr<APawn>> NearbyPawns;
     FVector LastOwnerPosition = FVector::ZeroVector;
-    FVector LastDisturbanceVelocity = FVector::ZeroVector;
+    FVector LastOwnerVelocity = FVector::ZeroVector;
+    FQuat LastOwnerRotation = FQuat::Identity;
+    FVector SmoothedFlow = FVector::ZeroVector;
+    FVector SmoothedAngularVelocity = FVector::ZeroVector;
+    float VolumeUpdateDebt = 0.0f;
     float Disturbance = 0.0f;
     float SmoothIntensity = 0.0f;
     bool bInitialized = false;

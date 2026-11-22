@@ -12,6 +12,7 @@
     { "Name": "ASTFireEditor", "Type": "Editor", "LoadingPhase": "Default" }
   ],
   "Plugins": [
-    { "Name": "Niagara", "Enabled": true }
+    { "Name": "Niagara", "Enabled": true },
+    { "Name": "ProceduralMeshComponent", "Enabled": true }
   ]
 }

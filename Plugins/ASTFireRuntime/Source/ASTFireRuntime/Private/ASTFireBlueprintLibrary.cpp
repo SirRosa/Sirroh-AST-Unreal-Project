@@ -1,6 +1,7 @@
 #include "ASTFireBlueprintLibrary.h"
 #include "ASTFireReactiveComponent.h"
 #include "GameFramework/Actor.h"
+#include "Engine/World.h"
 
 UASTFireReactiveComponent* UASTFireBlueprintLibrary::FindFireComponent(
     const AActor* Target)
@@ -15,6 +16,11 @@ UASTFireReactiveComponent* UASTFireBlueprintLibrary::IgniteActor(
 {
     if (!IsValid(Target))
         return nullptr;
+    if (Target->GetNetMode() == NM_Client)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("AST Fire: Ignite Any Actor must run on server for replicated combustion."));
+        return nullptr;
+    }
 
     UASTFireReactiveComponent* Fire = FindFireComponent(Target);
     if (!IsValid(Fire))
@@ -26,6 +32,7 @@ UASTFireReactiveComponent* UASTFireBlueprintLibrary::IgniteActor(
         Fire->Intensity = 0.0f;
         Fire->bStartLit = false;
         Target->AddInstanceComponent(Fire);
+        Fire->SetIsReplicated(true);
         Fire->RegisterComponent();
     }
 
