@@ -412,6 +412,26 @@ FVector UASTFireFreeFlameComponent::SampleRoot(const FTongue& Root) const
     return Source->GetComponentTransform().TransformPosition(Root.RestPosition);
 }
 
+FVector UASTFireFreeFlameComponent::TongueCenterAt(
+    const FTongue& Tongue, const FVector& Base, float V,
+    const FVector& Right) const
+{
+    // The same curve feeds the visible tongue AND its first mantle samples.
+    const float Fraction=FMath::Clamp(
+        Tongue.Age/FMath::Max(.1f,Tongue.GrowSeconds),0.f,1.f);
+    const float Growth=ASTFireLife::SmoothStep(Fraction);
+    const float Phase=FMath::Lerp(
+        Tongue.PreviousPhase,Tongue.Phase,Growth);
+    const FVector Flow=(Wind-Tongue.WorldVelocity*.64f)
+        .GetClampedToMaxSize(1600.f);
+    const float Curl=FMath::Sin(V*8.1f+Elapsed*8.3f+Phase)*
+        V*V*(1.2f+5.f*Tongue.Scale);
+    const float Curl2=FMath::Sin(V*13.3f-Elapsed*5.1f+Tongue.Seed)*
+        V*(.9f+2.8f*Tongue.Scale);
+    return Base+FVector::UpVector*Tongue.CurrentLength*V+
+        Flow*V*V*.095f+Right*(Curl+Curl2);
+}
+
 int32 UASTFireFreeFlameComponent::EmitTip(
     FTongue& Tongue, const FVector& Base, float Length, const FVector& Flow)
 {
@@ -438,8 +458,9 @@ void UASTFireFreeFlameComponent::AdvanceSimulation(float Dt)
     Elapsed += Dt;
     Spread = FMath::Clamp(Spread + Dt * (Heat > .01f ? .23f : 0.f), 0.f, 1.f);
     float SumEnergy = 0.f;
-    for (FTongue& T : Tongues)
+    for (int32 TongueIndex=0;TongueIndex<Tongues.Num();++TongueIndex)
     {
+        FTongue& T=Tongues[TongueIndex];
         const FVector Base = SampleRoot(T);
         const FVector Velocity = (Base - T.WorldPrevious) / FMath::Max(.004f,Dt);
         T.WorldPrevious = Base;
@@ -471,7 +492,11 @@ void UASTFireFreeFlameComponent::AdvanceSimulation(float Dt)
                 const FVector Flow=(Wind-T.WorldVelocity*.65f)
                     .GetClampedToMaxSize(1600.f);
                 T.SplitLength = T.CurrentLength = T.MaxLength;
-                T.BridgedChild = EmitTip(T,Base,T.SplitLength,Flow);
+                // Detachment originates from the rendered, cloak-bound tip
+                // rather than an invisible bone/mesh location behind it.
+                const FVector VisualBase=ConnectedRoots.IsValidIndex(TongueIndex)
+                    ? ConnectedRoots[TongueIndex] : Base;
+                T.BridgedChild = EmitTip(T,VisualBase,T.SplitLength,Flow);
                 T.BridgeSeconds = .12f + Uniform(T.Generation*83+9)*.06f;
                 T.PhaseAge = 0.f;
                 T.Life = EFlameLife::Bridging;
@@ -627,22 +652,15 @@ void UASTFireFreeFlameComponent::UpdateGeometry(bool bCreate)
             ? ConnectedRoots[I] : SampleRoot(T);
         const float Fraction=FMath::Clamp(T.Age/FMath::Max(.1f,T.GrowSeconds),0.f,1.f);
         const float Growth=ASTFireLife::SmoothStep(Fraction);
-        const float Length=T.CurrentLength;
         const float Width=T.CurrentWidth;
         const float ShapePhase=FMath::Lerp(T.PreviousPhase,T.Phase,Growth);
-        const FVector Flow=(Wind-T.WorldVelocity*.64f).GetClampedToMaxSize(1600.f);
         TArray<FVector> C;
         TArray<float> W;
         TArray<float> H;
         for (int32 K=0;K<RingsPerTongue;++K)
         {
             const float V=float(K)/float(RingsPerTongue-1);
-            const float Curl=FMath::Sin(V*8.1f+Elapsed*8.3f+ShapePhase)*
-                V*V*(1.2f+5.f*T.Scale);
-            const float Curl2=FMath::Sin(V*13.3f-Elapsed*5.1f+T.Seed)*
-                V*(.9f+2.8f*T.Scale);
-            C.Add(Base+FVector::UpVector*Length*V+
-                Flow*V*V*.095f+Right*(Curl+Curl2));
+            C.Add(TongueCenterAt(T,Base,V,Right));
             // One continuous silhouette. Vary each ring instead of stacking
             // identical camera-facing sprite/rectangle pieces.
             const float Ridge=FMath::Clamp(.80f+.20f*
@@ -876,14 +894,15 @@ void UASTFireFreeFlameComponent::UpdateConnectedSource(
     float HighestDepth=-BIG_NUMBER;
     float MinX=BIG_NUMBER,MaxX=-BIG_NUMBER,MinY=BIG_NUMBER,MaxY=-BIG_NUMBER;
 
-    auto Include=[&](const FVector& World)
+    auto Include=[&](const FVector& World,float DepthCompensation=0.f)
     {
         const FVector Diff=World-Origin;
         const FVector2D P(
             FVector::DotProduct(Diff,Right),
             FVector::DotProduct(Diff,Up));
         Samples.Add(P);
-        SampleDepths.Add(float(FVector::DotProduct(Diff,Normal)));
+        SampleDepths.Add(
+            float(FVector::DotProduct(Diff,Normal))-DepthCompensation);
         MinX=FMath::Min(MinX,float(P.X));
         MaxX=FMath::Max(MaxX,float(P.X));
         MinY=FMath::Min(MinY,float(P.Y));
@@ -992,6 +1011,19 @@ void UASTFireFreeFlameComponent::UpdateConnectedSource(
             Front=HighestDepth;
         const float RootDepth=float(FVector::DotProduct(Diff,Normal));
         ConnectedRoots.Add(Root+Normal*(Front+6.5f-RootDepth));
+    }
+
+    // The source field follows the SAME animated first 23% of every
+    // tongue centerline, including wind and curl. Immersed ribbon roots
+    // now share the burning body without separate source attachments.
+    // Projected points subtract the 6.5cm lip to avoid depth feedback.
+    for(int32 I=0;I<Tongues.Num();++I)
+    {
+        const FTongue& T=Tongues[I];
+        if(!T.bActive || T.Age<0.f || Heat<.015f)continue;
+        const FVector& Root=ConnectedRoots[I];
+        Include(TongueCenterAt(T,Root,.10f,Right),6.5f);
+        Include(TongueCenterAt(T,Root,.23f,Right),6.5f);
     }
 
     const float Extent=FMath::Max(20.f,FMath::Max(MaxX-MinX,MaxY-MinY));

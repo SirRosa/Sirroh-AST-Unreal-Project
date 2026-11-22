@@ -35,6 +35,12 @@ check_tokens(c,(
     "ConnectedRoots.Reserve(Tongues.Num());",
     "ConnectedRoots.IsValidIndex(I)",
     "ConnectedRoots.Add(Root+Normal*(Front+6.5f-RootDepth));",
+    "TongueCenterAt(T,Root,.10f,Right)",
+    "TongueCenterAt(T,Root,.23f,Right)",
+    "C.Add(TongueCenterAt(T,Base,V,Right));",
+    "Include(TongueCenterAt(T,Root,.10f,Right),6.5f);",
+    "Include(TongueCenterAt(T,Root,.23f,Right),6.5f);",
+    "const FVector VisualBase=ConnectedRoots.IsValidIndex(TongueIndex)",
     "Render->CreateMeshSection_LinearColor(",
     "Render->UpdateMeshSection_LinearColor(",
 ))
@@ -76,6 +82,12 @@ assert "const FVector Base=SampleRoot(T);" not in c[
     c.index("void UASTFireFreeFlameComponent::UpdateGeometry("):
     c.index("void UASTFireFreeFlameComponent::BuildSourceAnchors()")]
 assert "TArray<FVector> ConnectedRoots;" in h
+assert "FVector TongueCenterAt(const FTongue& Tongue" in h
+assert "T.BridgedChild = EmitTip(T,VisualBase,T.SplitLength,Flow);" in c
+assert c.count("C.Add(TongueCenterAt(T,Base,V,Right));")==1
+assert "const float Curl=FMath::Sin(V*8.1f" in c
+assert "const float Curl2=FMath::Sin(V*13.3f" in c
+assert "DepthCompensation=0.f" in c
 
 # Mesh samples are taken from CURRENT skinned geometry and collision hits.
 # The fixed-topology marching-like mask is a single connected source, not

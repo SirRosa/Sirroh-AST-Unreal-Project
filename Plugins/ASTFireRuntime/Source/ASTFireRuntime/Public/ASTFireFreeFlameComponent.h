@@ -114,6 +114,8 @@ private:
     void UpdateConnectedSource(bool bCreate, const FVector& View,
         const FVector& Right);
     FVector SampleRoot(const FTongue& Tongue) const;
+    FVector TongueCenterAt(const FTongue& Tongue, const FVector& Base,
+        float Fraction, const FVector& Right) const;
     void AdvanceSimulation(float Dt);
     void UpdateGeometry(bool bCreate);
     void UpdateSurfaceMap(float Dt);
