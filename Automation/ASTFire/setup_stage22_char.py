@@ -28,6 +28,8 @@ try:
     asset.set_editor_property("blend_mode",u.BlendMode.BLEND_TRANSLUCENT)
     asset.set_editor_property("shading_model",u.MaterialShadingModel.MSM_UNLIT)
     asset.set_editor_property("two_sided",True)
+    # The char overlay must have an actual SkeletalMesh shader permutation.
+    asset.set_editor_property("used_with_skeletal_mesh",True)
     EDIT.delete_all_material_expressions(asset)
     uv=EDIT.create_material_expression(
         asset,u.MaterialExpressionTextureCoordinate,-650,-200)

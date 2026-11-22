@@ -63,6 +63,7 @@ $paths=@(
   'Automation/ASTFire/setup_stage10_lifecycle.py',
   'Automation/ASTFire/setup_stage22_char.py',
   'Automation/ASTFire/setup_stage24_smoke.py',
+  'Automation/ASTFire/verify_stage24_materials_gpu.py',
   'Automation/ASTFire/deploy_stage10_windows.ps1',
   'Automation/ASTFire/verify_stage10_gpu.py'
 )
@@ -156,6 +157,26 @@ if($gpuExit -ne 0 -or $gpuJson.status -ne 'STAGE10_GPU_GRAPH_AND_USAGE_CHECKED_S
   $shaderErrors | Select-Object -Last 12 | ForEach-Object {$_.Line}
   Get-Content -LiteralPath $gpuLog -Tail 30
   throw 'Real-RHI GPU material check failed; do not claim visual success'
+}
+$stage24Script=Join-Path $ProjectRoot 'Automation\ASTFire\verify_stage24_materials_gpu.py'
+$stage24Result=Join-Path $ProjectRoot 'Saved\ChatGPT\NiagaraFire\Stage24\gpu_material_check.json'
+$stage24Log=Join-Path $report ('verify_stage24_gpu_'+$stamp+'.log')
+if(Test-Path -LiteralPath $stage24Result){
+  Move-Item -LiteralPath $stage24Result -Destination (Join-Path $backup 'gpu_stage24.previous.json') -Force
+}
+& $ue $project '-run=pythonscript' ('-script='+$stage24Script.Replace('\','/')) '-unattended' '-nop4' '-nosplash' '-AllowCommandletRendering' '-RenderOffscreen' *> $stage24Log
+$shaderExit=$LASTEXITCODE
+if(!(Test-Path -LiteralPath $stage24Result)){
+  Get-Content -LiteralPath $stage24Log -Tail 35
+  throw 'No Stage24 real RHI shader test report'
+}
+$shaderReport=Get-Content -LiteralPath $stage24Result -Raw -Encoding UTF8 | ConvertFrom-Json
+$stage24Errors=@(Select-String -LiteralPath $stage24Log -Pattern 'Failed to compile Material|External code identifier.*not available|LogShaderCompilers: Error|LogMaterial: Error')
+Write-Output ('STAGE24_GPU_SHADER_CHECK=EXIT='+$shaderExit+';STATUS='+$shaderReport.status+';ERROR_MATCHES='+$stage24Errors.Count)
+if($shaderExit -ne 0 -or $shaderReport.status -ne 'STAGE24_GPU_MATERIAL_GRAPHS_CHECKED_SHADER_LOG_REQUIRED' -or $stage24Errors.Count -gt 0){
+  $shaderReport.errors | ConvertTo-Json -Depth 6 -Compress | Write-Output
+  $stage24Errors | Select-Object -Last 12 | ForEach-Object {$_.Line}
+  throw 'Stage24 real RHI shader validation failed'
 }
 }else{
   # Real RHI initializes many thousands of unrelated default/Nanite/global

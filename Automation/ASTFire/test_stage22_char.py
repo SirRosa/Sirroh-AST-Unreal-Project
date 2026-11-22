@@ -26,6 +26,7 @@ assert "if (bEnableProceduralFlames) return;" not in c[c.index(
     "void UASTFireReactiveComponent::UpdateSurfaceVisibility()")]
 for s in (
     "BLEND_TRANSLUCENT","MP_OPACITY","MP_EMISSIVE_COLOR",
+    'set_editor_property("used_with_skeletal_mesh",True)',
     "MaterialExpressionTextureCoordinate","CharProgress","CharGlow",
     "CharSeed","CharTiling","crack*=coverage;",
     "float3 soot=float3(.027,.030,.023)",
