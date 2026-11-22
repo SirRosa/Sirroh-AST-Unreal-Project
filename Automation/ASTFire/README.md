@@ -73,3 +73,15 @@ W Stage 5 zmieniono renderer na **lokalne 22×30 pole temperatury na punkt spala
 
 **Przed oceną:** wymagane zielone GitHub Actions, BuildPlugin UE 5.8.1, ponowne wykonanie commandletu setup_stage4_volume.py (materiał modyfikowany w swoim folderze) oraz ręczny test wizualny użytkownika. Nie modyfikować oryginalnych map, Advanced Parkour ani pochodni.
 
+
+
+### Stage 5 — potwierdzone wdrożenie na komputerze użytkownika (2026-11-22)
+
+- Zatwierdzony kod renderera i test numeryczny: git SHA `f5d90365ea25718daf11847191549f2bf4f243b3`.
+- Dwa workflowy GitHub Actions zakończone statusem success.
+- `BuildPlugin` (Editor, Game Development, Shipping) UE 5.8.1: `BUILD SUCCESSFUL`, dwa DLL edytora. Log: `Saved/ChatGPT/NiagaraFire/Stage4/Stage5_Final_Build_f5d9036.log`.
+- Projekt instalowany z dokładnej rewizji f5d9036, z użyciem już skompilowanego pakietu w katalogu TEMP; przed nadpisaniem wykonano kopie zapasowe wyłącznie źródeł wtyczki, jej DLL oraz własnych assetów `M_AST_FirePixel_Volume` i `BP_AST_FireSource`.
+- Installer: `Automation/ASTFire/deploy_stage5_verified_windows.ps1`. To skrypt dla **już zweryfikowanej kompilacji** przechowywanej lokalnie w TEMP, a nie niezależny instalator do dowolnej maszyny.
+- Commandlet konfigurujący: exit 0, `VOLUME_ASSET_CONFIGURED_REQUIRES_USER_VIEW`, `errors: []`, jeden komponent ASTFireReactive, dwa starsze Niagara wyłączone, dwa komponenty świateł ustawione. Log: `Saved/ChatGPT/NiagaraFire/Stage5/Stage5_Commandlet_20261122_041338.log`. Brak krytycznych błędów materiału/shaderów w odfiltrowanym logu.
+- Backup lokalny: `Saved/ChatGPT/NiagaraFire/Stage5/Backup_20261122_041338`.
+- **Jakość wizualna, zachowanie w PIE i multiplayer: NIEPOTWIERDZONE.** Wymagają osobistego testu użytkownika. Nie należy nazywać Stage 5 ukończonym silnikiem spalania.
