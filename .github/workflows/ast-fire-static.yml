@@ -46,6 +46,8 @@ jobs:
           python -m py_compile Automation/ASTFire/verify_stage10_gpu.py
           python -m py_compile Automation/ASTFire/test_stage10_lifecycle.py
           python Automation/ASTFire/test_stage10_lifecycle.py
+          python -m py_compile Automation/ASTFire/test_stage14_mantle_neck.py
+          python Automation/ASTFire/test_stage14_mantle_neck.py
           python Automation/ASTFire/test_stage4_source.py
       - name: Parse PowerShell deployment script
         shell: pwsh

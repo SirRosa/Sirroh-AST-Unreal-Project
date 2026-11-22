@@ -38,8 +38,8 @@ check_tokens(c,(
     "TongueCenterAt(T,Root,.10f,Right)",
     "TongueCenterAt(T,Root,.23f,Right)",
     "C.Add(TongueCenterAt(T,Base,V,Right));",
-    "Include(TongueCenterAt(T,Root,.10f,Right),6.5f);",
-    "Include(TongueCenterAt(T,Root,.23f,Right),6.5f);",
+    "Necks.Reserve(Tongues.Num()*3);",
+    "static constexpr float NeckFractions[4] = {0.f,.14f,.28f,.42f};",
     "const FVector VisualBase=ConnectedRoots.IsValidIndex(TongueIndex)",
     "Render->CreateMeshSection_LinearColor(",
     "Render->UpdateMeshSection_LinearColor(",
@@ -106,7 +106,7 @@ check_tokens(c,(
     "const float Fill=FMath::Clamp(1.f-Dist/Outer,0.f,1.f);",
     "const float Core=FMath::Clamp((-Dist)/(Radius+Inner),0.f,1.f);",
     "Include(Origin); // no donut in free-standing fire",
-    "Include(Root+FVector::UpVector*Rise);",
+    "Necks.Add(Neck);",
     "const float BurnRadius = FMath::Clamp(",
     "const UPrimitiveComponent* Primitive =",
     "TArray<float> SampleDepths;",
@@ -188,7 +188,7 @@ assert shape_distance((0.,0.),free_roots,free_parents,10.)<0.
 assert thermal(shape_distance((0.,0.),free_roots,free_parents,10.))>.4
 # A living tongue sprouts from inside that same connected body.
 assert "const FVector Root=SampleRoot(T);" in c
-assert "Rise=FMath::Clamp(T.CurrentLength*.23f,4.f,24.f)" in c
+assert "const float Emergence=ASTFireLife::SmoothStep((V-.20f)/.26f);" in c
 
 # Previously approved bridge: multi-frame visible neck followed by eased
 # retraction, not instant parent length teleport.

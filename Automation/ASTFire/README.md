@@ -483,3 +483,27 @@ Limits: true silhouette detail depends on original mesh topology/vertex
 density; hard-edge normals may reveal seams; translucent overlay + WPO
 requires GPU in-game verification. Does **not** add new mesh triangles,
 geodesic burning simulation, or 3D fluid dynamics.
+
+
+### Stage14 — shared mantle-embedded tongue necks (2026-11-22)
+
+- Safety: immutable GitHub backup `backup/ast-fire-handoff-2026-11-22`
+  at `b53ecb7906823f93f2d8c67941e1e7b1467ffc27`.
+  A CI checksum test locks `ConfigureGeneration`, `EmitTip`,
+  `AdvanceSimulation` and `AddStrip` against that revision.
+- Section 1 now absorbs the lowest 42% of every *living* tongue into
+  the same animated source field as the mesh sampled burning mantle.
+  3 tapered neck capsules follow the exact same `TongueCenterAt`
+  (including wind, inertia, curl, current growth length) that the
+  section 0 ribbon follows. The ribbon smoothly appears between
+  V=.20 and V=.46, overlapping the mantle field: no independent,
+  brightly visible ribbon root.
+- Neck geometry extends the bounds and heat field but is deliberately
+  excluded from the old Prim MST, avoiding MST bridges between flying tips.
+  Neck depth is blended toward the actual ribbon curve while the
+  shared root still follows current skinned/static surface samples.
+  Fixed 32x44 grid, same palette, no new persistent assets or replication.
+- Not solved by this step: full watertight 3D mantle surface and geodesic
+  adjacency; the source remains camera-facing and mesh-aware,
+  not a full 3D fluid solver. Never infer quality from static checks;
+  user PIE inspection and multi-actor profiling are necessary.

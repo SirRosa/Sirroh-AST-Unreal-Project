@@ -670,7 +670,11 @@ void UASTFireFreeFlameComponent::UpdateGeometry(bool bCreate)
             const float RootBlend=ASTFireLife::SmoothStep(V/.20f);
             const float Tip=FMath::Pow(FMath::Max(0.f,1.f-V),.73f);
             W.Add(Width*RootBlend*Tip*Ridge);
-            H.Add(FMath::Clamp(1.04f-.66f*V + .09f*
+            // The first 42% of each tongue is drawn by the mantle field.
+            // Its ribbon fades in only AFTER the shared hot body already
+            // supports the same centerline. No separate visible root card.
+            const float Emergence=ASTFireLife::SmoothStep((V-.20f)/.26f);
+            H.Add(Emergence*FMath::Clamp(1.04f-.66f*V + .09f*
                 FMath::Sin(V*8.2f+ShapePhase),.10f,1.f));
         }
         if (!T.bActive || T.Age<0.f || Heat<.015f)
@@ -1013,17 +1017,67 @@ void UASTFireFreeFlameComponent::UpdateConnectedSource(
         ConnectedRoots.Add(Root+Normal*(Front+6.5f-RootDepth));
     }
 
-    // The source field follows the SAME animated first 23% of every
-    // tongue centerline, including wind and curl. Immersed ribbon roots
-    // now share the burning body without separate source attachments.
-    // Projected points subtract the 6.5cm lip to avoid depth feedback.
+    // Stage14: one burning body owns the lower section of EVERY living
+    // tongue. These line segments are not attached sprites or MST anchors:
+    // they expand the same masked, thermally shaded mantle grid (section 1).
+    // The already-approved separate ribbon starts only as this field ends.
+    struct FNeckSegment
+    {
+        FVector2D Start;
+        FVector2D End;
+        float StartRadius = 0.f;
+        float EndRadius = 0.f;
+        float StartDepth = 0.f;
+        float EndDepth = 0.f;
+        float StartV = 0.f;
+        float EndV = 0.f;
+    };
+    TArray<FNeckSegment> Necks;
+    Necks.Reserve(Tongues.Num()*3);
+    static constexpr float NeckFractions[4] = {0.f,.14f,.28f,.42f};
+    auto Project=[&](const FVector& World)
+    {
+        const FVector Delta=World-Origin;
+        return FVector2D(
+            FVector::DotProduct(Delta,Right),
+            FVector::DotProduct(Delta,Up));
+    };
     for(int32 I=0;I<Tongues.Num();++I)
     {
         const FTongue& T=Tongues[I];
-        if(!T.bActive || T.Age<0.f || Heat<.015f)continue;
+        if(!T.bActive || T.Age<0.f || Heat<.015f) continue;
         const FVector& Root=ConnectedRoots[I];
-        Include(TongueCenterAt(T,Root,.10f,Right),6.5f);
-        Include(TongueCenterAt(T,Root,.23f,Right),6.5f);
+        FVector WorldA=TongueCenterAt(T,Root,NeckFractions[0],Right);
+        for(int32 K=1;K<4;++K)
+        {
+            const float V0=NeckFractions[K-1];
+            const float V1=NeckFractions[K];
+            const FVector WorldB=TongueCenterAt(T,Root,V1,Right);
+            FNeckSegment Neck;
+            Neck.Start=Project(WorldA);
+            Neck.End=Project(WorldB);
+            Neck.StartRadius=FMath::Clamp(T.CurrentWidth*(.94f-.19f*V0),
+                6.f,28.f);
+            Neck.EndRadius=FMath::Clamp(T.CurrentWidth*(.94f-.19f*V1),
+                6.f,28.f);
+            Neck.StartDepth=FVector::DotProduct(WorldA-Origin,Normal);
+            Neck.EndDepth=FVector::DotProduct(WorldB-Origin,Normal);
+            Neck.StartV=V0;
+            Neck.EndV=V1;
+            Necks.Add(Neck);
+            // Extend only the bounds; adding these to Samples would force
+            // Prim's MST to connect airborne tips into spurious flat bridges.
+            const float Extent=FMath::Max(Neck.StartRadius,Neck.EndRadius)+12.f;
+            MinX=FMath::Min(MinX,FMath::Min(float(Neck.Start.X),
+                float(Neck.End.X))-Extent);
+            MaxX=FMath::Max(MaxX,FMath::Max(float(Neck.Start.X),
+                float(Neck.End.X))+Extent);
+            MinY=FMath::Min(MinY,FMath::Min(float(Neck.Start.Y),
+                float(Neck.End.Y))-Extent);
+            MaxY=FMath::Max(MaxY,FMath::Max(float(Neck.Start.Y),
+                float(Neck.End.Y))+Extent);
+            WorldA=WorldB;
+        }
     }
 
     const float Extent=FMath::Max(20.f,FMath::Max(MaxX-MinX,MaxY-MinY));
@@ -1129,9 +1183,43 @@ void UASTFireFreeFlameComponent::UpdateConnectedSource(
             const float Flicker=.88f+
                 .09f*FMath::Sin(Elapsed*7.2f+X*.077f+Y*.039f)+
                 .08f*FMath::Sin(Y*.17f-X*.11f-Elapsed*5.4f);
+            // A signed capsule union includes all living tongue necks in
+            // the SAME mantle. Their geometry and the ribbon use the same
+            // TongueCenterAt curve, current length, wind and curl.
+            float NeckSupport=0.f;
+            float NeckDepth=0.f;
+            for(const FNeckSegment& Neck:Necks)
+            {
+                // Early cull keeps cost bounded for large animated meshes.
+                constexpr float MaxNeckReach=41.f;
+                if(P.X<FMath::Min(Neck.Start.X,Neck.End.X)-MaxNeckReach ||
+                   P.X>FMath::Max(Neck.Start.X,Neck.End.X)+MaxNeckReach ||
+                   P.Y<FMath::Min(Neck.Start.Y,Neck.End.Y)-MaxNeckReach ||
+                   P.Y>FMath::Max(Neck.Start.Y,Neck.End.Y)+MaxNeckReach)
+                    continue;
+                const FVector2D Axis=Neck.End-Neck.Start;
+                const float Along=FMath::Clamp(float(FVector2D::DotProduct(
+                    P-Neck.Start,Axis))/
+                    FMath::Max(1.f,float(Axis.SizeSquared())),0.f,1.f);
+                const FVector2D Center=Neck.Start+Axis*Along;
+                const float R=FMath::Lerp(Neck.StartRadius,Neck.EndRadius,Along);
+                const float FadeWidth=FMath::Max(4.f,R*.45f);
+                const float D2=float((P-Center).SizeSquared());
+                if(D2>FMath::Square(R+FadeWidth)) continue;
+                const float Cover=FMath::Clamp(1.f-
+                    (FMath::Sqrt(D2)-R)/FadeWidth,0.f,1.f);
+                const float V=FMath::Lerp(Neck.StartV,Neck.EndV,Along);
+                const float Support=Cover*(.48f+.32f*(1.f-V));
+                if(Support>NeckSupport)
+                {
+                    NeckSupport=Support;
+                    NeckDepth=FMath::Lerp(
+                        Neck.StartDepth,Neck.EndDepth,Along);
+                }
+            }
+            const float BodyHeat=Fill*(.43f+.26f*Core+.13f*Spread);
             const float Thermal=FMath::Clamp(
-                Heat*Fill*(.43f+.26f*Core+.13f*Spread)*Flicker,
-                0.f,1.f);
+                Heat*FMath::Max(BodyHeat,NeckSupport)*Flicker,0.f,1.f);
 
             // Use the same nearest-front-depth rule as ConnectedRoots so
             // ribbon mouths and mantle pixels occupy a single depth surface.
@@ -1139,8 +1227,13 @@ void UASTFireFreeFlameComponent::UpdateConnectedSource(
             for(int32 I=0;I<3;++I)
                 if(BestD2[I]<BIG_NUMBER*.5f)
                     FrontDepth=FMath::Max(FrontDepth,BestDepth[I]);
-            const float Depth=FrontDepth>-BIG_NUMBER*.5f
+            float Depth=FrontDepth>-BIG_NUMBER*.5f
                 ? FrontDepth+5.f : HighestDepth;
+            // The hot neck has the SAME depth as the strip that will emerge
+            // from it: no hidden root on the opposite side of the character.
+            if(NeckSupport>.02f)
+                Depth=FMath::Lerp(Depth,NeckDepth,
+                    ASTFireLife::SmoothStep(NeckSupport/.8f));
             const FVector World=Origin+Right*X+Up*Y+Normal*Depth;
             Verts.Add(RenderTransform.InverseTransformPosition(World));
             // UV.x=.5 gives the same bright center as tongue ribbons;
