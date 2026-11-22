@@ -63,6 +63,7 @@ $paths=@(
   'Automation/ASTFire/setup_stage10_lifecycle.py',
   'Automation/ASTFire/setup_stage22_char.py',
   'Automation/ASTFire/setup_stage24_smoke.py',
+  'Automation/ASTFire/deploy_stage10_windows.ps1',
   'Automation/ASTFire/verify_stage10_gpu.py'
 )
 foreach($path in $paths){if(!(Test-Path -LiteralPath (Join-Path $source ($path.Replace('/','\'))))){throw ('Missing '+$path)}}
