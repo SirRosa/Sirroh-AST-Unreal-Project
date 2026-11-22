@@ -18,6 +18,8 @@ for token in (
     "DOREPLIFETIME(UASTFireReactiveComponent, ExtraLocalPoints)",
 ):
     assert token in runtime, f"Required stage4 geometry/flow/replication: {token}"
+assert "class FLifetimeProperty;" in header
+assert "double RotationAngle" in runtime
 assert "ReplicatedUsing=OnRep_Burning" in header
 assert "ReplicatedUsing=OnRep_BurnAnchors" in header
 assert "GetNetMode() == NM_Client" in api

@@ -647,11 +647,11 @@ void UASTFireReactiveComponent::TickComponent(
     const FQuat RotationDelta = CurrentRotation * LastOwnerRotation.Inverse();
     LastOwnerRotation = CurrentRotation;
     FVector RotationAxis = FVector::UpVector;
-    float RotationAngle = 0.0f;
+    double RotationAngle = 0.0;
     RotationDelta.ToAxisAndAngle(RotationAxis, RotationAngle);
     if (RotationAngle > PI) RotationAngle -= 2.0f * PI;
     const FVector AngularVelocity = RotationAxis.GetSafeNormal() *
-        FMath::Clamp(RotationAngle / DeltaTime, -12.0f, 12.0f);
+        FMath::Clamp(RotationAngle / DeltaTime, -12.0, 12.0);
 
     float LocalDisturbance = 0.0f;
     FVector LocalWind = FVector::ZeroVector;

@@ -19,7 +19,7 @@ class UStaticMesh;
 class UStaticMeshComponent;
 class UMaterialInterface;
 class UProceduralMeshComponent;
-struct FLifetimeProperty;
+class FLifetimeProperty;
 
 /** Placement options shared by torches, characters, trees, furniture and physics actors. */
 UENUM(BlueprintType)
