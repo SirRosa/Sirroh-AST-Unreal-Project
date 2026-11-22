@@ -1,4 +1,4 @@
-"""Stage12 source-first regression: one mantle, approved tongues unchanged.
+"""Stage13 connected-body regression: no hollow rings, tongues share a filled base.
 
 Static checks / numerical references do not substitute for PIE, DX12
 shader validation, gameplay networking or measured multi-actor frame rate.
@@ -77,6 +77,15 @@ check_tokens(c,(
     "FVector2D::DistSquared(P,Samples[I])",
     "float PointD2=BIG_NUMBER,EdgeD2=BIG_NUMBER;",
     "FMath::Sqrt(PointD2)-Radius", "FMath::Sqrt(EdgeD2)-Radius*.68f",
+    "const float Fill=FMath::Clamp(1.f-Dist/Outer,0.f,1.f);",
+    "const float Core=FMath::Clamp((-Dist)/(Radius+Inner),0.f,1.f);",
+    "Include(Origin); // no donut in free-standing fire",
+    "Include(Root+FVector::UpVector*Rise);",
+    "const float BurnRadius = FMath::Clamp(",
+    "const UPrimitiveComponent* Primitive =",
+    "TArray<float> SampleDepths;",
+    "const float Weight=1.f/(BestD2[I]+100.f);",
+    "const float Depth=TotalWeight>0.f",
     "float Thermal=FMath::Clamp(",
     "UpdateConnectedSource(bCreate, View, Right)",
     "1,Verts,Tris,Normals,UVs,Colors,Tangents,false",
@@ -126,12 +135,12 @@ def shape_distance(point,points,parent,radius):
                              (py-(y0+t*dy))**2)-radius*.68)
     return min(dpoint,dedge)
 
-def thermal(d,radius=10):
+def thermal(d,radius=10,spread=.22):
     inner=max(5.,min(12.,radius*.65))
     outer=max(9.,min(18.,radius*.85))
-    near=max(0.,min(1.,(d+inner)/inner))
-    far=max(0.,min(1.,1-d/outer))
-    return near*far
+    fill=max(0.,min(1.,1-d/outer))
+    core=max(0.,min(1.,(-d)/(radius+inner)))
+    return fill*(.43+.26*core+.13*spread)
 
 # Even if the tongues are far apart, their common base has a connecting
 # manifold. This must ALSO hold for the free-standing case (no mesh).
@@ -141,10 +150,18 @@ assert parents[0] is None
 assert all(p is not None for p in parents[1:])
 for x in range(-30,48,3):
     assert shape_distance((float(x),0.),samples,parents,10.)<0.
-assert thermal(-20.)==0.
-assert thermal(0.)==1.
-assert 0.<thermal(5.)<1.
+assert thermal(-20.)>.6  # NO hollow center; source core is hot
+assert thermal(-5.)>thermal(0.)>thermal(5.)>0.
 assert thermal(30.)==0.
+assert thermal(-10.)>thermal(10.)
+# Root at the origin plus close roots produce solid fuel, not a donut:
+free_roots=[(0.,0.),(13.,0.),(-10.,8.),(-10.,-8.)]
+free_parents=mst(free_roots)
+assert shape_distance((0.,0.),free_roots,free_parents,10.)<0.
+assert thermal(shape_distance((0.,0.),free_roots,free_parents,10.))>.4
+# A living tongue sprouts from inside that same connected body.
+assert "const FVector Root=SampleRoot(T);" in c
+assert "Rise=FMath::Clamp(T.CurrentLength*.23f,4.f,24.f)" in c
 
 # Previously approved bridge: multi-frame visible neck followed by eased
 # retraction, not instant parent length teleport.
@@ -176,4 +193,4 @@ check_tokens(install,(
     "STAGE10_BUILD_EXIT=", "Get-Process -Name UnrealEditor",
     "setup_stage10_lifecycle.py", "STAGE10_COMMANDLET=",
 ))
-print("Stage12 shared source: geometry, palette, bridge and backup checks OK")
+print("Stage13 filled source: no hollow rings, root blending, mesh depth and backup checks OK")
