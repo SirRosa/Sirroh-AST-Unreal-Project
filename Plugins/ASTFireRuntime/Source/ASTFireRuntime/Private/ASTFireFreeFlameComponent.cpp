@@ -1052,16 +1052,15 @@ void UASTFireFreeFlameComponent::UpdateConnectedSource(
                 Heat*Fill*(.43f+.26f*Core+.13f*Spread)*Flicker,
                 0.f,1.f);
 
-            float WeightedDepth=0.f,TotalWeight=0.f;
+            // The old average put the flame INSIDE thick props: front
+            // and back surface samples cancel in projection. Keep source
+            // just ahead of the nearest front-facing sampled surface.
+            float FrontDepth=-BIG_NUMBER;
             for(int32 I=0;I<3;++I)
-            {
-                if(BestD2[I]>=BIG_NUMBER*.5f)continue;
-                const float Weight=1.f/(BestD2[I]+100.f);
-                WeightedDepth+=BestDepth[I]*Weight;
-                TotalWeight+=Weight;
-            }
-            const float Depth=TotalWeight>0.f
-                ? WeightedDepth/TotalWeight+4.5f : HighestDepth;
+                if(BestD2[I]<BIG_NUMBER*.5f)
+                    FrontDepth=FMath::Max(FrontDepth,BestDepth[I]);
+            const float Depth=FrontDepth>-BIG_NUMBER*.5f
+                ? FrontDepth+5.f : HighestDepth;
             const FVector World=Origin+Right*X+Up*Y+Normal*Depth;
             Verts.Add(RenderTransform.InverseTransformPosition(World));
             // UV.x=.5 gives the same bright center as tongue ribbons;
