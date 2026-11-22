@@ -79,18 +79,27 @@ try:
     subsystem = u.get_engine_subsystem(u.SubobjectDataSubsystem)
     funcs = u.SubobjectDataBlueprintFunctionLibrary
     modified = 0
+    disabled_legacy_niagara = 0
     for handle in subsystem.k2_gather_subobject_data_for_blueprint(blueprint):
         component = funcs.get_object(funcs.get_data(handle))
-        if component is not None and component.get_class().get_name() == "ASTFireReactiveComponent":
+        if component is None:
+            continue
+        if component.get_class().get_name() == "NiagaraComponent":
+            # This is the standalone Niagara from Stage3, not the reactive volume.
+            component.set_editor_property("auto_activate", False)
+            component.set_editor_property("visible", False)
+            disabled_legacy_niagara += 1
+        elif component.get_class().get_name() == "ASTFireReactiveComponent":
             component.set_editor_property("enable_procedural_flames", True)
             component.set_editor_property("enable_flame_cards", False)
             component.set_editor_property("enable_niagara", False)
             component.set_editor_property("volume_material", asset)
             modified += 1
     require(modified == 1, "Expected one ASTFireReactiveComponent in fire source BP")
+    require(disabled_legacy_niagara >= 1, "Expected Stage3 Niagara component to disable")
     u.BlueprintEditorLibrary.compile_blueprint(blueprint)
     require(LIB.save_loaded_asset(blueprint, only_if_is_dirty=False), "BP save failed")
-    OUT.update({"status": "VOLUME_ASSET_CONFIGURED_REQUIRES_USER_VIEW", "modified_components": modified})
+    OUT.update({"status": "VOLUME_ASSET_CONFIGURED_REQUIRES_USER_VIEW", "modified_components": modified, "disabled_legacy_niagara": disabled_legacy_niagara})
 except Exception as exc:
     OUT["status"] = "FAILED"
     OUT["errors"].append({"message": str(exc), "trace": traceback.format_exc()[-2600:]})

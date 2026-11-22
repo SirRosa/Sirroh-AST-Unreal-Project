@@ -26,5 +26,7 @@ assert "GetNetMode() == NM_Client" in api
 assert '"ProceduralMeshComponent", "Enabled": true' in plugin
 assert "BP_Torch_U" not in script and "GrimFX" not in script
 assert "M_AST_FirePixel_Volume" in script
+assert 'set_editor_property("auto_activate", False)' in script
+assert 'set_editor_property("visible", False)' in script
 assert "MP_EMISSIVE_COLOR" in script
 print("AST Fire Stage4 structure and boundaries: OK")
