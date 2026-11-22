@@ -89,6 +89,10 @@ assert "setup_stage10_lifecycle.py" in install
 assert "M_AST_FireTongue.uasset" in install
 assert "M_AST_FireSurfaceLife.uasset" in install
 assert "STAGE10_BUILD_EXIT" in install
+assert "verify_stage10_gpu.py" in install
+assert "-AllowCommandletRendering" in install
+assert "-RenderOffscreen" in install
+assert "Failed to compile Material" in install
 
 # Verify physically ordered lifecycle reference: continuous base at split,
 # detached tip cools, shrinks, accelerates as it rises; a new unique generation.

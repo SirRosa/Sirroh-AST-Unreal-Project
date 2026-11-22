@@ -59,7 +59,8 @@ $paths=@(
   'Automation/ASTFire/setup_stage4_volume.py',
   'Automation/ASTFire/setup_stage6_igniter.py',
   'Automation/ASTFire/setup_stage8_surface.py',
-  'Automation/ASTFire/setup_stage10_lifecycle.py'
+  'Automation/ASTFire/setup_stage10_lifecycle.py',
+  'Automation/ASTFire/verify_stage10_gpu.py'
 )
 foreach($path in $paths){if(!(Test-Path -LiteralPath (Join-Path $source ($path.Replace('/','\'))))){throw ('Missing '+$path)}}
 New-Item -ItemType Directory -Path $backup -Force | Out-Null
@@ -125,5 +126,26 @@ foreach($step in $steps){
     Get-Content -LiteralPath $log -Tail 45
     throw ('Commandlet failed '+$step.Name)
   }
+}
+# NullRHI commandlets do not catch pixel shader errors. Prior UE PIE
+# reported PreSkinnedPosition used in pixel stage and missing SkeletalMesh
+# usage even though all four commandlets returned Exit 0.
+$gpuScript=Join-Path $ProjectRoot 'Automation\ASTFire\verify_stage10_gpu.py'
+$gpuResult=Join-Path $report 'gpu_shader_check.json'
+$gpuLog=Join-Path $report ('verify_stage10_gpu_'+$stamp+'.log')
+if(Test-Path -LiteralPath $gpuResult){
+  Move-Item -LiteralPath $gpuResult -Destination (Join-Path $backup 'gpu_shader_check.previous.json') -Force
+}
+& $ue $project '-run=pythonscript' ('-script='+$gpuScript.Replace('\','/')) '-unattended' '-nop4' '-nosplash' '-AllowCommandletRendering' '-RenderOffscreen' *> $gpuLog
+$gpuExit=$LASTEXITCODE
+if(!(Test-Path -LiteralPath $gpuResult)){Get-Content -LiteralPath $gpuLog -Tail 35;throw 'No real GPU shader verification result'}
+$gpuJson=Get-Content -LiteralPath $gpuResult -Raw -Encoding UTF8 | ConvertFrom-Json
+$shaderErrors=@(Select-String -LiteralPath $gpuLog -Pattern 'Failed to compile Material|External code identifier.*not available|missing usage flag SkeletalMesh|LogShaderCompilers: Error|LogMaterial: Error')
+Write-Output ('STAGE10_GPU_SHADER_CHECK=EXIT='+$gpuExit+';STATUS='+$gpuJson.status+';ERROR_MATCHES='+$shaderErrors.Count)
+if($gpuExit -ne 0 -or $gpuJson.status -ne 'STAGE10_GPU_GRAPH_AND_USAGE_CHECKED_SHADER_LOG_REQUIRED' -or $shaderErrors.Count -gt 0){
+  $gpuJson.errors | ConvertTo-Json -Depth 5 -Compress | Write-Output
+  $shaderErrors | Select-Object -Last 12 | ForEach-Object {$_.Line}
+  Get-Content -LiteralPath $gpuLog -Tail 30
+  throw 'Real-RHI GPU material check failed; do not claim visual success'
 }
 Write-Output 'STAGE10_INSTALL_SUCCESS_VISUAL_AND_CONTACT_TEST_PENDING'
