@@ -42,6 +42,10 @@ def new_material(name, is_overlay=False):
     asset.set_editor_property("shading_model",
                               u.MaterialShadingModel.MSM_UNLIT)
     asset.set_editor_property("two_sided", True)
+    if is_overlay:
+        # Without the skeletal usage permutation Unreal substitutes its
+        # default material even when the Blueprint and source graph are valid.
+        asset.set_editor_property("used_with_skeletal_mesh", True)
     EDIT.delete_all_material_expressions(asset)
     OUT["assets"].append(path)
     return asset
@@ -122,10 +126,21 @@ try:
     # deformed skin polygons, and nearby burning areas merge by union.
     surface = new_material("M_AST_FireSurfaceLife", is_overlay=True)
     pre = EDIT.create_material_expression(
-        surface, u.MaterialExpressionPreSkinnedPosition, -860, -300)
+        surface, u.MaterialExpressionPreSkinnedPosition, -1030, -300)
+    interpolated = EDIT.create_material_expression(
+        surface, u.MaterialExpressionVertexInterpolator, -830, -300)
     clock = EDIT.create_material_expression(
         surface, u.MaterialExpressionTime, -860, -160)
-    require(pre and clock, "PreSkinnedPosition/Time missing")
+    require(pre and interpolated and clock,
+            "PreSkinnedPosition/VertexInterpolator/Time missing")
+    # PreSkinnedPosition is VERTEX-ONLY. Feeding it straight to a custom
+    # pixel shader produced the observed PCD3D_SM6 compile failure:
+    # 'External code identifier PreSkinnedPosition is not available'.
+    pin_names = EDIT.get_material_expression_input_names(interpolated)
+    require(len(pin_names) == 1, "Unexpected vertex interpolator pins")
+    require(EDIT.connect_material_expressions(
+        pre, "", interpolated, str(pin_names[0])),
+        "Could not route pre-skinned position through vertex stage")
     scalar = {}
     for i,(name, initial) in enumerate((
         ("FireIntensity",1.0), ("FireEnergy",0.8),
@@ -182,7 +197,7 @@ try:
     sc,sm=custom(surface,inputs,sfield+palette,
                  sfield+"return saturate((h-.10)*3.7);")
     for node, target in (
-        (pre,"P"),(clock,"T"),(scalar["FireIntensity"],"I"),
+        (interpolated,"P"),(clock,"T"),(scalar["FireIntensity"],"I"),
         (scalar["FireEnergy"],"E"),(scalar["FireSpread"],"Spread"),
         (scalar["FireSeed"],"Seed"),(flow,"M")
     ):
