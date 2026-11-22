@@ -97,6 +97,8 @@ assert "MaterialExpressionVertexNormalWS" in mat
 assert "MaterialExpressionFresnel" in mat
 assert '"FireCloakDepth",9.0' in mat
 assert "MP_WORLD_POSITION_OFFSET" in mat
+assert '"always_evaluate_world_position_offset", True' in mat
+assert '"max_world_position_offset_displacement", 90.0' in mat
 assert "finish(surface,sc,sm,is_overlay=True,wpo=wpo)" in mat
 assert "wpo.set_editor_property" in mat
 assert 'float depth=Depth*cover*saturate(I)' in mat

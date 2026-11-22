@@ -46,6 +46,11 @@ def new_material(name, is_overlay=False):
         # Without the skeletal usage permutation Unreal substitutes its
         # default material even when the Blueprint and source graph are valid.
         asset.set_editor_property("used_with_skeletal_mesh", True)
+        # The cloak is intentionally displaced, not an alpha paint.
+        # Force WPO for actors disabling it at distance; expand culling
+        # bounds far enough for the maximum outward/upward eruption.
+        asset.set_editor_property("always_evaluate_world_position_offset", True)
+        asset.set_editor_property("max_world_position_offset_displacement", 90.0)
     EDIT.delete_all_material_expressions(asset)
     OUT["assets"].append(path)
     return asset
