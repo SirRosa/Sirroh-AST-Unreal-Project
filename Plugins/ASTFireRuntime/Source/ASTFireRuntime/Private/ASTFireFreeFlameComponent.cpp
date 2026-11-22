@@ -893,8 +893,10 @@ void UASTFireFreeFlameComponent::UpdateConnectedSource(
         // Gate sampled vertices by nearby live tongue anchors/contact hits.
         if (Cast<UMeshComponent>(Source))
         {
-            const float MaxDimension = IsValid(Source)
-                ? Source->Bounds.BoxExtent.GetMax()*2.f : 180.f;
+            const UPrimitiveComponent* Primitive =
+                Cast<UPrimitiveComponent>(Source);
+            const float MaxDimension = Primitive
+                ? Primitive->Bounds.BoxExtent.GetMax()*2.f : 180.f;
             const float BurnRadius = FMath::Clamp(
                 MaxDimension*.23f,24.f,125.f) *
                 (.52f + .90f*Spread);
