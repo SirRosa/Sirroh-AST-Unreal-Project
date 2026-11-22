@@ -1,0 +1,17 @@
+{
+  "FileVersion": 3,
+  "Version": 2,
+  "VersionName": "0.2",
+  "FriendlyName": "AST Fire",
+  "Description": "Project-specific Niagara editor assembly and reusable fire source controller.",
+  "Category": "FX",
+  "EnabledByDefault": false,
+  "CanContainContent": false,
+  "Modules": [
+    { "Name": "ASTFireRuntime", "Type": "Runtime", "LoadingPhase": "Default" },
+    { "Name": "ASTFireEditor", "Type": "Editor", "LoadingPhase": "Default" }
+  ],
+  "Plugins": [
+    { "Name": "Niagara", "Enabled": true }
+  ]
+}
