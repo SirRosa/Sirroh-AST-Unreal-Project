@@ -24,7 +24,7 @@ check_tokens(c,(
     "GetSkinWeightVertexBuffer", "LineTraceComponent(",
     "static constexpr" if False else "SampleRoot(",
     "EFlameLife::Bridging", "EFlameLife::Retracting",
-    "EmitTip(T,Base,T.SplitLength,Flow)",
+    "EmitTip(T,VisualBase,T.SplitLength,Flow)",
     "T.CurrentLength = FMath::Lerp(T.SplitLength,T.RetractTarget,Ease)",
     "D.Position+=D.Velocity*Dt", "ConfigureGeneration(T)",
     "FMath::Frac(ShapeSeed*.017f)", "AddStrip(C,W,H",
