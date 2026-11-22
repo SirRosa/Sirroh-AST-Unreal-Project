@@ -545,11 +545,25 @@ void UASTFireReactiveComponent::UpdateVolume(
 
         // React to motion of the attachment/socket, including skeletal motion.
         const FVector AnchorVelocity = (Origin - Field.LastAnchorLocation) / Dt;
-        const FVector LocalFlow = (SmoothedFlow - AnchorVelocity * 0.23f)
-            .GetClampedToMaxSize(900.0f);
+        const FVector AnchorAcceleration = (AnchorVelocity - Field.LastAnchorVelocity) / Dt;
+        Field.LastAnchorVelocity = AnchorVelocity;
         Field.LastAnchorLocation = Origin;
+        const FVector LocalFlow = (SmoothedFlow - AnchorVelocity * 1.05f
+            - AnchorAcceleration.GetClampedToMaxSize(6500.0f) * 0.035f)
+            .GetClampedToMaxSize(1800.0f);
         const float Wind = FMath::Clamp(
-            FVector::DotProduct(LocalFlow, Right) / 450.0f, -1.0f, 1.0f);
+            FVector::DotProduct(LocalFlow, Right) / 265.0f, -3.25f, 3.25f);
+        const float DepthGust = FMath::Clamp(
+            FMath::Abs(FVector::DotProduct(LocalFlow, ViewDirection)) / 550.0f,
+            0.0f, 2.4f);
+        const float Gust = FMath::Clamp(LocalFlow.Size() / 850.0f, 0.0f, 2.0f);
+        Field.CurrentGust = Gust;
+        const float Breath = FMath::Clamp(
+            0.58f + 0.30f * FMath::Sin(Field.Time * 5.6f + Seed)
+            + 0.24f * FMath::Sin(Field.Time * 9.9f + Seed * 1.71f)
+            + 0.12f * FMath::Sin(Field.Time * 2.3f + Seed * 0.37f),
+            0.08f, 1.24f);
+        Field.Breath = FMath::FInterpTo(Field.Breath, Breath, Dt, 10.0f);
 
         // Semi-Lagrangian advection of heat: upward buoyancy + moving eddies.
         // Simulates temperature distribution rather than deforming fixed tubes.
@@ -565,8 +579,10 @@ void UASTFireReactiveComponent::UpdateVolume(
                 const float Eddies =
                     6.2f * FMath::Sin(U * 7.0f + V * 14.0f + Field.Time * 3.2f + Seed) +
                     4.1f * FMath::Sin(U * 13.0f - V * 8.0f - Field.Time * 2.7f + Seed * 0.6f);
-                const float Rise = (10.0f + 3.8f * OldHeat + Heat * 2.3f) * Dt;
-                const float Shift = (Wind * 9.2f + Eddies) * Dt;
+                const float Rise = (10.0f + 3.8f * OldHeat + Heat * 2.3f +
+                    Gust * 1.6f) * Dt;
+                const float Shift = (Wind * 19.5f + Eddies *
+                    (1.0f + 0.37f * Gust + 0.19f * DepthGust)) * Dt;
                 const float Sample = ASTHeat::Read(
                     Field.Temperature, float(X) - Shift, float(Y) - Rise);
                 float NewHeat = Sample * Cooling;
@@ -576,15 +592,25 @@ void UASTFireReactiveComponent::UpdateVolume(
                 {
                     const float Falloff = FMath::Clamp(
                         1.0f - float(Y) / 5.0f, 0.0f, 1.0f);
+                    // Separate flame tongues are born and die out of phase.
+                    const float LocalLife = FMath::Clamp(
+                        0.48f + 0.43f * FMath::Sin(
+                            Field.Time * (4.8f + float(X % 5) * 0.27f) +
+                            U * 5.7f + Seed) +
+                        0.17f * FMath::Sin(Field.Time * 11.1f -
+                            float(X) * 0.83f + Seed * 1.6f), 0.035f, 1.05f);
                     const float Source = ASTHeat::Source(float(X), Field.Time, Seed) *
-                        (0.82f + 0.18f * ASTHeat::HashWave(Field.Time * 2.1f + U * 3.0f + Seed));
+                        (0.62f + 0.38f * ASTHeat::HashWave(
+                            Field.Time * 2.6f + U * 3.0f + Seed)) *
+                        LocalLife * Field.Breath;
                     NewHeat = FMath::Max(NewHeat, Source * Falloff * Heat);
                 }
                 // Local shear tears weak edges while keeping the shared hot base.
                 const float Shear = FMath::Max(0.0f,
                     FMath::Sin(U * 15.0f - V * 23.0f + Field.Time * 4.6f + Seed) +
                     0.45f * FMath::Cos(U * 9.0f + V * 17.0f - Field.Time * 3.0f));
-                NewHeat *= FMath::Exp(-Dt * 1.4f * V * Shear);
+                NewHeat *= FMath::Exp(-Dt * (1.4f * V * Shear +
+                    0.42f + 0.48f * V + Gust * 0.32f));
 
                 // Turbulent pockets create short-lived detached islands.
                 if (Y > 14 && Y < ASTHeat::Height - 2)
@@ -598,6 +624,21 @@ void UASTFireReactiveComponent::UpdateVolume(
         }
         Swap(Field.Temperature, Field.Work);
 
+        // The aggregate temperature directly supplies light lifetime and
+        // growth information. Keep this visual-only; not replicated.
+        double Sum = 0.0;
+        for (int32 Y = 0; Y < ASTHeat::Height; ++Y)
+            for (int32 X = 0; X < ASTHeat::Width; ++X)
+                Sum += Field.Temperature[Y * ASTHeat::Width + X] *
+                    (0.65 + 0.35 * double(Y) / double(ASTHeat::Height));
+        const float Mass = FMath::Clamp(
+            float(Sum / double(ASTHeat::Cells)) * 3.9f, 0.04f, 1.25f);
+        const float WantedEnergy = FMath::Clamp(
+            Mass * (0.42f + 0.65f * Field.Breath), 0.04f, 1.20f);
+        Field.VisualEnergy = FMath::FInterpTo(
+            Field.VisualEnergy, WantedEnergy, Dt,
+            WantedEnergy > Field.VisualEnergy ? 11.0f : 5.0f);
+
         // Discrete torn-off fire islands; fixed budget, no per-fragment components.
         for (FASTFlameFragment& Fragment : Field.Fragments)
         {
@@ -607,7 +648,8 @@ void UASTFireReactiveComponent::UpdateVolume(
             Fragment.VX += 1.3f * FMath::Sin(Field.Time * 5.0f + Fragment.Y) * Dt;
             Fragment.Life = FMath::Max(0.0f, Fragment.Life - Dt);
         }
-        Field.SpawnDebt = FMath::Min(4.0f, Field.SpawnDebt + Dt * Heat * 5.5f);
+        Field.SpawnDebt = FMath::Min(4.0f, Field.SpawnDebt +
+            Dt * Heat * (3.0f + 5.0f * Field.Breath + Gust * 1.8f));
         for (FASTFlameFragment& Fragment : Field.Fragments)
         {
             if (Field.SpawnDebt < 1.0f) break;
@@ -639,23 +681,34 @@ void UASTFireReactiveComponent::UpdateVolume(
 
     const float CellW = RealWidth / float(ASTHeat::Width);
     const float CellH = RealHeight / float(ASTHeat::Height);
+    const FVector MotionFlow = SmoothedFlow - Field.LastAnchorVelocity * 0.75f;
     const float FlowSide = FMath::Clamp(
-        FVector::DotProduct(SmoothedFlow, Right), -600.0f, 600.0f);
+        FVector::DotProduct(MotionFlow, Right) * 0.34f,
+        -RealWidth * 0.85f, RealWidth * 0.85f);
+    const float HeightCycle = FMath::Clamp(
+        0.60f + 0.44f * Field.Breath - 0.10f * Field.CurrentGust,
+        0.42f, 1.18f);
     for (int32 Y = 0; Y < ASTHeat::Height; ++Y)
     {
         const float V = (float(Y) + 0.5f) / float(ASTHeat::Height);
         // Upper cells lag behind the anchor. No global sprite rotation.
-        const float Lag = FlowSide * 0.14f * V * V;
+        const float Lag = FlowSide * V * V;
         for (int32 X = 0; X < ASTHeat::Width; ++X)
         {
             const float U = (float(X) + 0.5f) / float(ASTHeat::Width) - 0.5f;
             const FVector Center = Origin + Right * (U * RealWidth + Lag) +
-                WorldUp * (V * RealHeight);
-            // Shape the silhouette explicitly, in addition to advection.
-            // The fixed grid alone cannot guarantee tapered ends.
+                WorldUp * (V * RealHeight * HeightCycle);
+            // Cells flicker and detach independently; contour alone is jelly.
             const float Seed = float((SimulationSeed + Index * 5381) % 1009) * 0.0137f;
+            const float LocalAge = FMath::Clamp(
+                0.55f + 0.33f * FMath::Sin(Field.Time * 6.7f +
+                    float(X) * 0.63f - float(Y) * 0.22f + Seed) +
+                0.18f * FMath::Sin(Field.Time * 12.3f -
+                    float(Y) * 0.41f + float(X) * 0.17f + Seed),
+                0.03f, 1.12f);
             const float T = Field.Temperature[Y * ASTHeat::Width + X] *
-                ASTHeat::ShapedCoverage(X, Y, Field.Time, Seed);
+                ASTHeat::ShapedCoverage(X, Y, Field.Time, Seed) *
+                LocalAge * FMath::Clamp(0.45f + 0.68f * Field.Breath, 0.17f, 1.3f);
             ASTHeat::AddQuad(Vertices, Triangles, UV, Colors, bCreate,
                 Transform, Center, Right, WorldUp,
                 CellW * 0.503f, CellH * 0.503f, T, V);
@@ -666,7 +719,7 @@ void UASTFireReactiveComponent::UpdateVolume(
         const float V = Fragment.Y / float(ASTHeat::Height);
         const float U = Fragment.X / float(ASTHeat::Width) - 0.5f;
         const FVector Center = Origin + Right * (U * RealWidth +
-            FlowSide * 0.14f * V * V) + WorldUp * (V * RealHeight);
+            FlowSide * V * V) + WorldUp * (V * RealHeight * HeightCycle);
         const float Bright = Fragment.Life > 0.0f
             ? Fragment.Heat * FMath::Min(1.0f, Fragment.Life * 3.2f) : 0.0f;
         ASTHeat::AddQuad(Vertices, Triangles, UV, Colors, bCreate,
