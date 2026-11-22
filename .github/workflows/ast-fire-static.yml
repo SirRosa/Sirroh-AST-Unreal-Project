@@ -42,6 +42,9 @@ jobs:
           python Automation/ASTFire/test_stage8_integrated.py
           python -m py_compile Automation/ASTFire/test_stage9_unbounded.py
           python Automation/ASTFire/test_stage9_unbounded.py
+          python -m py_compile Automation/ASTFire/setup_stage10_lifecycle.py
+          python -m py_compile Automation/ASTFire/test_stage10_lifecycle.py
+          python Automation/ASTFire/test_stage10_lifecycle.py
           python Automation/ASTFire/test_stage4_source.py
       - name: Parse PowerShell deployment script
         shell: pwsh
@@ -52,7 +55,8 @@ jobs:
             "Automation/ASTFire/deploy_stage5_verified_windows.ps1",
             "Automation/ASTFire/deploy_stage6_windows.ps1",
             "Automation/ASTFire/deploy_stage8_windows.ps1",
-            "Automation/ASTFire/deploy_stage9_windows.ps1"
+            "Automation/ASTFire/deploy_stage9_windows.ps1",
+            "Automation/ASTFire/deploy_stage10_windows.ps1"
           )) {
             $tokens = $null
             $errors = $null

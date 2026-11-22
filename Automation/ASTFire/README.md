@@ -262,3 +262,40 @@ commandlets.
 - Krytyczne zachowanie: `bUseLegacyHeatGrid = false` jest domyślne i ustawione w skrypcie BP. W normalnym trybie **nie instancjonujemy** poprzednich prostokątnych `FireVolumes` na kościach. Zamiast nich `UASTFireFreeFlameComponent` próbuje próbkując renderowane, skórkowane wierzchołki (LOD0). Free-space embers mają współrzędne świata i czas życia, a nie granice siatki 22×30.
 - Ograniczenia: kilka płaskich segmentów w ramach każdego języka nadal renderuje się jako dwustronne billboarding quady (nie pełny solver CFD). Płonący StaticMesh bez użytecznej kolizji może mieć jedynie materiał powierzchniowy. Brak dostępnego CPU skin vertex buffer w buildzie może zablokować sampling geometryczny; nie należy wtedy sztucznie przenosić płomieni na kości.
 - **Niepotwierdzone**: rzeczywisty wygląd, animacja i kolizje w PIE, multiplayer oraz profilowanie GPU/CPU. Testy CI i commandlety nie są dowodem jakości wizualnej.
+
+
+## Stage 10 — final implementation specification, coupled modules (2026-11-22)
+
+After Stage9 feedback, do not describe Stage10 as another box/grid patch.
+**All the following coexist in one runtime path:**
+
+- Surface skin roots sampled from deformed render vertices (or static-mesh
+  collision triangle hits); no fixed heat rectangle, detached heads in world.
+- Merge hotspots on original animated triangle overlay: up to 8 mesh-local
+  ignition points packed into MaterialInstanceDynamic vector parameters.
+  Hotspot support expands over time; adjacent hotspots merge through a smooth
+  union. Full-body fire is reached progressively (not by individual stickers).
+  The hotspot distance is Euclidean in rest pose, not expensive geodesic mesh
+  adjacency: this is a documented limitation.
+- 3–6 free tongues on characters, 4–5 on small objects, 10–15 on large ones.
+  Tongues are one continuous tapered strip, not stacked identical flat cards.
+- Each tongue maintains own GrowthSeconds, MaxLength, width, seed, direction
+  and birth generation. It grows to maturity, tears its tip away, preserves
+  a shorter connected root, and generates a new distinct silhouette.
+  Detached tips have world positions and velocities and cool, shrink, speed
+  up and fade over their own individual lifetimes. This also powers local light.
+- Hottest almost white -> yellow -> orange -> red -> dying black-red, indexed
+  by **local heat and age**, not one universal yellow material.
+- Shader asset setup:
+  `Automation/ASTFire/setup_stage10_lifecycle.py` creates two new AST-owned
+  materials `M_AST_FireTongue` and `M_AST_FireSurfaceLife`, updates only
+  `BP_AST_FireSource` and `BP_AST_FireSource_Igniter`.
+- Installation uses `Automation/ASTFire/deploy_stage10_windows.ps1`;
+  pin exact SHA, build in TEMP, back up only own source/DLL/material/Blueprints,
+  prevent overwriting while UE editor is open. No modifying AST maps/torches,
+  no charring/damage and no per-particle replication.
+- Test: `test_stage10_lifecycle.py` checks cycle of tongue birth/adult/split/
+  detachment/death, cooling and acceleration, mesh coverage union, size-based
+  tongue counts, runtime invariants and vertex/triangle budgets for 1/10/30
+  actors. This is not a true PIE FPS/GPU benchmark and cannot validate art.
+  Visual and multiplayer test still required before claiming final quality.
