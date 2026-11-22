@@ -42,7 +42,8 @@ jobs:
           foreach ($path in @(
             "Automation/ASTFire/deploy_stage2_windows.ps1",
             "Automation/ASTFire/deploy_stage4_windows.ps1",
-            "Automation/ASTFire/deploy_stage5_verified_windows.ps1"
+            "Automation/ASTFire/deploy_stage5_verified_windows.ps1",
+            "Automation/ASTFire/deploy_stage6_windows.ps1"
           )) {
             $tokens = $null
             $errors = $null
