@@ -312,3 +312,20 @@ After Stage9 feedback, do not describe Stage10 as another box/grid patch.
 - **Wymagane jeszcze w grze:** wizualne sprawdzenie ognia na animowanej postaci, małym i dużym StaticMesh, krótkiego okresu po zapłonie i łączenia obszarów, oderwania końcówek wraz z kolorem, bardzo szybkiego ruchu, kosztu 1/10/30 aktorów, zachowania multiplayer.
 - **Dokładność:** warstwa bazowa jest materiałem faktycznego mesha, ale sąsiedztwo punktów zapłonu na nim aproksymuje dystans euklidesowy w lokalnym rest pose, nie geodezję po topologii trójkątów. Wystające języki pozostają kamerowo orientowanymi, ciągłymi pasami w świecie. Bez użytecznej kolizji StaticMesh emitter może mieć wyłącznie warstwę bazową. Nie należy twierdzić, że to pełny CFD lub ostatecznie zweryfikowany wygląd.
 
+
+### Stage10 correction — shared burning mantle and visibly bridged separation
+
+After PIE feedback, the code now prioritizes the actual skeletal body mesh over
+large attached static props; the GPU surface material forms a brighter, earlier
+merging mantle of mesh-bound hotspots instead of isolated tongue roots.
+Procedural tongue strips taper to **zero planar width at the source** and emerge
+from that common mantle, rather than having separate flat sprite bottoms.
+Each tongue now has three states: Growing, Bridging (roughly 0.12–0.18 seconds,
+multiple frames at 25Hz), and Retracting (0.16–0.27 seconds). The detached tip
+starts at the previous visible head, with a thin hot connecting bridge that
+stretches and snaps. Only after the bridge has gone does the parent reduce its
+length using smoothstep; it then grows a newly randomized shape from the
+actual current short length. The extra bridge geometry has fixed topology and
+is invisible except during separation. Upper-bound per actor ~550 vertices,
+458 triangles for 15 tongues/16 detached fragments — NOT a measured GPU cost.
+Only the AST fire plugin, own material script and tests are changed.

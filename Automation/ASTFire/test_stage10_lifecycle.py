@@ -20,8 +20,8 @@ for token in (
     "LineTraceComponent(", "Transform.InverseTransformPosition(WorldHit)",
     "FireCluster%d", 'FName(TEXT("FireSpread"))',
     "bClusterMapUploaded", "ConfigureGeneration(T)",
-    "T.Age>=T.GrowSeconds", "EmitTip(T,Current,T.MaxLength,Flow)",
-    "T.Age=0.f", "T.RemainingFraction",
+    "T.Age>=T.GrowSeconds", "EmitTip(T,Base,T.SplitLength,Flow)",
+    "T.Age = 0.f", "T.RemainingFraction",
     "D.Position+=D.Velocity*Dt", "160.f+210.f*(1.f-Fade)",
     "FMath::Pow(Fade,1.25f)", "AddStrip(C,W,H",
     "Render->UpdateMeshSection_LinearColor",
@@ -34,6 +34,15 @@ assert "FreeFlames->SetSurfaceMaterial(FireSurfaceMID)" in reactive
 assert "0.91f * VisualEnergy" in reactive
 assert "MaxTongues = 15" in h
 assert "MaxDetached = 16" in h
+assert "BridgeRings = 4" in h
+assert "EFlameLife::Bridging" in c
+assert "EFlameLife::Retracting" in c
+assert "T.CurrentLength = FMath::Lerp(T.SplitLength,T.RetractTarget,Ease)" in c
+assert "T.BridgedChild = EmitTip(T,Base,T.SplitLength,Flow)" in c
+assert "BW.Add(bBridge?Width*.31f*(1.f-BridgeAlpha)" in c
+assert "RootBlend=ASTFireLife::SmoothStep(V/.20f)" in c
+assert "BestSkeleton" in reactive
+assert "Tongues.Num()*2+MaxDetached" in c
 assert "RingsPerTongue = 9" in h
 assert "RingsPerDetached = 5" in h
 assert "SetIgnitionPoints" in h
@@ -44,7 +53,7 @@ assert "if (Slot < IgnitionPoints.Num())" in c
 assert "bClusterMapUploaded" in c
 
 assert "max(3.,radius%d*.33)" in mat
-assert 'float full=saturate((Spread-.66)*3.15)' in mat
+assert 'float full=smoothstep(.40,.98,Spread)' in mat
 assert 'float cover=saturate(max(hot,full))' in mat
 assert '"hot=max(hot,cover%d);mass+=cover%d;"' in mat
 for threshold in (".12,h", ".24,h", ".43,h", ".61,h", ".77,h", ".90,h"):
@@ -90,6 +99,29 @@ d,e,c1=detached(lifetime*.45)
 f,g,c2=detached(lifetime*.9)
 assert a>d>f and b>e>g and c0<c1<c2
 
+# Numeric checks: the bridge persists for multiple frames at 25Hz, and
+# the parent must retract smoothly after the connection ruptures.
+split_length=100.
+target_length=42.
+bridge_seconds=.15
+retract_seconds=.22
+ticks=[k*.04 for k in range(11)]
+lengths=[]
+bridge_visible=[]
+for t in ticks:
+    if t<=bridge_seconds:
+        length=split_length
+        bridge_visible.append(t)
+    else:
+        progress=max(0.,min(1.,(t-bridge_seconds)/retract_seconds))
+        length=split_length+(target_length-split_length)*smooth(progress)
+    lengths.append(length)
+assert len(bridge_visible)>=3
+assert lengths[0]==lengths[1]==lengths[2]
+assert all(lengths[i+1]<=lengths[i]+1e-8 for i in range(len(lengths)-1))
+assert lengths[-1]>=target_length-1
+assert lengths[4]>.90*split_length
+
 # Numeric surface union: two nearby burn patches must visually merge as their
 # supporting radii expand; this remains Euclidean, NOT topological geodesics.
 def coverage(x,spots,radius):
@@ -111,9 +143,9 @@ assert 4<=tongue_count("static",90)<=5
 assert 10<=tongue_count("static",600)<=15
 
 # Upper-bound budget: this is a SIZE check, not a measured UE benchmark.
-vertices=(15*9+16*5)*2
-triangles=(15*(9-1)+16*(5-1))*2
-assert vertices<=450 and triangles<=375
+vertices=(15*(9+4)+16*5)*2
+triangles=(15*(9+4-2)+16*(5-1))*2
+assert vertices<=600 and triangles<=500
 for actors in (1,10,30):
     print(f"Stage10 theoretical max {actors} actors: "
           f"{actors*vertices} live vertices, {actors*triangles} triangles/25Hz")

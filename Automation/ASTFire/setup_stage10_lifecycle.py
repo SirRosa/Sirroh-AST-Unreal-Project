@@ -150,26 +150,27 @@ try:
     union = []
     for i in range(8):
         union.append(
-            "float grow%d=saturate((Spread-%0.3f)*3.4);"
+            "float grow%d=smoothstep(%0.3f,%0.3f,Spread+.15);"
             "float radius%d=C%d.w*grow%d;"
             "float cover%d=radius%d>0.1?"
             "saturate((radius%d-distance(p,C%d.xyz))/"
             "max(3.,radius%d*.33)):0.;"
             "hot=max(hot,cover%d);mass+=cover%d;"
-            % (i,i*.055,i,i,i,i,i,i,i,i,i,i)
+            % (i,i*.045,i*.045+.36,i,i,i,i,i,i,i,i,i,i)
         )
     sfield = (
         "float3 p=floor(P/6.)*6.;"
         "float hot=0.;float mass=0.;"
         + "".join(union) +
         "float merged=saturate((mass-1.)*.50);"
-        "float full=saturate((Spread-.66)*3.15);"
+        # Connected burning mantle is skinned to the actual mesh polygons.
+        "float full=smoothstep(.40,.98,Spread);"
         "float cover=saturate(max(hot,full));"
         "float3 adv=p-float3(M.x,M.y,M.z)*T*.11;"
         "float n=.87+.08*sin(adv.x*.71+adv.z*.43-T*4.7+Seed*.02)"
         "+.05*sin(adv.y*.59-adv.x*.24+T*6.1);"
-        "float h=saturate(cover*(.51+.33*hot+.13*merged+.17*full)"
-        "*n*I*(.83+.17*E));"
+        "float h=saturate(cover*(.69+.27*hot+.22*merged+.24*full)"
+        "*n*I*(.85+.15*E));"
     )
     inputs=("P","T","I","E","Spread","Seed","M")+tuple(
         "C%d"%i for i in range(8))
