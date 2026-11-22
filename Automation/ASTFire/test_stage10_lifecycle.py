@@ -92,7 +92,7 @@ assert "BP_AST_FireSource_Igniter" in mat
 assert "BLEND_TRANSLUCENT" in mat
 assert "MP_OPACITY" in mat
 assert 'new_material("M_AST_FireSurfaceLife", is_overlay=True)' in mat
-assert 'finish(surface,sc,sm,is_overlay=True)' in mat
+assert 'finish(surface,sc,sm,is_overlay=True,wpo=wpo)' in mat
 assert "MaterialExpressionVertexNormalWS" in mat
 assert "MaterialExpressionFresnel" in mat
 assert '"FireCloakDepth",9.0' in mat
