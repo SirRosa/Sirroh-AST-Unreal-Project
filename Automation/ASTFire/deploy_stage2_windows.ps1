@@ -16,7 +16,9 @@ $ProgressPreference = 'SilentlyContinue'
 $stamp = Get-Date -Format 'yyyyMMdd_HHmmss'
 $reportDir = Join-Path $ProjectRoot 'Saved\ChatGPT\NiagaraFire\Stage2'
 $backupDir = Join-Path $reportDir ('SourceBackup_' + $stamp)
-$packageDir = Join-Path $reportDir ('PluginBuild_' + $stamp)
+# BuildPlugin deletes HostProject directories while packaging. Google Drive file
+# sync can temporarily lock them, so build completely outside the synced tree.
+$packageDir = Join-Path ([System.IO.Path]::GetTempPath()) ('ASTFirePluginBuild_' + $stamp)
 $log = Join-Path $reportDir ('BuildPlugin_' + $stamp + '.log')
 $finalLog = Join-Path $reportDir ('Finalize_' + $stamp + '.log')
 
