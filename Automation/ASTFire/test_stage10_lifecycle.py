@@ -31,6 +31,10 @@ check_tokens(c,(
     "Render->SetMaterial(0, Material)",
     "Render->SetMaterial(1, Material)",
     "UpdateConnectedSource(bCreate, View, Right)",
+    "ConnectedRoots.Reset();",
+    "ConnectedRoots.Reserve(Tongues.Num());",
+    "ConnectedRoots.IsValidIndex(I)",
+    "ConnectedRoots.Add(Root+Normal*(Front+6.5f-RootDepth));",
     "Render->CreateMeshSection_LinearColor(",
     "Render->UpdateMeshSection_LinearColor(",
 ))
@@ -62,6 +66,16 @@ assert 'MP_WORLD_POSITION_OFFSET' not in mat
 assert 'new_material("M_AST_FireSurfaceLife"' not in mat
 for token in (".12,h", ".24,h", ".43,h", ".61,h", ".77,h", ".90,h"):
     assert token in mat, token
+
+# Mesh samples are taken from CURRENT skinned geometry and collision hits.
+# Tongue mesh section and source mesh section now use the same projected
+# surface depth in the SAME render update. They do not float on two planes.
+assert c.index("UpdateConnectedSource(bCreate, View, Right)") < c.index(
+    "const FVector Base=ConnectedRoots.IsValidIndex(I)")
+assert "const FVector Base=SampleRoot(T);" not in c[
+    c.index("void UASTFireFreeFlameComponent::UpdateGeometry("):
+    c.index("void UASTFireFreeFlameComponent::BuildSourceAnchors()")]
+assert "TArray<FVector> ConnectedRoots;" in h
 
 # Mesh samples are taken from CURRENT skinned geometry and collision hits.
 # The fixed-topology marching-like mask is a single connected source, not

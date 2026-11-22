@@ -122,6 +122,7 @@ void UASTFireFreeFlameComponent::OnUnregister()
     Tongues.Reset();
     BurnClusters.Reset();
     SourceAnchors.Reset();
+    ConnectedRoots.Reset();
     bGenerated = false;
     Super::OnUnregister();
 }
@@ -614,10 +615,16 @@ void UASTFireFreeFlameComponent::UpdateGeometry(bool bCreate)
     FVector Right=FVector::CrossProduct(FVector::UpVector,View).GetSafeNormal();
     if (Right.IsNearlyZero()) Right=FVector::RightVector;
 
+    // Calculate the continuous source FIRST. It also publishes the exact
+    // per-tongue emergence positions on its front surface, in the same
+    // camera basis and frame as the actual source geometry.
+    UpdateConnectedSource(bCreate, View, Right);
+
     for (int32 I=0;I<Tongues.Num();++I)
     {
         const FTongue& T=Tongues[I];
-        const FVector Base=SampleRoot(T);
+        const FVector Base=ConnectedRoots.IsValidIndex(I)
+            ? ConnectedRoots[I] : SampleRoot(T);
         const float Fraction=FMath::Clamp(T.Age/FMath::Max(.1f,T.GrowSeconds),0.f,1.f);
         const float Growth=ASTFireLife::SmoothStep(Fraction);
         const float Length=T.CurrentLength;
@@ -725,9 +732,8 @@ void UASTFireFreeFlameComponent::UpdateGeometry(bool bCreate)
     else
         Render->UpdateMeshSection_LinearColor(0,Verts,Normals,UVs,Colors,Tangents);
 
-    // Render one continuous source (section 1) in the exact tongue material.
-    // It is NOT a WPO shell made from the original low-poly triangles.
-    UpdateConnectedSource(bCreate, View, Right);
+    // Section 1 was authored before this section, so each tongue's
+    // zero-width starting point lies inside the same filled fire source.
 }
 
 
@@ -945,6 +951,49 @@ void UASTFireFreeFlameComponent::UpdateConnectedSource(
     if(Samples.IsEmpty())
         Include(Origin);
 
+    // All tongues emerge from the SAME mantle surface. Previously, the
+    // source was rendered at the camera-facing depth but the tongues
+    // remained at their raw skinned-bone/mesh depth (up to an entire
+    // torso away), producing visibly separate flame sprites.
+    //
+    // Use precisely the field's three-nearest-front-samples depth policy
+    // for a tongue's projected position. Keep ~2 cm camera-facing bias to
+    // avoid Z-fighting while its root stays submerged in the hot field.
+    ConnectedRoots.Reset();
+    ConnectedRoots.Reserve(Tongues.Num());
+    for (const FTongue& Tongue : Tongues)
+    {
+        const FVector Root=SampleRoot(Tongue);
+        const FVector Diff=Root-Origin;
+        const FVector2D P(
+            FVector::DotProduct(Diff,Right),
+            FVector::DotProduct(Diff,Up));
+        float BestD2[3]={BIG_NUMBER,BIG_NUMBER,BIG_NUMBER};
+        float BestDepth[3]={0.f,0.f,0.f};
+        for(int32 I=0;I<Samples.Num();++I)
+        {
+            const float D2=float(FVector2D::DistSquared(P,Samples[I]));
+            if(D2>=BestD2[2])continue;
+            int32 Slot=2;
+            while(Slot>0 && D2<BestD2[Slot-1])
+            {
+                BestD2[Slot]=BestD2[Slot-1];
+                BestDepth[Slot]=BestDepth[Slot-1];
+                --Slot;
+            }
+            BestD2[Slot]=D2;
+            BestDepth[Slot]=SampleDepths[I];
+        }
+        float Front=-BIG_NUMBER;
+        for(int32 I=0;I<3;++I)
+            if(BestD2[I]<BIG_NUMBER*.5f)
+                Front=FMath::Max(Front,BestDepth[I]);
+        if(Front<=-BIG_NUMBER*.5f)
+            Front=HighestDepth;
+        const float RootDepth=float(FVector::DotProduct(Diff,Normal));
+        ConnectedRoots.Add(Root+Normal*(Front+6.5f-RootDepth));
+    }
+
     const float Extent=FMath::Max(20.f,FMath::Max(MaxX-MinX,MaxY-MinY));
     const float Radius=FMath::Clamp(
         Extent/(FMath::Sqrt(float(Samples.Num()))*1.5f),10.f,26.f);
@@ -1052,9 +1101,8 @@ void UASTFireFreeFlameComponent::UpdateConnectedSource(
                 Heat*Fill*(.43f+.26f*Core+.13f*Spread)*Flicker,
                 0.f,1.f);
 
-            // The old average put the flame INSIDE thick props: front
-            // and back surface samples cancel in projection. Keep source
-            // just ahead of the nearest front-facing sampled surface.
+            // Use the same nearest-front-depth rule as ConnectedRoots so
+            // ribbon mouths and mantle pixels occupy a single depth surface.
             float FrontDepth=-BIG_NUMBER;
             for(int32 I=0;I<3;++I)
                 if(BestD2[I]<BIG_NUMBER*.5f)

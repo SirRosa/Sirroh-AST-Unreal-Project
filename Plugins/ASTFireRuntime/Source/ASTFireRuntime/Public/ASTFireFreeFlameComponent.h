@@ -138,6 +138,9 @@ private:
     TArray<FTongue> Tongues;
     TArray<FBurnCluster> BurnClusters;
     TArray<FSourceAnchor> SourceAnchors;
+    // The render-space roots are sampled from the SAME 3D mantle surface
+    // as mesh section 1. A tongue must not start on a different depth plane.
+    TArray<FVector> ConnectedRoots;
     TArray<FDetached> Detached;
     TArray<FVector> IgnitionPoints;
     FVector Wind = FVector::ZeroVector;
