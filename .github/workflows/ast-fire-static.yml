@@ -1,0 +1,61 @@
+name: AST Fire static checks
+
+on:
+  push:
+    branches:
+      - work/niagara-fire-stage2
+    paths:
+      - "Automation/ASTFire/**"
+      - "Plugins/ASTFireRuntime/**"
+      - ".github/workflows/ast-fire-static.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  syntax-and-scope:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Compile Unreal Python automation syntax
+        run: |
+          python -m py_compile Automation/ASTFire/fix_stage2_materials.py
+          python -m py_compile Automation/ASTFire/finalize_stage2.py
+      - name: Verify intended project boundaries
+        shell: python
+        run: |
+          from pathlib import Path
+          import json
+
+          root = Path("Plugins/ASTFireRuntime")
+          metadata = json.loads((root / "ASTFireRuntime.uplugin").read_text())
+          assert {"ASTFireRuntime", "ASTFireEditor"} == {
+              item["Name"] for item in metadata["Modules"]
+          }
+          assert any(
+              item["Name"] == "Niagara" and item["Enabled"]
+              for item in metadata.get("Plugins", [])
+          )
+
+          finalizer = Path("Automation/ASTFire/finalize_stage2.py").read_text()
+          assert "NE_AST_Fire_" in finalizer
+          assert " + \"_V2\"" in finalizer
+          assert "BP_AST_FireSource" in finalizer
+          assert "BP_Torch_U" in finalizer
+          assert "duplicate_asset(template, destination)" in finalizer
+
+          runtime = (root / "Source/ASTFireRuntime/Private/ASTFireReactiveComponent.cpp").read_text()
+          assert "OnComponentBeginOverlap.AddDynamic" in runtime
+          assert "GetPlayerControllerIterator" not in runtime
+          assert "SetIntensity" in runtime
+          assert "SetVariableFloat" in runtime
+
+          editor = (root / "Source/ASTFireEditor/Private/ASTFireEditorLibrary.cpp").read_text()
+          assert "AddEmitterHandle" in editor
+          assert "RequestCompile" in editor
+
+          print("AST Fire Python syntax and source structure: OK")
