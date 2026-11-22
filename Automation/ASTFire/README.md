@@ -1,39 +1,50 @@
-# AST Fire — Etap 2 (Unreal Engine 5.8.1)
+# AST Fire — Etap 2 / Unreal Engine 5.8.1
 
-## Zakres
+## Wynik (22 listopada 2026)
 
-- Autorskie materiały `M_AST_FirePixel_Core`, `M_AST_FirePixel_Ember`, `M_AST_FirePixel_Smoke`.
-- Oddzielne emitery `NE_AST_Fire_{Core,Ember,Smoke}_V2`, duplikowane z silnikowego szablonu Niagara `Fountain`.
-- System `NS_Fire_Master` zawierający docelowo trzy emitery.
-- `BP_AST_FireSource` z własnym `NiagaraComponent`, własnym `PointLightComponent` i `ASTFireReactiveComponent`.
-- Własne oświetlenie ognia (bez wykorzystywania `TorchLight` z `BP_Torch_U`).
-- Reakcja płomienia na prędkość źródła i blisko przechodzących postaci (detekcja zdarzeniami overlap, bez przeszukiwania świata).
+**STATUS: ASSETS_ASSEMBLED_REQUIRES_VISUAL_VALIDATION**
 
-## Bieżący stan weryfikacji
+Potwierdzone na komputerze projektu przy użyciu rzeczywistego UnrealBuildTool i UnrealEditor-Cmd:
 
-- Poprzednia wersja wtyczki ASTFireRuntime / ASTFireEditor kompilowała się niezależnie w BuildPlugin (UE 5.8.1).
-- Wcześniejszy skrypt finalizacyjny kończył się błędem `Custom -> ComponentMask`.
-- **Nowe źródła C++ i nowy finalizator zostały zapisane na GitHubie, ale NIE były jeszcze zbudowane/uruchomione w UE.**
-- GitHub Actions sprawdza składnię Pythona i zakres zmian. Nie kompiluje Unreal C++.
-- Ogień nie jest jeszcze uznany za gotowy; wyświetlanie i właściwości wizualne wymagają testów użytkownika.
+- `BuildPlugin` zakończył się kodem 0; zbudowane i wdrożone `UnrealEditor-ASTFireRuntime.dll` i `UnrealEditor-ASTFireEditor.dll`.
+- Trzy autorskie materiały `M_AST_FirePixel_{Core,Ember,Smoke}` zapisane; **6/6** połączeń grafu materiału na każdy.
+- Trzy emitery `NE_AST_Fire_{Core,Ember,Smoke}_V2` zduplikowane z silnikowego szablonu Niagara `Fountain`.
+- `NS_Fire_Master` — dokładnie 3 emitery (`Flame`, `Embers`, `Smoke`), skompilowane skrypty Niagara i zapisany system.
+- `BP_AST_FireSource` — `NiagaraComponent` przypisany do systemu, `PointLightComponent` należy do źródła ognia, dodano `ASTFireReactiveComponent`.
+- Po końcowym wywołaniu `UnrealEditor-Cmd.exe`: **0 błędów, 1 nieblokujące ostrzeżenie** (deprecacja `SubobjectDataBlueprintFunctionLibrary.get_object`).
+- Raport z rzeczywistego uruchomienia: `Saved/ChatGPT/NiagaraFire/Stage2/stage2_complete_result.json`.
+- Mapy, pierwotny `BP_Torch_U` i jego placeholderowe światło pozostawiono bez zmian.
 
-## Kolejność wdrożenia na komputerze z UE
+## Architektura
 
-1. Połączyć pliki z `Plugins/ASTFireRuntime` z lokalnym pluginem AST i zbudować wtyczkę dla UE 5.8.1. Nie nadpisywać map ani oryginalnego `BP_Torch_U`.
-2. Upewnić się, że plugin `ASTFireRuntime` jest włączony w `.uproject`.
-3. Uruchomić `Automation/ASTFire/finalize_stage2.py` przez `UnrealEditor-Cmd.exe -run=pythonscript -script=<pełna_ścieżka>` (plik `fix_stage2_materials.py` musi być w tym samym katalogu).
-4. Sprawdzić `Saved/ChatGPT/NiagaraFire/Stage2/stage2_complete_result.json`.
-5. Jeśli wynik to `ASSETS_ASSEMBLED_REQUIRES_VISUAL_VALIDATION`, ręcznie sprawdzić efekt w edytorze, bez automatycznego playtestu.
+- `Plugins/ASTFireRuntime` — dwa moduły C++: sterownik oświetlenia i reakcji w runtime oraz pomocnik składania Niagara w edytorze.
+- `Content/VFX/Fire/Materials` — autorski proceduralny shader płomienia, żaru i dymu.
+- `Content/VFX/Fire/Emitters` — trzy emitery Niagara, niezależne od istniejących placeholderów.
+- `Content/VFX/Fire/Systems/NS_Fire_Master` — wspólny system.
+- `Content/VFX/Fire/Blueprints/BP_AST_FireSource` — przenośne źródło płomienia z własnym światłem.
+- Flicker i kierunek reakcji na ruch są obliczane przez komponent `ASTFireReactiveComponent`. Bliskość postaci obsługuje lokalny `SphereComponent` i zdarzenia overlap, bez przeszukiwania wszystkich graczy.
 
-## Co jeszcze nie jest gotowe
+## Granica weryfikacji
 
-- Artystyczne strojenie emitera Fountain dla płomienia / żaru / dymu.
-- Parametry Niagara User używane wewnątrz grafów emitterów (runtime obecnie dodatkowo używa zmiany skali i nachylenia komponentu).
-- Presety dla pochodni, ogniska, płonących strzał, zaklęć i podłogi.
-- Finalna integracja z `BP_Torch_U`.
+**Nie wykonywano żadnego renderu, PIE ani automatycznego testu gameplay.** Kompilacja i zapis assetów nie dowodzą, że wizualnie przypominają Rain World ani że zachowanie i wydajność są satysfakcjonujące.
 
-## Organizacja
+Pozostałe zadania: dostrojenie ruchu i liczby cząstek w stosach emitera `Fountain`; podłączenie faktycznych parametrów Niagara User do grafów; profile dla pochodni, ogniska, płonącej strzały, zaklęć i podłoża; oraz integracja z docelowym miejscem pochodni po walidacji.
 
-Projekt i zasoby 16 GB pozostają na Google Drive. GitHub służy do wersjonowania niewielkich plików źródłowych i skryptów. **Nie wymagamy Git LFS ani importowania do GitHub całej zawartości projektu.** Nie zakładamy, że commit automatycznie aktualizuje kopię lokalną projektu.
+## Ręczna kontrola w Unreal Editor
 
-Ograniczenia projektu: nie uruchamiać automatycznych playtestów, symulowanego interfejsu edytora, renderowania lub testów ruchu; użytkownik wykonuje walidację wizualną i gameplay.
+1. Otwórz **Content Browser** i znajdź `/Game/VFX/Fire/Blueprints/BP_AST_FireSource`.
+2. Umieść **nową instancję** w pustym miejscu testowym; nie usuwaj obecnej pochodni.
+3. Sprawdź, czy widać proceduralne płomienie i żar, czy dym jest widoczny i czy sam obiekt ognia emituje światło (nie polega na `TorchLight`).
+4. Przejdź oraz przebiegnij blisko źródła; zweryfikuj, czy płomień reaguje na prędkość postaci.
+5. Porusz aktorem ognia i sprawdź reakcję na jego prędkość; skontroluj wygląd, flicker i koszt renderowania.
+6. Nie uznawaj etapów wizualnych za ukończone bez tej kontroli.
+
+## Ponowne wdrożenie
+
+`Automation/ASTFire/deploy_stage2_windows.ps1` pobiera tylko 11 małych plików źródłowych, tworzy backup, buduje wtyczkę **poza katalogiem synchronizacji Google Drive** i uruchamia finalizator.
+
+Nie używamy Git LFS; projekt i binarne assety pozostają na Google Drive. GitHub służy do kodu, skryptów i historii commitów. Nie uruchamiać instalatora podczas pracy z niezapisanym projektem Unreal.
+
+## Ograniczenia projektu
+
+Nigdy nie uruchamiać automatycznego gameplay/PIE, renderowania czy symulowanego interfejsu edytora. Testy wizualne wykonuje właściciel projektu. Nie modyfikować `BP_Torch_U` ani jego placeholderów bez uzgodnienia sposobu integracji.
