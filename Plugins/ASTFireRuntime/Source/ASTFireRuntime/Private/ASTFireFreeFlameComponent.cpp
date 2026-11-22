@@ -36,6 +36,7 @@ UASTFireFreeFlameComponent::UASTFireFreeFlameComponent()
     PrimaryComponentTick.TickGroup = TG_PostUpdateWork;
     Detached.SetNum(MaxDetached);
     Sparks.SetNum(MaxSparks);
+    Smoke.SetNum(MaxSmoke);
 }
 
 void UASTFireFreeFlameComponent::SetSource(
@@ -103,9 +104,13 @@ void UASTFireFreeFlameComponent::OnRegister()
     Render->SetMaterial(0, Material);
     Render->SetMaterial(1, Material); // unified mesh-bound source, same pixels
     Render->SetMaterial(2, Material); // tiny bright embers in matching palette
+    SmokeMaterial = LoadObject<UMaterialInterface>(nullptr,
+        TEXT("/Game/VFX/Fire/Materials/M_AST_FireSmoke.M_AST_FireSmoke"));
+    if (IsValid(SmokeMaterial)) Render->SetMaterial(3, SmokeMaterial);
     Render->RegisterComponent();
 
     Sparks.SetNum(MaxSparks);
+    Smoke.SetNum(MaxSmoke);
     BuildAnchors();
     BuildSourceAnchors();
     if (Tongues.Num() == 0)
@@ -128,6 +133,9 @@ void UASTFireFreeFlameComponent::OnUnregister()
     ConnectedRoots.Reset();
     Sparks.Reset();
     SparkSpawnDebt = 0.f;
+    Smoke.Reset();
+    SmokeSpawnDebt = 0.f;
+    SmokeMaterial = nullptr;
     bGenerated = false;
     Super::OnUnregister();
 }
@@ -735,6 +743,51 @@ void UASTFireFreeFlameComponent::UpdateSparks(float Dt)
     }
 }
 
+// Stage24: world-space wisps from actual source geometry, small fixed pool.
+// Drift remains reactive after extinguishing; never touches detached flames.
+void UASTFireFreeFlameComponent::UpdateSmoke(float Dt)
+{
+    for (FSmoke& S:Smoke)
+    {
+        if (!S.bAlive) continue;
+        S.Age+=Dt;
+        if (S.Age>=S.Lifetime) { S.bAlive=false; continue; }
+        const float Phase=S.Seed*.11f+S.Age*(2.1f+
+            ASTFireLife::Hash(S.Seed*.43f)*1.3f);
+        const FVector Eddy(FMath::Sin(Phase*1.17f)*28.f,
+            FMath::Cos(Phase*.89f)*25.f,
+            40.f+21.f*FMath::Sin(Phase*.73f));
+        S.Velocity+=(Eddy+Wind*.036f)*Dt;
+        S.Velocity=S.Velocity.GetClampedToMaxSize(380.f);
+        S.Position+=S.Velocity*Dt;
+    }
+    if (!bVisible || Heat<.10f || Tongues.IsEmpty()) return;
+    const float BurnRate=Heat*FMath::Clamp(Energy,.15f,1.25f);
+    SmokeSpawnDebt=FMath::Min(3.f,SmokeSpawnDebt+
+        Dt*(2.f+5.2f*BurnRate));
+    const int32 Born=FMath::Min(2,FMath::FloorToInt(SmokeSpawnDebt));
+    SmokeSpawnDebt-=Born;
+    for (int32 I=0;I<Born;++I)
+    {
+        FSmoke& S=Smoke[SmokeCursor%MaxSmoke];
+        const int32 Salt=SmokeCursor++;
+        const FTongue& T=Tongues[Salt%Tongues.Num()];
+        if (!T.bActive || T.Age<0.f) { S.bAlive=false; continue; }
+        const float R=ASTFireLife::Hash(float(Salt)+T.Seed*.67f);
+        const float J=ASTFireLife::Hash(float(Salt)*.39f+T.Seed);
+        S.Position=SampleRoot(T)+FVector::UpVector*
+            (6.f+T.CurrentLength*(.13f+.18f*R));
+        S.Velocity=FVector((R-.5f)*26.f,(J-.5f)*35.f,
+            38.f+55.f*R)+T.WorldVelocity*.22f+Wind*.045f;
+        S.Radius=9.f+11.f*R;
+        S.Lifetime=1.05f+1.3f*J;
+        S.Seed=float(Salt)*.931f+T.Seed*.27f;
+        S.EmissionHeat=FMath::Clamp(Heat*(.6f+.4f*R),0.f,1.f);
+        S.Age=0.f;
+        S.bAlive=true;
+    }
+}
+
 // Applied AFTER the approved life simulation. The age, cooling, death,
 // buoyancy and state machine above remain byte-for-byte unchanged.
 void UASTFireFreeFlameComponent::UpdateDetachedVortices(float Dt)
@@ -1069,6 +1122,77 @@ void UASTFireFreeFlameComponent::UpdateGeometry(bool bCreate)
     else
         Render->UpdateMeshSection_LinearColor(
             2,SV,SN,SU,SC,SX);
+
+    // Stage24: 5x5 warped billboard surface per evolving smoke fragment.
+    // Every puff has fixed topology, independent velocity and thermal fade.
+    if (IsValid(SmokeMaterial))
+    {
+        TArray<FVector> MV;
+        TArray<FVector2D> MU;
+        TArray<FLinearColor> MC;
+        TArray<int32> MT;
+        MV.Reserve(MaxSmoke*SmokeGrid*SmokeGrid);
+        MU.Reserve(MaxSmoke*SmokeGrid*SmokeGrid);
+        MC.Reserve(MaxSmoke*SmokeGrid*SmokeGrid);
+        if (bCreate) MT.Reserve(MaxSmoke*(SmokeGrid-1)*(SmokeGrid-1)*6);
+        for (int32 I=0;I<MaxSmoke;++I)
+        {
+            const FSmoke& S=Smoke[I];
+            const float Age=S.bAlive?FMath::Clamp(
+                S.Age/FMath::Max(.05f,S.Lifetime),0.f,1.f):1.f;
+            const float Birth=ASTFireLife::SmoothStep(Age/.16f);
+            const float Fade=(1.f-Age)*(1.f-Age)*Birth;
+            const float Radius=S.Radius*(.62f+1.65f*Age);
+            const FVector Ray=(CameraLocation-S.Position).GetSafeNormal();
+            const FVector N=Ray.IsNearlyZero()?View:Ray;
+            FVector Side=(CameraRight-N*
+                FVector::DotProduct(CameraRight,N)).GetSafeNormal();
+            if (Side.IsNearlyZero())
+                Side=FVector::CrossProduct(FVector::UpVector,N).GetSafeNormal();
+            if (Side.IsNearlyZero())
+                Side=FVector::CrossProduct(FVector::ForwardVector,N).GetSafeNormal();
+            const FVector Up=FVector::CrossProduct(N,Side).GetSafeNormal();
+            for (int32 Y=0;Y<SmokeGrid;++Y)
+                for (int32 X=0;X<SmokeGrid;++X)
+                {
+                    const float U=float(X)/float(SmokeGrid-1);
+                    const float V=float(Y)/float(SmokeGrid-1);
+                    const float DX=U*2.f-1.f, DY=V*2.f-1.f;
+                    const float Phase=S.Seed*.18f+S.Age*4.3f;
+                    const float Warp=.12f*FMath::Sin(
+                        DX*7.1f+DY*5.8f+Phase)+.07f*
+                        FMath::Sin(DY*11.4f-DX*3.7f-Phase*.71f);
+                    const FVector P=S.Position+
+                        Side*(DX+Warp*DY)*Radius+
+                        Up*(DY+Warp*DX)*Radius*.82f;
+                    MV.Add(RenderTransform.InverseTransformPosition(P));
+                    MU.Add(FVector2D(U,V));
+                    MC.Add(FLinearColor(S.EmissionHeat,V,
+                        FMath::Frac(S.Seed*.017f),
+                        S.bAlive?Fade*(.34f+.36f*S.EmissionHeat):0.f));
+                }
+            if (bCreate)
+                for (int32 Y=0;Y<SmokeGrid-1;++Y)
+                    for (int32 X=0;X<SmokeGrid-1;++X)
+                    {
+                        const int32 A=I*SmokeGrid*SmokeGrid+
+                            Y*SmokeGrid+X;
+                        MT.Add(A);MT.Add(A+SmokeGrid);MT.Add(A+1);
+                        MT.Add(A+1);MT.Add(A+SmokeGrid);
+                        MT.Add(A+SmokeGrid+1);
+                    }
+        }
+        TArray<FVector> MN;
+        TArray<FProcMeshTangent> MX;
+        MN.Init(FVector::ForwardVector,MV.Num());
+        MX.Init(FProcMeshTangent(1,0,0),MV.Num());
+        if (bCreate)
+            Render->CreateMeshSection_LinearColor(
+                3,MV,MT,MN,MU,MC,MX,false);
+        else
+            Render->UpdateMeshSection_LinearColor(
+                3,MV,MN,MU,MC,MX);
+    }
 
     // Section 1 was authored before this section, so each tongue's
     // zero-width starting point lies inside the same filled fire source.
@@ -1635,7 +1759,10 @@ void UASTFireFreeFlameComponent::TickComponent(
     bool bHasSparks=false;
     for (const FSpark& S:Sparks)
         if (S.bAlive) { bHasSparks=true; break; }
-    if ((!bVisible || Heat<.005f) && !bHasSparks)
+    bool bHasSmoke=false;
+    for (const FSmoke& S:Smoke)
+        if (S.bAlive) { bHasSmoke=true; break; }
+    if ((!bVisible || Heat<.005f) && !bHasSparks && !bHasSmoke)
     {
         // No active fire or embers: skip expensive field reconstruction.
         VisualEnergy=FMath::FInterpTo(VisualEnergy,0.f,Dt,6.f);
@@ -1646,6 +1773,7 @@ void UASTFireFreeFlameComponent::TickComponent(
     AdvanceSimulation(SimDt);
     UpdateDetachedVortices(SimDt);
     UpdateSparks(SimDt);
+    UpdateSmoke(SimDt);
     UpdateGeometry(false);
     if (IsValid(Render)) Render->SetVisibility(true);
 }

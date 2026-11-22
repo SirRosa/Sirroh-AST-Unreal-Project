@@ -39,6 +39,8 @@ private:
     static constexpr int32 RingsPerTongue = 9;
     static constexpr int32 MaxDetached = 16;
     static constexpr int32 MaxSparks = 24;
+    static constexpr int32 MaxSmoke = 18;
+    static constexpr int32 SmokeGrid = 5;
     static constexpr int32 RingsPerDetached = 5;
     static constexpr int32 BridgeRings = 4;
     static constexpr int32 SurfaceClusters = 8;
@@ -120,6 +122,18 @@ private:
         bool bAlive = false;
     };
 
+    struct FSmoke
+    {
+        FVector Position = FVector::ZeroVector;
+        FVector Velocity = FVector::ZeroVector;
+        float Age = 0.f;
+        float Lifetime = 1.4f;
+        float Radius = 13.f;
+        float Seed = 0.f;
+        float EmissionHeat = 0.f;
+        bool bAlive = false;
+    };
+
     void BuildAnchors();
     void RebuildClusters();
     void BuildSourceAnchors();
@@ -131,6 +145,7 @@ private:
     void AdvanceSimulation(float Dt);
     void UpdateDetachedVortices(float Dt);
     void UpdateSparks(float Dt);
+    void UpdateSmoke(float Dt);
     void UpdateGeometry(bool bCreate);
     void UpdateSurfaceMap(float Dt);
     int32 EmitTip(FTongue& Tongue, const FVector& Base, float Length,
@@ -149,6 +164,8 @@ private:
     UPROPERTY(Transient)
     TObjectPtr<UMaterialInterface> Material = nullptr;
     UPROPERTY(Transient)
+    TObjectPtr<UMaterialInterface> SmokeMaterial = nullptr;
+    UPROPERTY(Transient)
     TObjectPtr<UMaterialInstanceDynamic> SurfaceMID = nullptr;
 
     TArray<FTongue> Tongues;
@@ -161,6 +178,9 @@ private:
     TArray<FSpark> Sparks;
     float SparkSpawnDebt = 0.f;
     int32 SparkCursor = 0;
+    TArray<FSmoke> Smoke;
+    float SmokeSpawnDebt = 0.f;
+    int32 SmokeCursor = 0;
     TArray<FVector> IgnitionPoints;
     FVector Wind = FVector::ZeroVector;
     float Heat = 1.f;

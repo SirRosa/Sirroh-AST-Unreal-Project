@@ -62,6 +62,7 @@ $paths=@(
   'Automation/ASTFire/setup_stage8_surface.py',
   'Automation/ASTFire/setup_stage10_lifecycle.py',
   'Automation/ASTFire/setup_stage22_char.py',
+  'Automation/ASTFire/setup_stage24_smoke.py',
   'Automation/ASTFire/verify_stage10_gpu.py'
 )
 foreach($path in $paths){if(!(Test-Path -LiteralPath (Join-Path $source ($path.Replace('/','\'))))){throw ('Missing '+$path)}}
@@ -73,6 +74,7 @@ $ownedAssets=@(
   'Content/VFX/Fire/Materials/M_AST_FireTongue.uasset',
   'Content/VFX/Fire/Materials/M_AST_FireSurfaceLife.uasset',
   'Content/VFX/Fire/Materials/M_AST_FireChar.uasset',
+  'Content/VFX/Fire/Materials/M_AST_FireSmoke.uasset',
   'Content/VFX/Fire/Blueprints/BP_AST_FireSource.uasset',
   'Content/VFX/Fire/Blueprints/BP_AST_FireSource_Igniter.uasset'
 )
@@ -111,7 +113,8 @@ $steps=@(
   @{Name='setup_stage6_igniter.py'; Result='Stage6\stage6_result.json'; Status='IGNITER_CREATED_REQUIRES_CONTACT_TEST'},
   @{Name='setup_stage8_surface.py'; Result='Stage8\stage8_result.json'; Status='SURFACE_FIRE_CONFIGURED_REQUIRES_VISUAL_TEST'},
   @{Name='setup_stage10_lifecycle.py'; Result='Stage10\stage10_result.json'; Status='STAGE10_THERMAL_MATERIALS_CONFIGURED_REQUIRES_VISUAL_TEST'},
-  @{Name='setup_stage22_char.py'; Result='Stage22\stage22_result.json'; Status='STAGE22_CHAR_MATERIAL_READY_VISUAL_TEST_PENDING'}
+  @{Name='setup_stage22_char.py'; Result='Stage22\stage22_result.json'; Status='STAGE22_CHAR_MATERIAL_READY_VISUAL_TEST_PENDING'},
+  @{Name='setup_stage24_smoke.py'; Result='Stage24\stage24_result.json'; Status='STAGE24_SMOKE_MATERIAL_READY_VISUAL_TEST_PENDING'}
 )
 foreach($step in $steps){
   $script=Join-Path $ProjectRoot ('Automation\ASTFire\'+$step.Name)
