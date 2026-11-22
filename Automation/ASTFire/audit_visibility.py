@@ -50,11 +50,15 @@ def run():
         OUT["materials"][kind]={"properties":inspection(obj,["blend_mode","shading_model",
             "used_with_niagara_sprites","used_with_particle_sprites","two_sided","opacity_mask_clip_value"]),
             "expressions":[]}
-        for e in obj.get_editor_property("expressions"):
-            d={"class":e.get_class().get_name(),"name":e.get_name()}
-            if e.get_class().get_name()=="MaterialExpressionCustom":
-                d.update(inspection(e,["code","output_type","inputs"]))
-            OUT["materials"][kind]["expressions"].append(d)
+        try:
+            expressions=u.MaterialEditingLibrary.get_material_expressions(obj)
+            for e in expressions:
+                d={"class":e.get_class().get_name(),"name":e.get_name()}
+                if e.get_class().get_name()=="MaterialExpressionCustom":
+                    d.update(inspection(e,["code","output_type","inputs"]))
+                OUT["materials"][kind]["expressions"].append(d)
+        except Exception as ex:
+            OUT["materials"][kind]["expression_audit_unavailable"]=str(ex)[:300]
     bpath=P+"/Blueprints/BP_AST_FireSource"
     blueprint=L.load_asset(bpath)
     clazz=L.load_blueprint_class(bpath)
