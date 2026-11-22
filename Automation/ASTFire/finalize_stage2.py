@@ -72,26 +72,72 @@ def create_materials():
     }
 
 
-def prepare_emitter(kind):
-    # Never replace or rename existing factory emitters. New V2 templates use
-    # distinct names, so a rerun cannot damage pre-existing assets/redirectors.
-    destination = ROOT + "/Emitters/NE_AST_Fire_" + kind + "_V2"
-    template = "/Niagara/DefaultAssets/Templates/Emitters/Fountain"
+def load_native_emitter(template):
+    # EditorAssetLibrary.does_asset_exist() can report False for hidden
+    # engine-plugin templates in UE 5.8 commandlets, even if the uasset
+    # physically exists. Loading by object path is more reliable.
+    attempts = []
+    for candidate in (template, template + ".Fountain"):
+        try:
+            obj = u.load_asset(candidate)
+            if obj is not None:
+                require(isinstance(obj, u.NiagaraEmitter),
+                        "Template loaded but has wrong class: " + str(obj.get_class().get_name()))
+                return obj
+            attempts.append(candidate + " returned None")
+        except Exception as exc:
+            attempts.append(candidate + ": " + str(exc)[:260])
 
+    registry = u.AssetRegistryHelpers.get_asset_registry()
+    try:
+        registry.scan_paths_synchronous(["/Niagara"], True)
+    except Exception as exc:
+        attempts.append("registry scan failed: " + str(exc)[:260])
+    try:
+        obj = u.load_asset(template)
+        if isinstance(obj, u.NiagaraEmitter):
+            return obj
+    except Exception as exc:
+        attempts.append("after registry scan: " + str(exc)[:260])
+
+    raise RuntimeError(
+        "Engine Niagara Fountain.uasset exists on disk but cannot be loaded "
+        "through the /Niagara mount: " + "; ".join(attempts)
+    )
+
+
+def prepare_emitter(kind):
+    destination = ROOT + "/Emitters/NE_AST_Fire_" + kind + "_V2"
     if ASSET_LIB.does_asset_exist(destination):
         obj = load(destination)
         require(isinstance(obj, u.NiagaraEmitter),
                 "Existing V2 asset is not NiagaraEmitter: " + destination)
         return obj, "existing-V2"
 
-    require(ASSET_LIB.does_asset_exist(template),
-            "Niagara built-in template Fountain is unavailable: " + template)
-    require(ASSET_LIB.duplicate_asset(template, destination),
-            "Failed to duplicate built-in emitter template: " + kind)
-    obj = load(destination)
-    require(isinstance(obj, u.NiagaraEmitter),
-            "Template copy is not NiagaraEmitter: " + destination)
-    return obj, "duplicated-Fountain-V2"
+    template = "/Niagara/DefaultAssets/Templates/Emitters/Fountain"
+    source = load_native_emitter(template)
+    target_name = "NE_AST_Fire_" + kind + "_V2"
+    tools = u.AssetToolsHelpers.get_asset_tools()
+    copied = None
+    try:
+        copied = tools.duplicate_asset(target_name, ROOT + "/Emitters", source)
+    except Exception as exc:
+        REPORT["warning"].append(
+            "AssetTools duplicate " + kind + ": " + str(exc)[:260]
+        )
+    if copied is None:
+        try:
+            if ASSET_LIB.duplicate_asset(template, destination):
+                copied = load(destination)
+        except Exception as exc:
+            REPORT["warning"].append(
+                "EditorAssetLibrary duplicate " + kind + ": " + str(exc)[:260]
+            )
+    require(isinstance(copied, u.NiagaraEmitter),
+            "Failed to duplicate native Niagara template: " + destination)
+    require(ASSET_LIB.save_loaded_asset(copied, only_if_is_dirty=False),
+            "Could not save copied Niagara emitter: " + destination)
+    return copied, "duplicated-native-Fountain"
 
 
 def prepare_emitters():
