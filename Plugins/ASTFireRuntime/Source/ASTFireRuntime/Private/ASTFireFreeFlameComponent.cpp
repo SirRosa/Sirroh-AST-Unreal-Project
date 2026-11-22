@@ -65,11 +65,11 @@ void UASTFireFreeFlameComponent::SetIgnitionPoints(
     IgnitionPoints.Reset();
     for (const FVector_NetQuantize10& Point : InPoints)
         IgnitionPoints.Add(FVector(Point.X, Point.Y, Point.Z));
-    // An additional contact expands the SAME source region without respawning
-    // all tongues or restarting the thermal spread/cycle.
+    // Recluster new contacts against the existing source. Do not restart
+    // the existing tongues, split bridges, or detached child lifetimes.
     if (bGenerated)
     {
-        bClusterMapUploaded = false;
+        RebuildClusters();
         UpdateSurfaceMap(0.f);
     }
 }
@@ -118,6 +118,7 @@ void UASTFireFreeFlameComponent::OnUnregister()
     if (IsValid(Render)) Render->DestroyComponent();
     Render = nullptr;
     Tongues.Reset();
+    BurnClusters.Reset();
     bGenerated = false;
     Super::OnUnregister();
 }
@@ -132,6 +133,97 @@ void UASTFireFreeFlameComponent::ConfigureGeneration(FTongue& Tongue)
     Tongue.BaseWidth = (8.f + 18.f * Uniform(Salt + 3)) * Tongue.Scale;
     Tongue.RemainingFraction = .30f + .27f * Uniform(Salt + 4);
     Tongue.Phase = 6.283185f * Uniform(Salt + 5);
+}
+
+void UASTFireFreeFlameComponent::RebuildClusters()
+{
+    BurnClusters.Reset();
+    if (!IsValid(Source)) return;
+
+    FVector Extents(55.f,55.f,55.f);
+    if (const UPrimitiveComponent* Primitive=Cast<UPrimitiveComponent>(Source))
+        Extents=Primitive->CalcBounds(FTransform::Identity).BoxExtent.GetAbs();
+    const float MaxSize=FMath::Max(40.f,2.f*Extents.GetMax());
+    const float MergeDistance=FMath::Clamp(MaxSize*.36f,22.f,145.f);
+
+    // The original flame patch survives additional impacts. It is not rebuilt
+    // from every tongue: a cluster is ONE source with MANY tongues.
+    if (!Tongues.IsEmpty())
+    {
+        FBurnCluster Main;
+        Main.RestCenter=Tongues[0].RestPosition; // actual sampled mesh vertex
+        Main.Radius=FMath::Clamp(MaxSize*.69f,35.f,415.f);
+        BurnClusters.Add(Main);
+    }
+
+    // Additional contacts either extend an existing patch or create a new
+    // separate burn region. A new patch starts on a real surface hit and may
+    // merge with its neighbors as their radii grow.
+    for (const FVector& Hit:IgnitionPoints)
+    {
+        int32 Nearest=INDEX_NONE;
+        float DistanceSquared=TNumericLimits<float>::Max();
+        for (int32 I=0;I<BurnClusters.Num();++I)
+        {
+            const float D=FVector::DistSquared(Hit,BurnClusters[I].RestCenter);
+            if (D<DistanceSquared)
+            {
+                DistanceSquared=D;
+                Nearest=I;
+            }
+        }
+        if (Nearest!=INDEX_NONE &&
+            (DistanceSquared<FMath::Square(MergeDistance) ||
+             BurnClusters.Num()>=SurfaceClusters))
+        {
+            // Retain an ON-SURFACE representative instead of averaging into
+            // the hollow interior of a limb or a box.
+            FBurnCluster& C=BurnClusters[Nearest];
+            ++C.Members;
+            C.Radius=FMath::Clamp(FMath::Max(C.Radius,
+                FMath::Sqrt(DistanceSquared)+MaxSize*.22f),22.f,415.f);
+        }
+        else if (BurnClusters.Num()<SurfaceClusters)
+        {
+            FBurnCluster C;
+            C.RestCenter=Hit;
+            C.Radius=FMath::Clamp(MaxSize*.42f,24.f,260.f);
+            BurnClusters.Add(C);
+        }
+    }
+
+    // Multiple tongues choose actual surface vertices within a region's
+    // future supporting area. The cluster is the source; tongues are children.
+    for (FTongue& Tongue:Tongues)
+    {
+        int32 Nearest=INDEX_NONE;
+        float DistanceSquared=TNumericLimits<float>::Max();
+        for (int32 I=0;I<BurnClusters.Num();++I)
+        {
+            const float D=FVector::DistSquared(
+                Tongue.RestPosition,BurnClusters[I].RestCenter);
+            if (D<DistanceSquared)
+            {
+                Nearest=I;
+                DistanceSquared=D;
+            }
+        }
+        Tongue.ClusterIndex=Nearest;
+        if (Nearest!=INDEX_NONE)
+        {
+            const FBurnCluster& C=BurnClusters[Nearest];
+            const float Relative=FMath::Sqrt(DistanceSquared)/
+                FMath::Max(20.f,C.Radius);
+            Tongue.ActivationSpread=FMath::Clamp(
+                .06f+Relative*.24f,.06f,.78f);
+        }
+        // Existing active tongues must not be extinguished or reset when
+        // another collision adds a nearby burn cluster.
+    }
+
+    bClusterMapUploaded=false;
+    UE_LOG(LogTemp,Log,TEXT("AST Fire source %s: %d joined mesh clusters / %d independent tongues"),
+        *GetOwner()->GetName(),BurnClusters.Num(),Tongues.Num());
 }
 
 void UASTFireFreeFlameComponent::BuildAnchors()
@@ -269,6 +361,7 @@ void UASTFireFreeFlameComponent::BuildAnchors()
             Tongues.Add(Root);
         }
     }
+    RebuildClusters();
     for (int32 I=0; I<Tongues.Num(); ++I)
     {
         FTongue& Root=Tongues[I];
@@ -279,6 +372,7 @@ void UASTFireFreeFlameComponent::BuildAnchors()
         Root.CurrentWidth = Root.BaseWidth;
         Root.PreviousWidth = Root.BaseWidth;
         Root.PreviousPhase = Root.Phase;
+        Root.bActive = Spread >= Root.ActivationSpread;
         Root.WorldPrevious = SampleRoot(Root);
     }
     UE_LOG(LogTemp, Log,TEXT("AST Fire Stage10: %s -> %d unique tongues on mesh surface"),
@@ -346,6 +440,12 @@ void UASTFireFreeFlameComponent::AdvanceSimulation(float Dt)
         const FVector Velocity = (Base - T.WorldPrevious) / FMath::Max(.004f,Dt);
         T.WorldPrevious = Base;
         T.WorldVelocity = FMath::VInterpTo(T.WorldVelocity,Velocity,Dt,13.f);
+        if (!T.bActive)
+        {
+            if (Spread<T.ActivationSpread) continue;
+            T.bActive=true;
+            T.Age=-.06f; // gradual ignition from the shared hot mantle
+        }
         if (T.Age < 0.f)
         {
             T.Age += Dt;
@@ -445,36 +545,14 @@ void UASTFireFreeFlameComponent::UpdateSurfaceMap(float Dt)
     if (const UPrimitiveComponent* Primitive=Cast<UPrimitiveComponent>(Source))
         LocalSize=Primitive->CalcBounds(FTransform::Identity).BoxExtent*2.f;
     const float Radius=FMath::Clamp(LocalSize.GetMax()*.63f,12.f,420.f);
-    TArray<FVector> Centers;
-    Centers.Reserve(SurfaceClusters);
-    // Contact ignition areas join the existing burn mask; no independent
-    // actor-level source appears at every new collision. Prioritize contacts.
-    for (int32 I=IgnitionPoints.Num()-1; I>=0 &&
-        Centers.Num()<SurfaceClusters; --I)
-    {
-        const FVector Candidate=IgnitionPoints[I];
-        bool bTooClose=false;
-        for (const FVector& Other:Centers)
-            if (FVector::DistSquared(Candidate,Other)<FMath::Square(8.f))
-                {bTooClose=true;break;}
-        if (!bTooClose) Centers.Add(Candidate);
-    }
-    for (const FTongue& Tongue:Tongues)
-    {
-        if (Centers.Num()>=SurfaceClusters) break;
-        bool bTooClose=false;
-        for (const FVector& Other:Centers)
-            if (FVector::DistSquared(Tongue.RestPosition,Other)<FMath::Square(8.f))
-                {bTooClose=true;break;}
-        if (!bTooClose) Centers.Add(Tongue.RestPosition);
-    }
     for (int32 I=0; I<SurfaceClusters; ++I)
     {
         FLinearColor P(0,0,0,-1);
-        if (Centers.IsValidIndex(I))
+        if (BurnClusters.IsValidIndex(I))
         {
-            const FVector Rest=Centers[I];
-            P=FLinearColor(Rest.X,Rest.Y,Rest.Z,Radius);
+            const FBurnCluster& C=BurnClusters[I];
+            P=FLinearColor(C.RestCenter.X,C.RestCenter.Y,C.RestCenter.Z,
+                FMath::Min(Radius,C.Radius));
         }
         SurfaceMID->SetVectorParameterValue(
             FName(*FString::Printf(TEXT("FireCluster%d"),I)),P);
@@ -562,7 +640,7 @@ void UASTFireFreeFlameComponent::UpdateGeometry(bool bCreate)
             H.Add(FMath::Clamp(1.04f-.66f*V + .09f*
                 FMath::Sin(V*8.2f+ShapePhase),.10f,1.f));
         }
-        if (T.Age<0.f || Heat<.015f)
+        if (!T.bActive || T.Age<0.f || Heat<.015f)
             for (float& Temperature:H)Temperature=0.f;
         AddStrip(C,W,H,T.Seed,1.f,Right,Verts,UVs,Colors);
 

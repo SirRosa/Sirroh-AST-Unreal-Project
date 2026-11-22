@@ -43,9 +43,20 @@ private:
     static constexpr int32 SurfaceClusters = 8;
 
     enum class EFlameLife : uint8 { Growing, Bridging, Retracting };
+    // One physical source may support several independently-lived tongues.
+    // Hotspots nearby are merged here, before the mesh-bound GPU source mask.
+    struct FBurnCluster
+    {
+        FVector RestCenter = FVector::ZeroVector;
+        float Radius = 70.f;
+        int32 Members = 1;
+    };
+
     struct FTongue
     {
         int32 SkinnedVertexIndex = INDEX_NONE;
+        int32 ClusterIndex = INDEX_NONE;
+        float ActivationSpread = 0.f;
         FVector RestPosition = FVector::ZeroVector;
         FVector WorldPrevious = FVector::ZeroVector;
         FVector WorldVelocity = FVector::ZeroVector;
@@ -87,6 +98,7 @@ private:
     };
 
     void BuildAnchors();
+    void RebuildClusters();
     FVector SampleRoot(const FTongue& Tongue) const;
     void AdvanceSimulation(float Dt);
     void UpdateGeometry(bool bCreate);
@@ -110,6 +122,7 @@ private:
     TObjectPtr<UMaterialInstanceDynamic> SurfaceMID = nullptr;
 
     TArray<FTongue> Tongues;
+    TArray<FBurnCluster> BurnClusters;
     TArray<FDetached> Detached;
     TArray<FVector> IgnitionPoints;
     FVector Wind = FVector::ZeroVector;
