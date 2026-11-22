@@ -1,30 +1,39 @@
-# AST Fire / Niagara — Stage 2
+# AST Fire — Etap 2 (Unreal Engine 5.8.1)
 
-Branch: `work/niagara-fire-stage2`
+## Zakres
 
-## Status (2026-11-22)
-- ASTFireRuntime / ASTFireEditor compiled independently in BuildPlugin, according to available logs.
-- The most recent Unreal Python result recorded `Unconnected [True, True, False, False, True, True]` for each material.
-- `Automation/ASTFire/fix_stage2_materials.py` eliminates the failing Custom(float4) -> ComponentMask connections, using independent float3 and float1 Custom expressions.
-- This fix has NOT yet been executed in Unreal Engine. It must not be described as verified.
-- The master Niagara system was not fully assembled at that checkpoint. Emitter assembly and runtime light behavior remain unverified.
+- Autorskie materiały `M_AST_FirePixel_Core`, `M_AST_FirePixel_Ember`, `M_AST_FirePixel_Smoke`.
+- Oddzielne emitery `NE_AST_Fire_{Core,Ember,Smoke}_V2`, duplikowane z silnikowego szablonu Niagara `Fountain`.
+- System `NS_Fire_Master` zawierający docelowo trzy emitery.
+- `BP_AST_FireSource` z własnym `NiagaraComponent`, własnym `PointLightComponent` i `ASTFireReactiveComponent`.
+- Własne oświetlenie ognia (bez wykorzystywania `TorchLight` z `BP_Torch_U`).
+- Reakcja płomienia na prędkość źródła i blisko przechodzących postaci (detekcja zdarzeniami overlap, bez przeszukiwania świata).
 
-## Scope and safety
-- Original BP_Torch_U is untouched.
-- Do not reuse existing placeholder torch lights, GrimFX or unrelated asset packs.
-- New fire system owns the dynamic light and is reusable for torch, campfire, arrow, spells and ground fires.
-- Do not run automated playtests/renders; manual artistic acceptance belongs to the project owner.
-- The fix script writes only the three AST-specific fire materials in `/Game/VFX/Fire/Materials` and the diagnostic JSON in Saved.
-- It is **not** an emitter or Blueprint finalizer.
+## Bieżący stan weryfikacji
 
-## Execution
-Copy `Automation/ASTFire/fix_stage2_materials.py` to the project (or use its absolute path), and run under **UnrealEditor-Cmd.exe** with `-run=pythonscript -script="<absolute-path>"`. Do not run with the system Python interpreter.
+- Poprzednia wersja wtyczki ASTFireRuntime / ASTFireEditor kompilowała się niezależnie w BuildPlugin (UE 5.8.1).
+- Wcześniejszy skrypt finalizacyjny kończył się błędem `Custom -> ComponentMask`.
+- **Nowe źródła C++ i nowy finalizator zostały zapisane na GitHubie, ale NIE były jeszcze zbudowane/uruchomione w UE.**
+- GitHub Actions sprawdza składnię Pythona i zakres zmian. Nie kompiluje Unreal C++.
+- Ogień nie jest jeszcze uznany za gotowy; wyświetlanie i właściwości wizualne wymagają testów użytkownika.
 
-Expected report: `Saved/ChatGPT/NiagaraFire/Stage2/stage2_material_fix_result.json`.
+## Kolejność wdrożenia na komputerze z UE
 
-After checking that all three material results are marked saved, proceed with the emitter/System integration script, then verify the actual Niagara graph and reactive lighting.
+1. Połączyć pliki z `Plugins/ASTFireRuntime` z lokalnym pluginem AST i zbudować wtyczkę dla UE 5.8.1. Nie nadpisywać map ani oryginalnego `BP_Torch_U`.
+2. Upewnić się, że plugin `ASTFireRuntime` jest włączony w `.uproject`.
+3. Uruchomić `Automation/ASTFire/finalize_stage2.py` przez `UnrealEditor-Cmd.exe -run=pythonscript -script=<pełna_ścieżka>` (plik `fix_stage2_materials.py` musi być w tym samym katalogu).
+4. Sprawdzić `Saved/ChatGPT/NiagaraFire/Stage2/stage2_complete_result.json`.
+5. Jeśli wynik to `ASSETS_ASSEMBLED_REQUIRES_VISUAL_VALIDATION`, ręcznie sprawdzić efekt w edytorze, bez automatycznego playtestu.
 
-## Source control
-- This repo began empty. GitHub does not automatically mirror the Google Drive synced project or Windows local project.
-- Generated folders (Binaries, Intermediate, Saved, DerivedDataCache) are ignored.
-- Large `.uasset` / `.umap` files should be transferred by a Git workflow with Git LFS configured before importing the full project.
+## Co jeszcze nie jest gotowe
+
+- Artystyczne strojenie emitera Fountain dla płomienia / żaru / dymu.
+- Parametry Niagara User używane wewnątrz grafów emitterów (runtime obecnie dodatkowo używa zmiany skali i nachylenia komponentu).
+- Presety dla pochodni, ogniska, płonących strzał, zaklęć i podłogi.
+- Finalna integracja z `BP_Torch_U`.
+
+## Organizacja
+
+Projekt i zasoby 16 GB pozostają na Google Drive. GitHub służy do wersjonowania niewielkich plików źródłowych i skryptów. **Nie wymagamy Git LFS ani importowania do GitHub całej zawartości projektu.** Nie zakładamy, że commit automatycznie aktualizuje kopię lokalną projektu.
+
+Ograniczenia projektu: nie uruchamiać automatycznych playtestów, symulowanego interfejsu edytora, renderowania lub testów ruchu; użytkownik wykonuje walidację wizualną i gameplay.
