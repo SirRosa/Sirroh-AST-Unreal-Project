@@ -377,7 +377,7 @@ namespace ASTHeat
             0.12f * FMath::Sin(Time * 2.03f + Seed * 0.71f);
         const float PeakRight = 0.34f +
             0.13f * FMath::Cos(Time * 1.51f + Seed * 1.21f);
-        const float CentralTip = (0.77f + 0.15f *
+        const float CentralTip = (0.64f + 0.27f *
             FMath::Exp(-FMath::Square((U - PeakCenter) / 0.18f)));
         const float LeftTip = 0.56f + 0.25f *
             FMath::Exp(-FMath::Square((U - PeakLeft) / 0.15f));

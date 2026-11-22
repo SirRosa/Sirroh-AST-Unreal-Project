@@ -40,7 +40,7 @@ def silhouette(t, seed):
         pl=-.38+.12*math.sin(t*2.03+seed*.71)
         pr=.34+.13*math.cos(t*1.51+seed*1.21)
         tips=[
-            .77+.15*math.exp(-((u-pc)/.18)**2),
+            .64+.27*math.exp(-((u-pc)/.18)**2),
             .56+.25*math.exp(-((u-pl)/.15)**2),
             .58+.26*math.exp(-((u-pr)/.16)**2)
         ]
