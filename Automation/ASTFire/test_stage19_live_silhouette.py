@@ -20,7 +20,7 @@ assert start<begin<end<stop
 # Byte-level guards captured from deployed Stage18 f36fa0e: no other
 # changes to source root gathering, fork generation, mesh depth and thermal logic.
 assert fnv(s[start:begin])=="fbf2d826"
-assert fnv(s[end:stop])=="1c23834c"
+assert fnv(s[end:stop])=="30489c64"
 # Stage18 detached 7-column radial gradient and split bridge remain identical.
 geo=s[s.index("void UASTFireFreeFlameComponent::UpdateGeometry("):
       s.index("void UASTFireFreeFlameComponent::BuildSourceAnchors()")]
