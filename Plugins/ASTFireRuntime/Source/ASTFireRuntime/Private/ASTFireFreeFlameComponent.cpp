@@ -844,7 +844,7 @@ void UASTFireFreeFlameComponent::UpdateConnectedSource(
     const FVector Up=FVector::UpVector;
     FVector Normal=FVector::CrossProduct(Right,Up).GetSafeNormal();
     if (Normal.IsNearlyZero()) Normal=View;
-    const FVector Origin=Source.IsValid()?Source->GetComponentLocation():
+    const FVector Origin=IsValid(Source)?Source->GetComponentLocation():
         GetOwner()->GetActorLocation();
     const FTransform RenderTransform=Render->GetComponentTransform();
 
@@ -971,21 +971,26 @@ void UASTFireFreeFlameComponent::UpdateConnectedSource(
             const float Y=FMath::Lerp(MinY,MaxY,
                 float(Row)/float(SourceGridY));
             const FVector2D P(X,Y);
-            float Distance=BIG_NUMBER;
+            // Two square roots per grid cell, NOT one per skin sample:
+            // ~100x cheaper than repeatedly evaluating distances at 25Hz.
+            float PointD2=BIG_NUMBER,EdgeD2=BIG_NUMBER;
             for(int32 I=0;I<N;++I)
             {
-                Distance=FMath::Min(Distance,
-                    FVector2D::Distance(P,Samples[I])-Radius);
+                PointD2=FMath::Min(PointD2,
+                    float(FVector2D::DistSquared(P,Samples[I])));
                 const int32 J=Parent[I];
                 if(J==INDEX_NONE)continue;
                 const FVector2D A=Samples[I],B=Samples[J];
                 const FVector2D AB=B-A;
                 const float T=FMath::Clamp(
                     FVector2D::DotProduct(P-A,AB)/
-                    FMath::Max(1.f,AB.SizeSquared()),0.f,1.f);
-                const float D=(P-(A+AB*T)).Size()-Radius*.68f;
-                Distance=FMath::Min(Distance,D);
+                    FMath::Max(1.f,float(AB.SizeSquared())),0.f,1.f);
+                EdgeD2=FMath::Min(EdgeD2,
+                    float((P-(A+AB*T)).SizeSquared()));
             }
+            const float Distance=FMath::Min(
+                FMath::Sqrt(PointD2)-Radius,
+                FMath::Sqrt(EdgeD2)-Radius*.68f);
             // Small bounded flicker: never a 30cm WPO polygon extrusion.
             const float Curl=FMath::Sin(X*.091f+Elapsed*6.6f+Seed*.023f)*
                 (2.3f+2.5f*Heat)+
