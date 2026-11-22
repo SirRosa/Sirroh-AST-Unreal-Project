@@ -410,3 +410,49 @@ by passing PreSkinnedPosition through a VertexInterpolator and setting
 `used_with_skeletal_mesh=true`; this remains to be confirmed at runtime.
 `deploy_stage10_windows.ps1` now uses an opt-in `-ValidateGPU` switch,
 avoiding expensive cold DDC compilation on every install.
+
+
+### Real PIE failure and root-cause shader fix — 2026-11-22
+
+The player reported that Stage10 **still had no visible shared burn
+source**, despite successful C++ CI/build and Python material authoring.
+Investigation of `Saved/Logs/AST_V1_18.log` after actual PIE exposed
+a real PCD3D_SM6 compiler failure for `M_AST_FireSurfaceLife`:
+
+```text
+error: vector swizzle 'w' is out of bounds
+float radius0=C0.w*grow0; ...
+```
+
+The authored `MaterialExpressionVectorParameter` supplied an RGB
+`float3` to `MaterialExpressionCustom`, while HLSL expected RGBA
+and read the non-existent `.w`. UE therefore substituted Default
+Material for the **entire skinned mesh surface overlay**, leaving only
+detached ribbons/independent tongues visible. Both previous GitHub CI
+and `-nullrhi` commandlets missed the GPU-only error.
+
+**Fix:** The eight `FireCluster%d` parameter vectors carry ONLY XYZ.
+Each cluster radius is uploaded separately as
+`FireClusterRadius0`–`FireClusterRadius7` scalar parameters, wired
+to Custom node inputs `R0`–`R7`. All HLSL now uses
+`radius%d=R%d*grow%d`. No changed tongue/bridge logic, which the
+player previously approved. Regression tests assert new Custom node
+inputs and scalar MID upload. Exact source change:
+`5970995267035dd179ed799683cf747f82991d33`.
+
+- GitHub CI after test-only adjustment `942b75574e682e5013d0bf852ccdda380da62b96`: 2/2 success.
+- **Real UE 5.8.1 Win64 BuildPlugin log** `BuildPlugin_20261122_075150.log`:
+  `BUILD SUCCESSFUL`, AutomationTool ExitCode 0.
+- The subsequently executed material authoring commandlet log
+  `setup_stage10_lifecycle.py_20261122_075150.log` reports
+  `Python script executed successfully`, 0 errors (one unrelated
+  deprecation warning). Both logs observed in synced Google Drive.
+- Do not claim visual success until the next PIE run: shader success
+  on PCD3D_SM6 after this fix, the appearance of contiguous source
+  regions on moving SkeletalMesh/static props, and performance remain
+  **pending real-time validation**.
+- Retain immutable recovery reference:
+  `backup/ast-fire-stage10-best-2026-11-22`
+  (SHA `b163652061fb398b7fbcfefb1e35c2a20b784b22`),
+  and physical `Saved/ChatGPT/NiagaraFire/Stage10_BEST_20261122`.
+
