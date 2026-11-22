@@ -209,3 +209,40 @@ until user PIE tests. Tests verify source/structure, not perception.
 - Overall installer exit code 0: `STAGE8_INSTALL_SUCCESS_VISUAL_AND_CONTACT_TEST_PENDING`.
 - **Not verified:** subjective appearance, actual skinned-surface coverage, sprint attachment, dynamic light perception, in-game performance, PIE contact behavior and multiplayer. These require manual game testing. Do not equate build success to a final fire look.
 
+
+
+## Stage 9 — real render-vertex source and genuinely unbounded ember flight
+
+User's Stage8 screenshot still showed flames floating between legs and in front of
+the character. Root cause confirmed directly from the C++ renderer:
+- A hard-coded 22×30 RECTANGLE of camera-facing quads was still running for
+  EVERY bone, independent of the GPU surface material.
+- Coverage tips were clamped at Y <= 0.96 and every blob shared a finite
+  RealWidth/RealHeight, artificially clipping tongues and fragments.
+
+Stage9 introduces **UASTFireFreeFlameComponent**, a separate visual-only render
+path that is enabled by default. It uses an actual skeletal LOD0 vertex selected
+from render geometry and evaluates the current CPU-skinned vertex position each
+update. The base therefore follows the *deformed mesh*, not a bone center,
+collision capsule, or a guessed rectangular proxy. Static meshes use actual
+complex LineTraceComponent surface intersections. Without usable collision the
+static mesh overlay remains and no fabricated hovering collision anchors are
+created. Standalone no-mesh fire sources emit from a compact source ring.
+
+The free emitter draws organically varying buoyant ribbons from these real
+source points and advects detached embers in independent WORLD SPACE. It has
+no fixed Height/Width field and no baked XY rectangular grid. Roots remain
+on the skinned surface, while hot gas may drift away. The material overlay,
+free tongue temperature and light share the existing fire component intensity
+and visual energy. Old Stage5-8 22×30 heat grid remains solely as explicit
+`bUseLegacyHeatGrid` migration/debug toggle (default false).
+No gameplay damage or char. Rendering remains lightweight and capped
+(18 roots × 7 segment-quads + 12 embers per actor, 25Hz).
+
+Compilation via UE 5.8.1 and PIE visual QA are required; skin vertex data may
+be unavailable on some mesh LOD/platforms and then only the exact GPU surface
+overlay is shown — do not silently fall back to inaccurate bone flames.
+Installer: `Automation/ASTFire/deploy_stage9_windows.ps1` builds exact GitHub
+commit in TEMP, backs up all owned source/material/Blueprints and only deploys
+if UnrealEditor is closed. It runs all three existing asset configuration
+commandlets.
