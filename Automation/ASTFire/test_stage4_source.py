@@ -11,6 +11,7 @@ script = Path("Automation/ASTFire/setup_stage4_volume.py").read_text()
 for token in (
     "ASTHeat::Prewarm", "ASTHeat::Read", "ASTHeat::Source",
     "Field.Temperature", "Field.Work", "Swap(Field.Temperature, Field.Work)",
+    "const float Shear",
     "Fragment.Life", "Fragment.VY", "Semi-Lagrangian advection",
     "CreateMeshSection_LinearColor", "UpdateMeshSection_LinearColor",
     "SmoothedFlow", "SmoothedAngularVelocity", "Acceleration",

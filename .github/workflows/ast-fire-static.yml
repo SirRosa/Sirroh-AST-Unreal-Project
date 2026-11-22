@@ -30,6 +30,8 @@ jobs:
           python -m py_compile Automation/ASTFire/finalize_stage2.py
           python -m py_compile Automation/ASTFire/setup_stage4_volume.py
           python -m py_compile Automation/ASTFire/test_stage4_source.py
+          python -m py_compile Automation/ASTFire/test_stage5_heat_reference.py
+          python Automation/ASTFire/test_stage5_heat_reference.py
           python Automation/ASTFire/test_stage4_source.py
       - name: Parse PowerShell deployment script
         shell: pwsh

@@ -476,16 +476,16 @@ void UASTFireReactiveComponent::UpdateVolume(
         for (int32 Y = 0; Y < ASTHeat::Height; ++Y)
         {
             const float V = (float(Y) + 0.5f) / float(ASTHeat::Height);
-            const float Cooling = FMath::Exp(-Dt * (0.33f + 0.78f * V));
+            const float Cooling = FMath::Exp(-Dt * (0.21f + 0.36f * V));
             for (int32 X = 0; X < ASTHeat::Width; ++X)
             {
                 const int32 Cell = Y * ASTHeat::Width + X;
                 const float OldHeat = Field.Temperature[Cell];
                 const float U = (float(X) + 0.5f) / float(ASTHeat::Width) * 2.0f - 1.0f;
                 const float Eddies =
-                    2.8f * FMath::Sin(U * 7.0f + V * 14.0f + Field.Time * 3.2f + Seed) +
-                    1.9f * FMath::Sin(U * 13.0f - V * 8.0f - Field.Time * 2.7f + Seed * 0.6f);
-                const float Rise = (8.2f + 3.8f * OldHeat + Heat * 2.3f) * Dt;
+                    6.2f * FMath::Sin(U * 7.0f + V * 14.0f + Field.Time * 3.2f + Seed) +
+                    4.1f * FMath::Sin(U * 13.0f - V * 8.0f - Field.Time * 2.7f + Seed * 0.6f);
+                const float Rise = (10.0f + 3.8f * OldHeat + Heat * 2.3f) * Dt;
                 const float Shift = (Wind * 9.2f + Eddies) * Dt;
                 const float Sample = ASTHeat::Read(
                     Field.Temperature, float(X) - Shift, float(Y) - Rise);
@@ -500,6 +500,12 @@ void UASTFireReactiveComponent::UpdateVolume(
                         (0.82f + 0.18f * ASTHeat::HashWave(Field.Time * 2.1f + U * 3.0f + Seed));
                     NewHeat = FMath::Max(NewHeat, Source * Falloff * Heat);
                 }
+                // Local shear tears weak edges while keeping the shared hot base.
+                const float Shear = FMath::Max(0.0f,
+                    FMath::Sin(U * 15.0f - V * 23.0f + Field.Time * 4.6f + Seed) +
+                    0.45f * FMath::Cos(U * 9.0f + V * 17.0f - Field.Time * 3.0f));
+                NewHeat *= FMath::Exp(-Dt * 1.4f * V * Shear);
+
                 // Turbulent pockets create short-lived detached islands.
                 if (Y > 14 && Y < ASTHeat::Height - 2)
                 {
@@ -527,9 +533,9 @@ void UASTFireReactiveComponent::UpdateVolume(
             if (Field.SpawnDebt < 1.0f) break;
             if (Fragment.Life > 0.0f) continue;
             Field.SpawnDebt -= 1.0f;
-            Fragment.X = float(ASTHeat::Width) * (0.29f + 0.42f *
+            Fragment.X = float(ASTHeat::Width) * (0.15f + 0.70f *
                 FMath::Abs(FMath::Sin(Field.Time * 2.7f + Seed)));
-            Fragment.Y = float(ASTHeat::Height) * (0.52f + 0.14f *
+            Fragment.Y = float(ASTHeat::Height) * (0.72f + 0.15f *
                 FMath::Abs(FMath::Cos(Field.Time * 4.1f + Seed)));
             Fragment.VX = 3.5f * FMath::Sin(Field.Time * 3.7f + Seed);
             Fragment.VY = 8.0f + 3.0f * FMath::Abs(FMath::Sin(Field.Time * 5.1f));
