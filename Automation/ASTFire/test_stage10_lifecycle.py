@@ -61,6 +61,11 @@ for threshold in (".12,h", ".24,h", ".43,h", ".61,h", ".77,h", ".90,h"):
 for name in ("FireCluster%d","FireIntensity","FireSpread","FireEnergy"):
     assert name in mat
 assert "BP_AST_FireSource_Igniter" in mat
+assert "BLEND_TRANSLUCENT" in mat
+assert "MP_OPACITY" in mat
+assert 'new_material("M_AST_FireSurfaceLife", is_overlay=True)' in mat
+assert 'finish(surface,sc,sm,is_overlay=True)' in mat
+assert 'return saturate((h-.10)*3.7)' in mat
 assert "setup_stage10_lifecycle.py" in install
 assert "M_AST_FireTongue.uasset" in install
 assert "M_AST_FireSurfaceLife.uasset" in install

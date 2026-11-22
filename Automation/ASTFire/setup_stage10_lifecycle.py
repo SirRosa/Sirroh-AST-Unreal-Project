@@ -27,14 +27,18 @@ def pin(name):
     item.set_editor_property("input_name", u.Name(name))
     return item
 
-def new_material(name):
+def new_material(name, is_overlay=False):
     path = BASE + "/" + name
     asset = LIB.load_asset(path) if LIB.does_asset_exist(path) else None
     if asset is None:
         asset = u.AssetToolsHelpers.get_asset_tools().create_asset(
             name, BASE, u.Material, u.MaterialFactoryNew())
     require(asset, "Material creation failed: " + path)
-    asset.set_editor_property("blend_mode", u.BlendMode.BLEND_MASKED)
+    # UMeshComponent::OverlayMaterial is explicitly a TRANSLUCENT pass.
+    # Masked flame sprites render fine; a masked mesh overlay may not render.
+    blend = (u.BlendMode.BLEND_TRANSLUCENT if is_overlay
+             else u.BlendMode.BLEND_MASKED)
+    asset.set_editor_property("blend_mode", blend)
     asset.set_editor_property("shading_model",
                               u.MaterialShadingModel.MSM_UNLIT)
     asset.set_editor_property("two_sided", True)
@@ -64,13 +68,14 @@ def connect(asset, node, dest, color, opacity):
     require(EDIT.connect_material_expressions(node, "", opacity, dest),
             "Opacity input disconnected: " + dest)
 
-def finish(asset, color, mask):
+def finish(asset, color, mask, is_overlay=False):
     require(EDIT.connect_material_property(
         color, "", u.MaterialProperty.MP_EMISSIVE_COLOR),
         "Emissive property disconnected")
     require(EDIT.connect_material_property(
-        mask, "", u.MaterialProperty.MP_OPACITY_MASK),
-        "Opacity mask disconnected")
+        mask, "", (u.MaterialProperty.MP_OPACITY
+                   if is_overlay else u.MaterialProperty.MP_OPACITY_MASK)),
+        "Opacity disconnected")
     EDIT.recompile_material(asset)
     require(LIB.save_loaded_asset(asset, only_if_is_dirty=False),
             "Material save failed: " + str(asset.get_path_name()))
@@ -115,7 +120,7 @@ try:
 
     # Exact animated mesh surface overlay. Local rest-pose points stay on
     # deformed skin polygons, and nearby burning areas merge by union.
-    surface = new_material("M_AST_FireSurfaceLife")
+    surface = new_material("M_AST_FireSurfaceLife", is_overlay=True)
     pre = EDIT.create_material_expression(
         surface, u.MaterialExpressionPreSkinnedPosition, -860, -300)
     clock = EDIT.create_material_expression(
@@ -175,7 +180,7 @@ try:
     inputs=("P","T","I","E","Spread","Seed","M")+tuple(
         "C%d"%i for i in range(8))
     sc,sm=custom(surface,inputs,sfield+palette,
-                 sfield+"return step(.16,h);")
+                 sfield+"return saturate((h-.10)*3.7);")
     for node, target in (
         (pre,"P"),(clock,"T"),(scalar["FireIntensity"],"I"),
         (scalar["FireEnergy"],"E"),(scalar["FireSpread"],"Spread"),
@@ -184,7 +189,7 @@ try:
         connect(surface,node,target,sc,sm)
     for i, node in enumerate(clusters):
         connect(surface,node,"C%d"%i,sc,sm)
-    finish(surface,sc,sm)
+    finish(surface,sc,sm,is_overlay=True)
 
     # Configure only AST-owned actors. Runtime dynamically ignited arbitrary
     # meshes use the same built-in default material references.

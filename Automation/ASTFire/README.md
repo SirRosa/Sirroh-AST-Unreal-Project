@@ -329,3 +329,15 @@ actual current short length. The extra bridge geometry has fixed topology and
 is invisible except during separation. Upper-bound per actor ~550 vertices,
 458 triangles for 15 tongues/16 detached fragments — NOT a measured GPU cost.
 Only the AST fire plugin, own material script and tests are changed.
+
+### Critical overlay rendering correction
+
+UE 5.8 documents `UMeshComponent::OverlayMaterial` as a **translucent**
+material to blend over the mesh. Earlier Stage8/10 authored it as
+`BLEND_MASKED` with `MP_OPACITY_MASK`, a plausible reason why the
+actual mesh base could be invisible despite valid asset/Blueprint saves.
+Stage10 now authors the **surface-only** material as
+`BLEND_TRANSLUCENT`, routes its smooth pixel-boundary coverage into
+`MP_OPACITY`, and keeps the rising tongue material Masked. This is
+a targeted fix based on Epic's documented overlay API; still requires
+real PIE verification. Original mesh slots and base materials remain intact.
