@@ -77,10 +77,34 @@ FString UASTFireEditorLibrary::BuildSystem(
             Entry.Emitter->GetExposedVersion().VersionGuid);
     }
 
+    System->SetFixedBounds(FBox(FVector(-1200.0f), FVector(1200.0f)));
     System->MarkPackageDirty();
     System->RequestCompile(true);
     System->PollForCompilationComplete(true);
     return TEXT("OK_3_EMITTERS");
+#else
+    return TEXT("EDITOR_REQUIRED");
+#endif
+}
+
+FString UASTFireEditorLibrary::RepairVisibilityBounds(
+    UNiagaraSystem* System, float Radius)
+{
+#if WITH_EDITOR
+    if (!System) return TEXT("NULL_SYSTEM");
+    if (System->GetEmitterHandles().Num() == 0)
+        return TEXT("EMPTY_SYSTEM");
+
+    const float SafeRadius = FMath::Clamp(Radius, 200.0f, 20000.0f);
+    System->Modify();
+    System->SetFixedBounds(FBox(
+        FVector(-SafeRadius, -SafeRadius, -SafeRadius),
+        FVector(SafeRadius, SafeRadius, SafeRadius)));
+    System->MarkPackageDirty();
+    System->RequestCompile(true);
+    System->PollForCompilationComplete(true);
+    return FString::Printf(TEXT("OK_EMITTERS=%d_BOUNDS=%.0f"),
+        System->GetEmitterHandles().Num(), SafeRadius);
 #else
     return TEXT("EDITOR_REQUIRED");
 #endif
