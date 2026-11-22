@@ -2,6 +2,7 @@
 
 #include "NiagaraComponent.h"
 #include "NiagaraSystem.h"
+#include "Materials/MaterialInstanceDynamic.h"
 #include "ProceduralMeshComponent.h"
 #include "Net/UnrealNetwork.h"
 #include "GameFramework/PlayerController.h"
@@ -72,6 +73,8 @@ UASTFireReactiveComponent::UASTFireReactiveComponent()
         FSoftObjectPath(TEXT("/Game/VFX/Fire/Systems/NS_Fire_Master.NS_Fire_Master")));
     VolumeMaterial = TSoftObjectPtr<UMaterialInterface>(
         FSoftObjectPath(TEXT("/Game/VFX/Fire/Materials/M_AST_FirePixel_Volume.M_AST_FirePixel_Volume")));
+    SurfaceMaterial = TSoftObjectPtr<UMaterialInterface>(
+        FSoftObjectPath(TEXT("/Game/VFX/Fire/Materials/M_AST_FireSurface.M_AST_FireSurface")));
     FlameMaterial = TSoftObjectPtr<UMaterialInterface>(
         FSoftObjectPath(TEXT("/Game/VFX/Fire/Materials/M_AST_FirePixel_Core.M_AST_FirePixel_Core")));
 }
@@ -314,7 +317,7 @@ namespace ASTHeat
 {
     constexpr int32 Width = 22;
     constexpr int32 Height = 30;
-    constexpr int32 FragmentCount = 9;
+    constexpr int32 FragmentCount = 4;
     constexpr int32 Cells = Width * Height;
     constexpr float Threshold = 0.21f;
 
@@ -495,7 +498,10 @@ void UASTFireReactiveComponent::AddVolume(
     Volume->SetMaterial(0, Material);
     Volume->RegisterComponent();
     FireVolumes.Add(Volume);
-    FireVolumeScales.Add(FMath::Clamp(Scale * FlameSize, 0.12f, 2.0f));
+    // The exact animated surface provides the hot root. The buoyant shapes
+    // extend it, but may never replace it with a character-sized billboard.
+    FireVolumeScales.Add(FMath::Clamp(Scale * FlameSize *
+        (IsValid(FireSurfaceMID) ? 0.46f : 0.72f), 0.09f, 1.10f));
     const int32 Index = FireVolumes.Num() - 1;
     FASTLocalFlameField& Field = LocalFields.AddDefaulted_GetRef();
     ASTHeat::Prewarm(Field, SimulationSeed + Index * 5381);
@@ -517,8 +523,8 @@ void UASTFireReactiveComponent::UpdateVolume(
     const float Heat = FMath::Clamp(
         bPlaying ? SmoothIntensity : Intensity, 0.0f, 1.0f);
     const float Size = 0.42f + 0.58f * Heat;
-    const float RealWidth = 102.0f * Scale * Size;
-    const float RealHeight = 135.0f * Scale * Size;
+    const float RealWidth = 67.0f * Scale * Size;
+    const float RealHeight = 118.0f * Scale * Size;
     const FVector Origin = Volume->GetComponentLocation();
     const FTransform Transform = Volume->GetComponentTransform();
     const FVector WorldUp = FVector::UpVector;
@@ -599,10 +605,13 @@ void UASTFireReactiveComponent::UpdateVolume(
                             U * 5.7f + Seed) +
                         0.17f * FMath::Sin(Field.Time * 11.1f -
                             float(X) * 0.83f + Seed * 1.6f), 0.035f, 1.05f);
+                    // Maintain a HOT rooted mass. Tongue lifetimes still vary,
+                    // but random erosion cannot extinguish the whole source.
                     const float Source = ASTHeat::Source(float(X), Field.Time, Seed) *
-                        (0.62f + 0.38f * ASTHeat::HashWave(
+                        (0.83f + 0.17f * ASTHeat::HashWave(
                             Field.Time * 2.6f + U * 3.0f + Seed)) *
-                        LocalLife * Field.Breath;
+                        (0.75f + 0.25f * LocalLife) *
+                        (0.76f + 0.24f * Field.Breath);
                     NewHeat = FMath::Max(NewHeat, Source * Falloff * Heat);
                 }
                 // Local shear tears weak edges while keeping the shared hot base.
@@ -648,8 +657,8 @@ void UASTFireReactiveComponent::UpdateVolume(
             Fragment.VX += 1.3f * FMath::Sin(Field.Time * 5.0f + Fragment.Y) * Dt;
             Fragment.Life = FMath::Max(0.0f, Fragment.Life - Dt);
         }
-        Field.SpawnDebt = FMath::Min(4.0f, Field.SpawnDebt +
-            Dt * Heat * (3.0f + 5.0f * Field.Breath + Gust * 1.8f));
+        Field.SpawnDebt = FMath::Min(3.0f, Field.SpawnDebt +
+            Dt * Heat * (1.6f + 2.0f * Field.Breath + Gust));
         for (FASTFlameFragment& Fragment : Field.Fragments)
         {
             if (Field.SpawnDebt < 1.0f) break;
@@ -663,7 +672,7 @@ void UASTFireReactiveComponent::UpdateVolume(
             Fragment.VY = 8.0f + 3.0f * FMath::Abs(FMath::Sin(Field.Time * 5.1f));
             Fragment.Life = 0.38f + 0.21f *
                 FMath::Abs(FMath::Sin(Field.Time * 1.9f + Seed));
-            Fragment.Heat = 0.55f;
+            Fragment.Heat = 0.76f;
         }
     }
 
@@ -684,7 +693,7 @@ void UASTFireReactiveComponent::UpdateVolume(
     const FVector MotionFlow = SmoothedFlow - Field.LastAnchorVelocity * 0.75f;
     const float FlowSide = FMath::Clamp(
         FVector::DotProduct(MotionFlow, Right) * 0.34f,
-        -RealWidth * 0.85f, RealWidth * 0.85f);
+        -RealWidth * 0.46f, RealWidth * 0.46f);
     const float HeightCycle = FMath::Clamp(
         0.60f + 0.44f * Field.Breath - 0.10f * Field.CurrentGust,
         0.42f, 1.18f);
@@ -706,9 +715,14 @@ void UASTFireReactiveComponent::UpdateVolume(
                 0.18f * FMath::Sin(Field.Time * 12.3f -
                     float(Y) * 0.41f + float(X) * 0.17f + Seed),
                 0.03f, 1.12f);
-            const float T = Field.Temperature[Y * ASTHeat::Width + X] *
-                ASTHeat::ShapedCoverage(X, Y, Field.Time, Seed) *
-                LocalAge * FMath::Clamp(0.45f + 0.68f * Field.Breath, 0.17f, 1.3f);
+            const float RootSupport = FMath::Clamp(1.0f - V * 1.4f, 0.0f, 1.0f);
+            const float Hot = FMath::Pow(FMath::Clamp(
+                Field.Temperature[Y * ASTHeat::Width + X] *
+                ASTHeat::ShapedCoverage(X, Y, Field.Time, Seed),
+                0.0f, 1.0f), 0.68f);
+            const float T = Hot * FMath::Lerp(
+                FMath::Clamp(0.66f + 0.34f * LocalAge, 0.30f, 1.15f),
+                1.0f, RootSupport);
             ASTHeat::AddQuad(Vertices, Triangles, UV, Colors, bCreate,
                 Transform, Center, Right, WorldUp,
                 CellW * 0.503f, CellH * 0.503f, T, V);
@@ -735,6 +749,64 @@ void UASTFireReactiveComponent::UpdateVolume(
             0, Vertices, Normals, UV, Colors, Tangents);
 }
 
+
+// Primary burning layer on the actual rendered mesh triangles. GPU skinning
+// makes it stick to limbs and the torso throughout sprint/animation frames.
+void UASTFireReactiveComponent::SetupSurfaceFire(USceneComponent* Parent)
+{
+    if (!bEnableSurfaceFire || !GetOwner()) return;
+    UMeshComponent* Mesh = Cast<UMeshComponent>(Parent);
+    if (!IsValid(Mesh) || !Mesh->IsVisible()) return;
+    UMaterialInterface* Surface = SurfaceMaterial.LoadSynchronous();
+    if (!Surface)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("AST Fire: surface material missing for %s"),
+            *GetOwner()->GetName());
+        return;
+    }
+    UMaterialInterface* Existing = Mesh->GetOverlayMaterial(false, 0);
+    // Never steal another actor's overlay: damage, highlighting, stealth etc.
+    if (Existing)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("AST Fire: existing overlay on %s, left untouched."),
+            *GetOwner()->GetName());
+        return;
+    }
+    FireSurfaceMID = UMaterialInstanceDynamic::Create(Surface, this);
+    if (!FireSurfaceMID) return;
+    FireSurfaceMesh = Mesh;
+    PreviousFireSurfaceOverlay = Existing;
+    FireSurfaceMID->SetScalarParameterValue(FName(TEXT("FireSeed")),
+        float((SimulationSeed + GetOwner()->GetUniqueID()) % 10007));
+    FireSurfaceMID->SetScalarParameterValue(FName(TEXT("FireIntensity")),
+        FMath::Clamp(Intensity, 0.0f, 1.0f));
+    FireSurfaceMID->SetScalarParameterValue(FName(TEXT("FireEnergy")), 0.9f);
+    UpdateSurfaceVisibility();
+}
+
+void UASTFireReactiveComponent::UpdateSurfaceVisibility()
+{
+    if (!IsValid(FireSurfaceMesh) || !IsValid(FireSurfaceMID)) return;
+    UMaterialInterface* Current = FireSurfaceMesh->GetOverlayMaterial(false, 0);
+    if (bStartLit && Intensity > 0.005f)
+    {
+        if (!Current || Current == PreviousFireSurfaceOverlay)
+            FireSurfaceMesh->SetOverlayMaterial(FireSurfaceMID);
+    }
+    else if (Current == FireSurfaceMID)
+        FireSurfaceMesh->SetOverlayMaterial(PreviousFireSurfaceOverlay);
+}
+
+void UASTFireReactiveComponent::ReleaseSurfaceFire()
+{
+    if (IsValid(FireSurfaceMesh) && IsValid(FireSurfaceMID) &&
+        FireSurfaceMesh->GetOverlayMaterial(false, 0) == FireSurfaceMID)
+        FireSurfaceMesh->SetOverlayMaterial(PreviousFireSurfaceOverlay);
+    FireSurfaceMesh = nullptr;
+    FireSurfaceMID = nullptr;
+    PreviousFireSurfaceOverlay = nullptr;
+}
+
 void UASTFireReactiveComponent::InitializeFire()
 {
     if (bInitialized || IsTemplate() || !GetOwner()) return;
@@ -747,6 +819,7 @@ void UASTFireReactiveComponent::InitializeFire()
     }
     USceneComponent* Parent = FindTargetComponent();
     if (!Parent) return;
+    SetupSurfaceFire(Parent);
 
     // No dependence on user-provided torch/character materials or project mesh assets.
     UStaticMesh* PlaneMesh = bEnableFlameCards && !bEnableProceduralFlames
@@ -966,6 +1039,7 @@ void UASTFireReactiveComponent::InitializeFire()
 
 void UASTFireReactiveComponent::RemoveGeneratedVisuals()
 {
+    ReleaseSurfaceFire();
     for (UNiagaraComponent* FX : GeneratedFX)
         if (IsValid(FX)) FX->DestroyComponent();
     GeneratedFX.Empty();
@@ -1042,6 +1116,7 @@ void UASTFireReactiveComponent::IgniteAtWorldPosition(FVector WorldPosition)
 void UASTFireReactiveComponent::UpdateVisibility()
 {
     const bool bLit = bStartLit && Intensity > 0.005f;
+    UpdateSurfaceVisibility();
     for (UStaticMeshComponent* Card : FireCards)
         if (IsValid(Card)) Card->SetVisibility(bLit);
     for (UProceduralMeshComponent* Volume : FireVolumes)
@@ -1180,6 +1255,22 @@ void UASTFireReactiveComponent::TickComponent(
         SmoothedAngularVelocity, AngularVelocity, DeltaTime, 9.0f);
     const FVector LocalWindVec = GetOwner()->GetActorTransform()
         .InverseTransformVectorNoScale(Wind);
+    if (IsValid(FireSurfaceMID))
+    {
+        // Root texture, extending tongues and light share the same heat energy.
+        FireSurfaceMID->SetScalarParameterValue(FName(TEXT("FireIntensity")),
+            SmoothIntensity);
+        FireSurfaceMID->SetScalarParameterValue(FName(TEXT("FireEnergy")),
+            LightEnvelope);
+        const FVector Flow = IsValid(FireSurfaceMesh) ?
+            FireSurfaceMesh->GetComponentTransform().InverseTransformVectorNoScale(Wind)
+            : LocalWindVec;
+        FireSurfaceMID->SetVectorParameterValue(FName(TEXT("FireMotion")),
+            FLinearColor(
+                FMath::Clamp(Flow.X / 450.0f, -2.0f, 2.0f),
+                FMath::Clamp(Flow.Y / 450.0f, -2.0f, 2.0f),
+                FMath::Clamp(Flow.Z / 450.0f, -2.0f, 2.0f), 0.0f));
+    }
 
     // Light now follows the computed thermal mass of flame clusters.
     float VisualEnergy = 0.0f;

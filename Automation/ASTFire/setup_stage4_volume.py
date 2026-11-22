@@ -55,15 +55,15 @@ try:
         "float2 p=floor(UV*float2(20,30))/float2(20,30);"
         "h=saturate(h+0.02*sin(T*5.3+p.x*17+C.g*12));"
         "float3 color=float3(.10,.008,.003);"
-        "color=lerp(color,float3(.39,.026,.008),step(.24,h));"
-        "color=lerp(color,float3(.68,.085,.013),step(.38,h));"
-        "color=lerp(color,float3(.88,.23,.025),step(.56,h));"
-        "color=lerp(color,float3(1.00,.47,.055),step(.76,h));"
-        "color=lerp(color,float3(1.00,.70,.18),step(.91,h));"
-        "return color*0.65;")
+        "color=lerp(color,float3(.46,.035,.006),step(.18,h));"
+        "color=lerp(color,float3(.79,.12,.012),step(.34,h));"
+        "color=lerp(color,float3(.96,.31,.026),step(.51,h));"
+        "color=lerp(color,float3(1.0,.58,.07),step(.66,h));"
+        "color=lerp(color,float3(1.0,.82,.25),step(.82,h));"
+        "return color*1.13;")
     opaque.set_editor_property("output_type", u.CustomMaterialOutputType.CMOT_FLOAT1)
     opaque.set_editor_property("inputs", [pin("C")])
-    opaque.set_editor_property("code", "return step(.21,C.r);")
+    opaque.set_editor_property("code", "return step(.16,C.r);")
     for label, src, output, dest in (
         ("color", col, "", "C"),
         ("uv", uv, "", "UV"),

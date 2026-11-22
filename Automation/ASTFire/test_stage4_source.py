@@ -31,8 +31,8 @@ assert "GetNetMode() == NM_Client" in api
 assert '"ProceduralMeshComponent", "Enabled": true' in plugin
 assert "BP_Torch_U" not in script and "GrimFX" not in script
 assert "M_AST_FirePixel_Volume" in script
-assert 'return color*0.65;' in script
-assert 'return step(.21,C.r);' in script
+assert 'return color*1.13;' in script
+assert 'return step(.16,C.r);' in script
 assert 'return a*2.5;' not in script, "Stage4 over-bright emissive remains!"
 assert 'set_editor_property("light_power", 450.0)' in script
 assert 'set_editor_property("auto_activate", False)' in script

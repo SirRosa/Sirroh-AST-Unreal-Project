@@ -18,6 +18,7 @@ class UMeshComponent;
 class UStaticMesh;
 class UStaticMeshComponent;
 class UMaterialInterface;
+class UMaterialInstanceDynamic;
 class UProceduralMeshComponent;
 class FLifetimeProperty;
 
@@ -92,6 +93,13 @@ public:
     /** Authored material generated under /Game/VFX/Fire/Materials by Stage 4 commandlet. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="AST Fire|Visuals")
     TSoftObjectPtr<UMaterialInterface> VolumeMaterial;
+
+    /** Animated masked flame on EXACT GPU-skinned/rendered mesh triangles. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="AST Fire|Visuals")
+    bool bEnableSurfaceFire = true;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="AST Fire|Visuals")
+    TSoftObjectPtr<UMaterialInterface> SurfaceMaterial;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="AST Fire|Response")
     FVector AmbientWind = FVector::ZeroVector;
@@ -192,6 +200,9 @@ protected:
 private:
     void InitializeFire();
     void RemoveGeneratedVisuals();
+    void SetupSurfaceFire(USceneComponent* Parent);
+    void ReleaseSurfaceFire();
+    void UpdateSurfaceVisibility();
     USceneComponent* FindTargetComponent() const;
     UPointLightComponent* FindOwnedLight() const;
     UNiagaraComponent* FindExistingFireFX() const;
@@ -218,6 +229,15 @@ private:
 
     TArray<float> FireVolumeScales;
     TArray<FASTLocalFlameField> LocalFields;
+
+    UPROPERTY(Transient)
+    TObjectPtr<UMeshComponent> FireSurfaceMesh = nullptr;
+
+    UPROPERTY(Transient)
+    TObjectPtr<UMaterialInstanceDynamic> FireSurfaceMID = nullptr;
+
+    UPROPERTY(Transient)
+    TObjectPtr<UMaterialInterface> PreviousFireSurfaceOverlay = nullptr;
 
     UPROPERTY(Transient)
     TObjectPtr<UPointLightComponent> Light = nullptr;
