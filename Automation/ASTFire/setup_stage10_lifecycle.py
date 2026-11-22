@@ -156,7 +156,7 @@ try:
             "saturate((radius%d-distance(p,C%d.xyz))/"
             "max(3.,radius%d*.33)):0.;"
             "hot=max(hot,cover%d);mass+=cover%d;"
-            % (i,i*.055,i,i,i,i,i,i,i,i,i,i,i)
+            % (i,i*.055,i,i,i,i,i,i,i,i,i,i)
         )
     sfield = (
         "float3 p=floor(P/6.)*6.;"
