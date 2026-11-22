@@ -14,6 +14,7 @@ class USphereComponent;
 class UPrimitiveComponent;
 class USceneComponent;
 class UMeshComponent;
+class UStaticMesh;
 class UStaticMeshComponent;
 class UMaterialInterface;
 
