@@ -112,10 +112,11 @@ void UASTFireIgnitionZoneComponent::IgniteTarget(
     const float LongestDimension = BoxSize.GetMax();
     if (LongestDimension <= KINDA_SMALL_NUMBER) return;
     int32 Points = 1;
-    if (LongestDimension >= 135.0f) Points = 2;
-    if (LongestDimension >= 240.0f) Points = 4;
-    if (LongestDimension >= 500.0f) Points = 6;
-    if (LongestDimension >= 950.0f) Points = 8;
+    if (LongestDimension >= 70.0f) Points = 2;
+    if (LongestDimension >= 140.0f) Points = 4;
+    if (LongestDimension >= 220.0f) Points = 6;
+    if (LongestDimension >= 500.0f) Points = 8;
+    if (LongestDimension >= 950.0f) Points = 12;
     if (Target->FindComponentByClass<USkeletalMeshComponent>())
         Points = FMath::Max(Points, 7);
     Points = FMath::Clamp(Points, 1, FMath::Clamp(MaxDistributedFlames, 1, 12));

@@ -837,7 +837,7 @@ void UASTFireReactiveComponent::InitializeFire()
             for (int32 Slot = 0; Slot < Count && Chosen.Num() < Candidates.Num(); ++Slot)
             {
                 int32 Best = INDEX_NONE;
-                double BestDistance = -1.0;
+                double BestDistance = -TNumericLimits<double>::Max();
                 for (int32 CandidateIndex = 0; CandidateIndex < Candidates.Num(); ++CandidateIndex)
                 {
                     if (Chosen.Contains(CandidateIndex)) continue;
@@ -887,7 +887,7 @@ void UASTFireReactiveComponent::InitializeFire()
                 Extent.X * Extent.Z, Extent.Y * Extent.Z);
             const float PatchScale = FMath::Clamp(
                 FMath::Sqrt(FMath::Max(1.0, LargestFace * 4.0 / double(Count))) /
-                    115.0, 0.18, 1.35);
+                    200.0, 0.18, 1.35);
 
             for (int32 i = 0; i < Count; ++i)
             {

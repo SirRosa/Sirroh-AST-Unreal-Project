@@ -33,7 +33,7 @@ public:
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="AST Fire|Contact",
         meta=(ClampMin="1", ClampMax="12"))
-    int32 MaxDistributedFlames = 6;
+    int32 MaxDistributedFlames = 8;
 
     /** Opt-in: also ignite actors overlapping at spawn (may include level geometry). */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="AST Fire|Contact")
