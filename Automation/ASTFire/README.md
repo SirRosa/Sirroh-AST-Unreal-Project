@@ -124,3 +124,35 @@ Never claim visual/PIE gameplay validated without user screenshots.
 - Saved variant: /Game/VFX/Fire/Blueprints/BP_AST_FireSource_Igniter. Original base fire source and unrelated maps unaffected except intended Stage6 material/visual configuration.
 - UE CDO crash fixed by moving ALL collision/scene setters out of component constructor into BeginPlay. Unreal SubobjectData handles duplicate object paths, so script deduplicates before validating/adding.
 - Important: neither visual quality of the flame's top/bottom nor actual contact gameplay has yet been tested in PIE. No char/damage logic is implemented. For contact to work, the other actor must have compatible collision and generate overlap events. Unreplicated actors are not guaranteed to share ignition state across multiplayer clients.
+
+## Stage 7 — anatomically distributed flames and stronger inertial response
+
+After testing Stage6, the user reported weak reaction to running/moving objects,
+jelly-like persistent fire mass, near-static light, and almost identical flame
+size for small tables and large crates. Their explicit requirement: **fit flames
+to the actual mesh**, not just the actor's bounding sphere/capsule.
+
+- SkeletalMesh: obtain actual bone/socket transforms, distribute localized small
+  flame anchors using farthest-point bone sampling so arms, legs and torso can
+  ignite independently and follow animation. Optionally project anchor to a
+  physics/collision surface for a skin-side offset.
+- StaticMesh/Primitive: sample surface points with per-component complex
+  line traces. Bounds are used only to construct the rays and as fallback if
+  collision is missing. This is NOT a guaranteed exact render-triangle fit
+  when the actor has no usable collision. Asset collision configuration matters.
+- Auto-fire on a one-point contact also uses mesh-aware bounds mode. A skeletal
+  actor receives >=7 bone points automatically; native contact zone defaults
+  to up to 8 independent localized patches, chosen from local object size.
+- Per-patch flame size comes from local surface area / number of patches
+  (instead of actor height). No billowing full-height capsule flame on humans.
+- The flame field responds strongly to bone/socket acceleration, actor
+  acceleration and moving pawns, with local turbulent gusts and world-space
+  inertial lean. Source bands grow and die out of phase, cells erode, detached
+  fragments appear and heat-derived visual energy modulates the actual fire
+  point light's intensity, attenuation and color.
+- All heat fields, fragment lifetimes and light fluctuations remain visual-only
+  and unreplicated. The authoritative burn state stays separate.
+- Updated Stage7 tests check relative sizes, mesh-aware source structure,
+  intensity-of-change of thermal life cycles and wind strength.
+- **Unreal build, visual fidelity and actual PIE network/contact testing are
+  required before claiming the implementation validated.**

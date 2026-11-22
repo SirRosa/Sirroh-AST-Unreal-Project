@@ -35,6 +35,8 @@ jobs:
           python -m py_compile Automation/ASTFire/setup_stage6_igniter.py
           python -m py_compile Automation/ASTFire/test_stage6_shape_and_ignition.py
           python Automation/ASTFire/test_stage6_shape_and_ignition.py
+          python -m py_compile Automation/ASTFire/test_stage7_mesh_motion.py
+          python Automation/ASTFire/test_stage7_mesh_motion.py
           python Automation/ASTFire/test_stage4_source.py
       - name: Parse PowerShell deployment script
         shell: pwsh

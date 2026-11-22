@@ -1,6 +1,7 @@
-"""Independent numerical smoke-check for Stage5's visual advection equations.
+"""Baseline Stage5 reference for broad heat transport and wind direction.
 
-Reference math, not a UE runtime/PIE/visual validation. No nonstdlib packages.
+Its simplified source model is NOT the later Stage7 grow/die renderer.
+For Stage7 independent life cycle checks, see test_stage7_mesh_motion.py.
 """
 from math import sin, cos, exp
 from pathlib import Path
@@ -11,7 +12,7 @@ PHASE = (SEED % 1009) * .0137
 code = Path("Plugins/ASTFireRuntime/Source/ASTFireRuntime/Private/ASTFireReactiveComponent.cpp").read_text()
 for marker in ("constexpr int32 Width = 22;", "constexpr int32 Height = 30;",
                "(0.21f + 0.36f * V)", "6.2f * FMath::Sin",
-               "4.1f * FMath::Sin", "FMath::Exp(-Dt * 1.4f * V * Shear)",
+               "4.1f * FMath::Sin", "NewHeat *= FMath::Exp(-Dt * (1.4f * V * Shear +",
                "Fragment.Y = float(ASTHeat::Height) * (0.72f + 0.15f *"):
     assert marker in code, f"Reference drifted from C++: {marker}"
 
