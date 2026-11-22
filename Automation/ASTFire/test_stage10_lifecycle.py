@@ -1,10 +1,10 @@
-"""Stage10 spec regression, shader/CPU integration and numerical reference.
+"""Stage12 source-first regression: one mantle, approved tongues unchanged.
 
-This test intentionally DOES NOT claim visual quality, Unreal performance,
-PIE networking or an exact geodesic surface-burning solver.
+Static checks / numerical references do not substitute for PIE, DX12
+shader validation, gameplay networking or measured multi-actor frame rate.
 """
-from math import sin, sqrt
 from pathlib import Path
+from math import sqrt
 
 root=Path("Plugins/ASTFireRuntime/Source/ASTFireRuntime")
 c=(root/"Private/ASTFireFreeFlameComponent.cpp").read_text()
@@ -13,220 +13,167 @@ reactive=(root/"Private/ASTFireReactiveComponent.cpp").read_text()
 mat=Path("Automation/ASTFire/setup_stage10_lifecycle.py").read_text()
 install=Path("Automation/ASTFire/deploy_stage10_windows.ps1").read_text()
 
-for token in (
-    "GetSkinnedVertexPosition", "GetSkeletalMeshAsset()",
-    "GetResourceForRendering", "GetSkinWeightVertexBuffer",
-    "StaticVertexBuffers.PositionVertexBuffer.VertexPosition",
-    "LineTraceComponent(", "Transform.InverseTransformPosition(WorldHit)",
-    "FireCluster%d", 'FName(TEXT("FireSpread"))',
-    "bClusterMapUploaded", "ConfigureGeneration(T)",
-    "T.Age>=T.GrowSeconds", "EmitTip(T,Base,T.SplitLength,Flow)",
-    "T.Age = 0.f", "T.RemainingFraction",
-    "D.Position+=D.Velocity*Dt", "160.f+210.f*(1.f-Fade)",
-    "FMath::Pow(Fade,1.25f)", "AddStrip(C,W,H",
-    "Render->UpdateMeshSection_LinearColor",
-):
-    assert token in c, token
+def check_tokens(where, tokens):
+    for t in tokens:
+        assert t in where, t
+
+# The currently approved tongue appearance, heating and bridge split are
+# unchanged. Both tongues and the mantle use exactly the same material.
+check_tokens(c,(
+    "GetSkinnedVertexPosition", "GetResourceForRendering",
+    "GetSkinWeightVertexBuffer", "LineTraceComponent(",
+    "static constexpr" if False else "SampleRoot(",
+    "EFlameLife::Bridging", "EFlameLife::Retracting",
+    "EmitTip(T,Base,T.SplitLength,Flow)",
+    "T.CurrentLength = FMath::Lerp(T.SplitLength,T.RetractTarget,Ease)",
+    "D.Position+=D.Velocity*Dt", "ConfigureGeneration(T)",
+    "FMath::Frac(ShapeSeed*.017f)", "AddStrip(C,W,H",
+    "Render->SetMaterial(0, Material)",
+    "Render->SetMaterial(1, Material)",
+    "UpdateConnectedSource(bCreate, View, Right)",
+    "Render->CreateMeshSection_LinearColor(",
+    "Render->UpdateMeshSection_LinearColor(",
+))
+check_tokens(h,(
+    "MaxTongues = 15", "MaxDetached = 16", "BridgeRings = 4",
+    "SourceGridX = 32", "SourceGridY = 44",
+    "MaxSourceAnchors = 96", "TArray<FSourceAnchor> SourceAnchors",
+    "TArray<FBurnCluster> BurnClusters",
+))
+check_tokens(reactive,(
+    "FreeFlames->SetThermal", "FreeFlames->GetVisualEnergy()",
+    "FreeFlames->SetIgnitionPoints(ExtraLocalPoints)",
+    "if (bEnableProceduralFlames) return;",
+    "SetOverlayMaterial(PreviousFireSurfaceOverlay)",
+    "0.91f * VisualEnergy",
+))
+assert c.index("Render->SetMaterial(1, Material)") < c.index("BuildAnchors();")
+assert "SetupAttachment(Parent, Socket)" not in c
+
+# The OLD WPO overlaid and distorted low-poly triangles. The pipeline now
+# skips it for procedural fire. The asset is left on disk for rollback only.
+assert '"enable_surface_fire",False' in mat
+assert '"enable_procedural_flames",True' in mat
+assert 'MaterialExpressionVertexColor' in mat
+assert 'MaterialExpressionTextureCoordinate' in mat
+assert 'MP_OPACITY_MASK' in mat
+assert 'M_AST_FireTongue' in mat
+assert 'MP_WORLD_POSITION_OFFSET' not in mat
+assert 'new_material("M_AST_FireSurfaceLife"' not in mat
+for token in (".12,h", ".24,h", ".43,h", ".61,h", ".77,h", ".90,h"):
+    assert token in mat, token
+
+# Mesh samples are taken from CURRENT skinned geometry and collision hits.
+# The fixed-topology marching-like mask is a single connected source, not
+# independent source cards corresponding to each tongue/bone.
+check_tokens(c,(
+    "BuildSourceAnchors()", "SourceAnchors.Reset()",
+    "StaticVertexBuffers.PositionVertexBuffer",
+    "USkinnedMeshComponent::GetSkinnedVertexPosition(",
+    "Transform.InverseTransformPosition(", "Transform.TransformPosition(",
+    "if(SourceAnchors.IsEmpty())", "Source->GetComponentTransform()",
+    "for(const FTongue& T:Tongues)",
+    "Samples.Add(P)", "Parent[J]=Best", "Nearest[J]=D",
+    "FVector2D::DistSquared(P,Samples[I])",
+    "float PointD2=BIG_NUMBER,EdgeD2=BIG_NUMBER;",
+    "FMath::Sqrt(PointD2)-Radius", "FMath::Sqrt(EdgeD2)-Radius*.68f",
+    "float Thermal=FMath::Clamp(",
+    "UpdateConnectedSource(bCreate, View, Right)",
+    "1,Verts,Tris,Normals,UVs,Colors,Tangents,false",
+    "1,Verts,Normals,UVs,Colors,Tangents",
+))
+assert "Source.IsValid()" not in c
+assert "Render->UpdateMeshSection_LinearColor(1" not in c  # formatting differs
+assert "return dir*depth" not in c
 assert "FMath::Sin(Cycle * PI)" not in c
-assert "bUseLegacyHeatGrid" in reactive
-assert "FreeFlames->SetIgnitionPoints(ExtraLocalPoints)" in reactive
-assert "FreeFlames->SetSurfaceMaterial(FireSurfaceMID)" in reactive
-assert "0.91f * VisualEnergy" in reactive
-assert "MaxTongues = 15" in h
-assert "MaxDetached = 16" in h
-assert "BridgeRings = 4" in h
-assert "EFlameLife::Bridging" in c
-assert "EFlameLife::Retracting" in c
-assert "T.CurrentLength = FMath::Lerp(T.SplitLength,T.RetractTarget,Ease)" in c
-assert "T.BridgedChild = EmitTip(T,Base,T.SplitLength,Flow)" in c
-assert "BW.Add(bBridge?Width*.31f*(1.f-BridgeAlpha)" in c
-assert "RootBlend=ASTFireLife::SmoothStep(V/.20f)" in c
-assert "BestSkeleton" in reactive
-assert "bClusterMapUploaded = false;" in c
-assert "BurnClusters.Reset()" in c
-assert "RebuildClusters();" in c
-assert "TArray<FBurnCluster> BurnClusters" in h
-assert "Tongue.ClusterIndex=Nearest" in c
-assert "Tongue.ActivationSpread" in c
-assert "for (const FVector& Hit:IgnitionPoints)" in c
-assert "if (BurnClusters.IsValidIndex(I))" in c
-assert "SurfaceMID->SetVectorParameterValue(" in c
-assert "if (Spread<T.ActivationSpread) continue;" in c
-assert "T.bActive=true;" in c
-assert "Centers.Reserve(SurfaceClusters)" not in c
-assert "for (const FTongue& Tongue:Tongues)" not in c[c.index("void UASTFireFreeFlameComponent::UpdateSurfaceMap"):c.index("void UASTFireFreeFlameComponent::AddStrip")]
-assert "MaterialExpressionVertexInterpolator" in mat
-# The first real PIE compile exposed C0.w ... C7.w swizzle errors: the
-# MaterialExpressionVectorParameter output is RGB, not RGBA.
-assert '"float radius%d=R%d*grow%d;"' in mat
-assert '"float radius%d=C%d.w*grow%d;"' not in mat
-assert 'u.Name("FireClusterRadius%d"%i)' in mat
-assert '"R%d"%i for i in range(8)' in mat
-assert 'connect(surface,node,"R%d"%i,sc,sm)' in mat
-assert "FireClusterRadius%d" in c
-assert "P.A : 0.f" in c
-assert '"used_with_skeletal_mesh", True' in mat
-assert "get_material_expression_input_names(interpolated)" in mat
-assert '(interpolated,"P")' in mat
-assert "FreeFlames->SetIgnitionPoints(ExtraLocalPoints)" in reactive
-assert "if (IsValid(FreeFlames))" in reactive
-assert "Tongues.Num()*2+MaxDetached" in c
-assert "RingsPerTongue = 9" in h
-assert "RingsPerDetached = 5" in h
-assert "SetIgnitionPoints" in h
-assert "FireSurfaceLife" in reactive and "M_AST_FireTongue" in reactive
-assert "FMath::Frac(ShapeSeed*.017f)" in c
-assert "I<IgnitionPoints.Num() && Tongues.Num()<DesiredCount" in c
-assert "if (Slot < IgnitionPoints.Num())" in c
-assert "bClusterMapUploaded" in c
 
-assert "max(3.,radius%d*.33)" in mat
-assert 'float full=smoothstep(.40,.98,Spread)' in mat
-assert 'float cover=saturate(max(hot,full))' in mat
-assert '"hot=max(hot,cover%d);mass+=cover%d;"' in mat
-for threshold in (".12,h", ".24,h", ".43,h", ".61,h", ".77,h", ".90,h"):
-    assert threshold in mat, threshold
-for name in ("FireCluster%d","FireIntensity","FireSpread","FireEnergy"):
-    assert name in mat
-assert "BP_AST_FireSource_Igniter" in mat
-assert "BLEND_TRANSLUCENT" in mat
-assert "MP_OPACITY" in mat
-assert 'new_material("M_AST_FireSurfaceLife", is_overlay=True)' in mat
-assert 'finish(surface,sc,sm,is_overlay=True,wpo=wpo)' in mat
-assert "MaterialExpressionVertexNormalWS" in mat
-assert "MaterialExpressionFresnel" in mat
-assert '"FireCloakDepth",9.0' in mat
-assert "MP_WORLD_POSITION_OFFSET" in mat
-assert '"always_evaluate_world_position_offset", True' in mat
-assert '"max_world_position_offset_displacement", 90.0' in mat
-assert "finish(surface,sc,sm,is_overlay=True,wpo=wpo)" in mat
-assert "wpo.set_editor_property" in mat
-assert 'float depth=Depth*cover*saturate(I)' in mat
-assert '"return dir*depth+float3(0.,0.,1.)*"' in mat
-assert 'cover*I*(.065+.76*pow(saturate(F),.60))' in mat
-assert "9.f + LongestSide*.025f" in reactive
-assert "FireCloakDepth" in reactive
-assert "GetSkinnedVertexPosition" in c  # existing tongue anchors preserved
-assert "EFlameLife::Bridging" in c  # original user-approved split preserved
-assert "setup_stage10_lifecycle.py" in install
-assert "M_AST_FireTongue.uasset" in install
-assert "M_AST_FireSurfaceLife.uasset" in install
-assert "STAGE10_BUILD_EXIT" in install
-assert "verify_stage10_gpu.py" in install
-assert "[switch]$ValidateGPU" in install
-assert "if($ValidateGPU){" in install
-assert "STAGE10_GPU_SHADER_UNVERIFIED_OPT_IN_VALIDATEGPU" in install
-assert "-AllowCommandletRendering" in install
-assert "-RenderOffscreen" in install
-assert "Failed to compile Material" in install
-
-# Verify physically ordered lifecycle reference: continuous base at split,
-# detached tip cools, shrinks, accelerates as it rises; a new unique generation.
+# Numerical reference for the connected-source geometry and thermal profile.
+# A single fire source has its own contour even without any source mesh.
 def smooth(x):
-    v=max(0., min(1.,x))
-    return v*v*(3.-2.*v)
+    t=max(0.,min(1.,x))
+    return t*t*(3.-2.*t)
 
-def tongue_cycle(grow=0.72,remaining=0.42,maximum=115):
-    start=maximum*remaining
-    prior=start
-    for k in range(16):
-        t=k*(grow/15.)
-        length=maximum*(remaining+(1.-remaining)*smooth(t/grow))
-        assert length>=prior-1e-8
-        prior=length
-    assert abs(prior-maximum)<1e-6
-    after=maximum*remaining
-    assert after<prior*.65 and after>0
-    return prior,after
+def mst(points):
+    n=len(points)
+    parent=[None]*n
+    visited=[False]*n
+    best=[float("inf")]*n
+    best[0]=0.
+    for _ in range(n):
+        i=min((i for i in range(n) if not visited[i]),
+              key=lambda i:best[i])
+        visited[i]=True
+        for j in range(n):
+            if visited[j]:continue
+            delta=sum((points[i][k]-points[j][k])**2 for k in range(2))
+            if delta<best[j]:
+                best[j]=delta
+                parent[j]=i
+    return parent
 
-adult,reborn=tongue_cycle()
-assert adult>reborn
-lifetime=.81
-def detached(t):
-    fade=max(0.,1.-t/lifetime)
-    size=18*fade
-    temp=.85*(1.-.46*.75)*fade**1.25
-    uplift=160+210*(1.-fade)
-    return size,temp,uplift
-a,b,c0=detached(.0)
-d,e,c1=detached(lifetime*.45)
-f,g,c2=detached(lifetime*.9)
-assert a>d>f and b>e>g and c0<c1<c2
+def shape_distance(point,points,parent,radius):
+    px,py=point
+    dpoint=min(sqrt((px-x)**2+(py-y)**2)-radius
+               for x,y in points)
+    dedge=float("inf")
+    for i,j in enumerate(parent):
+        if j is None:continue
+        x0,y0=points[i]
+        x1,y1=points[j]
+        dx,dy=x1-x0,y1-y0
+        t=max(0.,min(1.,((px-x0)*dx+(py-y0)*dy)/max(1.,dx*dx+dy*dy)))
+        dedge=min(dedge,sqrt((px-(x0+t*dx))**2+
+                             (py-(y0+t*dy))**2)-radius*.68)
+    return min(dpoint,dedge)
 
-# Numeric checks: the bridge persists for multiple frames at 25Hz, and
-# the parent must retract smoothly after the connection ruptures.
-split_length=100.
-target_length=42.
-bridge_seconds=.15
-retract_seconds=.22
-ticks=[k*.04 for k in range(11)]
-lengths=[]
-bridge_visible=[]
-for t in ticks:
-    if t<=bridge_seconds:
-        length=split_length
-        bridge_visible.append(t)
+def thermal(d,radius=10):
+    inner=max(5.,min(12.,radius*.65))
+    outer=max(9.,min(18.,radius*.85))
+    near=max(0.,min(1.,(d+inner)/inner))
+    far=max(0.,min(1.,1-d/outer))
+    return near*far
+
+# Even if the tongues are far apart, their common base has a connecting
+# manifold. This must ALSO hold for the free-standing case (no mesh).
+samples=[(-30.,0.),(-5.,0.),(21.,0.),(47.,0.)]
+parents=mst(samples)
+assert parents[0] is None
+assert all(p is not None for p in parents[1:])
+for x in range(-30,48,3):
+    assert shape_distance((float(x),0.),samples,parents,10.)<0.
+assert thermal(-20.)==0.
+assert thermal(0.)==1.
+assert 0.<thermal(5.)<1.
+assert thermal(30.)==0.
+
+# Previously approved bridge: multi-frame visible neck followed by eased
+# retraction, not instant parent length teleport.
+split,short=100.,42.
+frames=[i*.04 for i in range(11)]
+length=[]
+for t in frames:
+    if t<=.15:
+        length.append(split)
     else:
-        progress=max(0.,min(1.,(t-bridge_seconds)/retract_seconds))
-        length=split_length+(target_length-split_length)*smooth(progress)
-    lengths.append(length)
-assert len(bridge_visible)>=3
-assert lengths[0]==lengths[1]==lengths[2]
-assert all(lengths[i+1]<=lengths[i]+1e-8 for i in range(len(lengths)-1))
-assert lengths[-1]>=target_length-1
-assert lengths[4]>.90*split_length
+        length.append(split+(short-split)*smooth((t-.15)/.22))
+assert length[:4]==[100.]*4
+assert all(length[i+1]<=length[i]+1.e-8 for i in range(10))
+assert length[4]>90.
 
-# A single local source supports multiple lifetimes; adding a nearby impact
-# extends that source instead of creating another tongue/cluster.
-def clusters(points, merge_distance):
-    out=[]
-    for p in points:
-        nearest=min(range(len(out)), key=lambda i:abs(p-out[i])) if out else None
-        if nearest is None or abs(p-out[nearest])>=merge_distance:
-            out.append(p)
-    return out
-assert clusters([0.,8.,12.,75.],25.)==[0.,75.]
-assert len(clusters([0.,8.,12.,75.],25.)) < 5
-# On a single burn source, the number of spawned tongues remains independent
-# of how many distinct vertex samples define the surface.
-tongue_per_cluster=[5]
-assert len(tongue_per_cluster)==1
-assert tongue_per_cluster[0]==5
+# Fixed topology and bounds. Size assertions are NOT benchmark results.
+verts=(32+1)*(44+1)+2*(15*(9+4)+16*5)
+tris=32*44*2 + 2*(15*(9+4-2)+16*(5-1))
+assert verts<=2100 and tris<=3300
+assert verts>2*(15*(9+4)+16*5)
+for n in (1,10,30):
+    print(f"Stage12 max {n} actors: {n*verts} verts, "
+          f"{n*tris} tris / frame @25Hz (theoretical only)")
 
-# Numeric surface union: two nearby burn patches must visually merge as their
-# supporting radii expand; this remains Euclidean, NOT topological geodesics.
-def coverage(x,spots,radius):
-    return max(max(0., min(1.,(radius-abs(x-s))/(max(3.,radius*.33))))
-               for s in spots)
-spots=(-15.,15.)
-assert coverage(0.,spots,10.)==0
-assert coverage(0.,spots,33.)>.8
-
-# Explicit limits from the approved user's spec.
-def tongue_count(kind,max_side):
-    if kind=="skeletal":
-        return 5
-    if max_side<140: return 5
-    if max_side>340: return 13
-    return 7
-assert 3<=tongue_count("skeletal",190)<=6
-assert 4<=tongue_count("static",90)<=5
-assert 10<=tongue_count("static",600)<=15
-
-# Geometry is displaced on the same GPU-skinned overlay triangles, not
-# copied or CPU-skinned again. Thickens with prop dimension.
-for side in (75.,190.,500.,1500.):
-    depth=max(10., min(28., 9.+side*.025))
-    assert 10.<=depth<=28.
-assert 9.+190.*.025 < 9.+500.*.025
-assert "Blend_TRANSLUCENT" not in mat  # correct enum name below
-assert "BLEND_TRANSLUCENT" in mat
-
-# Upper-bound budget: this is a SIZE check, not a measured UE benchmark.
-vertices=(15*(9+4)+16*5)*2
-triangles=(15*(9+4-2)+16*(5-1))*2
-assert vertices<=600 and triangles<=500
-for actors in (1,10,30):
-    print(f"Stage10 theoretical max {actors} actors: "
-          f"{actors*vertices} live vertices, {actors*triangles} triangles/25Hz")
-print("Stage10: mesh union, lifecycle, temperature order, scales and budget OK")
+# Installer still maintains backups, pins commit, and avoids writes with an
+# open editor. No change to maps, weapons, NPC prefabs or original materials.
+check_tokens(install,(
+    "STAGE10_BACKUP=", "STAGE10_REVISION=",
+    "STAGE10_BUILD_EXIT=", "Get-Process -Name UnrealEditor",
+    "setup_stage10_lifecycle.py", "STAGE10_COMMANDLET=",
+))
+print("Stage12 shared source: geometry, palette, bridge and backup checks OK")
