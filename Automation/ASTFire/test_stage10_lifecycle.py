@@ -38,6 +38,11 @@ assert "RingsPerTongue = 9" in h
 assert "RingsPerDetached = 5" in h
 assert "SetIgnitionPoints" in h
 assert "FireSurfaceLife" in reactive and "M_AST_FireTongue" in reactive
+assert "FMath::Frac(ShapeSeed*.017f)" in c
+assert "I<IgnitionPoints.Num() && Tongues.Num()<DesiredCount" in c
+assert "if (Slot < IgnitionPoints.Num())" in c
+assert "bClusterMapUploaded" in c
+
 assert "max(3.,radius%d*.33)" in mat
 assert 'float full=saturate((Spread-.66)*3.15)' in mat
 assert 'float cover=saturate(max(hot,full))' in mat

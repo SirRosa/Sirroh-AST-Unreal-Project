@@ -413,7 +413,7 @@ void UASTFireFreeFlameComponent::AddStrip(
         Verts.Add(RightPos);
         UVs.Add(FVector2D(0.f,V));
         UVs.Add(FVector2D(1.f,V));
-        Colors.Add(FLinearColor(Thermal,V,ShapeSeed,1.f));
+        Colors.Add(FLinearColor(Thermal,V,FMath::Frac(ShapeSeed*.017f),1.f));
         Colors.Add(FLinearColor(Thermal,V,ShapeSeed,1.f));
     }
 }
