@@ -20,6 +20,13 @@ class ASTFIRERUNTIME_API UASTFireIgnitionZoneComponent : public UBoxComponent
 public:
     UASTFireIgnitionZoneComponent();
 
+    // Editable zone size/offset; applied on BeginPlay, NEVER on the CDO.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="AST Fire|Contact")
+    FVector TriggerHalfExtent = FVector(75.0f, 75.0f, 84.0f);
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="AST Fire|Contact")
+    FVector TriggerOffset = FVector(0.0f, 0.0f, 68.0f);
+
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="AST Fire|Contact",
         meta=(ClampMin="0.05", ClampMax="1.0"))
     float IgnitionStrength = 0.9f;

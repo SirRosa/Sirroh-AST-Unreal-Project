@@ -17,7 +17,12 @@ assert "return Bottom * Top * Side;" in cpp
 assert "VolumeUpdateDebt" in cpp
 assert 'return color*0.65;' in material
 assert "class ASTFIRERUNTIME_API UASTFireIgnitionZoneComponent" in igniterH
-assert "SetRelativeLocation(" not in igniterC, "Never move a component in its constructor: UE CDO crash"
+constructor=igniterC.split("UASTFireIgnitionZoneComponent::UASTFireIgnitionZoneComponent()",1)[1].split("void UASTFireIgnitionZoneComponent::BeginPlay()",1)[0]
+assert "SetMobility(" not in constructor and "SetBoxExtent(" not in constructor
+assert "SetCollision" not in constructor and "SetRelativeLocation(" not in constructor
+assert "SetCollisionEnabled(ECollisionEnabled::NoCollision)" in igniterC
+assert "SetCollisionEnabled(ECollisionEnabled::QueryOnly)" in igniterC
+assert "TriggerHalfExtent" in igniterC and "TriggerOffset" in igniterC
 assert "OnComponentBeginOverlap.AddDynamic" in igniterC
 assert "OnComponentEndOverlap.AddDynamic" in igniterC
 assert "GetNetMode() == NM_Client" in igniterC

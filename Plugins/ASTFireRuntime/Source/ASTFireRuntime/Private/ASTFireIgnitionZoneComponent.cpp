@@ -7,16 +7,9 @@
 
 UASTFireIgnitionZoneComponent::UASTFireIgnitionZoneComponent()
 {
+    // IMPORTANT: do not call any UPrimitive/Scene setters here. UE 5.8
+    // triggers NewObject while building the component CDO and fatally aborts.
     PrimaryComponentTick.bCanEverTick = false;
-    SetMobility(EComponentMobility::Movable);
-    SetBoxExtent(FVector(75.0f, 75.0f, 84.0f), false);
-    SetCollisionObjectType(ECC_WorldDynamic);
-    SetCollisionEnabled(ECollisionEnabled::QueryOnly);
-    SetCollisionResponseToAllChannels(ECR_Overlap);
-    SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore);
-    SetCollisionResponseToChannel(ECC_Visibility, ECR_Ignore);
-    SetGenerateOverlapEvents(true);
-    SetHiddenInGame(true);
 }
 
 void UASTFireIgnitionZoneComponent::BeginPlay()
@@ -26,6 +19,21 @@ void UASTFireIgnitionZoneComponent::BeginPlay()
         this, &UASTFireIgnitionZoneComponent::HandleBeginOverlap);
     OnComponentEndOverlap.AddDynamic(
         this, &UASTFireIgnitionZoneComponent::HandleEndOverlap);
+
+    // Initialize physical overlap only on a registered runtime component.
+    // Disable collision first, configure the extent and profile, then enable.
+    SetCollisionEnabled(ECollisionEnabled::NoCollision);
+    SetMobility(EComponentMobility::Movable);
+    SetBoxExtent(TriggerHalfExtent, false);
+    SetRelativeLocation(TriggerOffset);
+    SetCollisionObjectType(ECC_WorldDynamic);
+    SetCollisionResponseToAllChannels(ECR_Overlap);
+    SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore);
+    SetCollisionResponseToChannel(ECC_Visibility, ECR_Ignore);
+    SetGenerateOverlapEvents(true);
+    SetHiddenInGame(true);
+    SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+    UpdateOverlaps();
 
     if (GetOwner() && GetOwner()->GetNetMode() != NM_Client && bIgniteInitialOverlaps)
     {
