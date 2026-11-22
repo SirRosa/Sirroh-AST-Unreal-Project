@@ -58,7 +58,7 @@ assert heat(.95,.5,0.)==0.
 # Curved world-space flight: separate vortex pass, preserved approved simulation.
 assert "void UpdateDetachedVortices(float Dt);" in h
 assert "void UASTFireFreeFlameComponent::UpdateDetachedVortices(float Dt)" in c
-assert "D.Right=Right;" in c
+assert "Child.Right=Right;" in c
 assert "D.Velocity=(D.Velocity+Vortex*Dt*(.43f+.57f*Fade))" in c
 assert "const FVector Vortex=Side*FMath::Sin(Phase)*" in c
 assert "Depth*FMath::Cos(Phase*.77f+D.Seed*.31f)*145.f" in c
