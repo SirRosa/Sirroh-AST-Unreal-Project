@@ -73,9 +73,9 @@ UASTFireReactiveComponent::UASTFireReactiveComponent()
     FireSystem = TSoftObjectPtr<UNiagaraSystem>(
         FSoftObjectPath(TEXT("/Game/VFX/Fire/Systems/NS_Fire_Master.NS_Fire_Master")));
     VolumeMaterial = TSoftObjectPtr<UMaterialInterface>(
-        FSoftObjectPath(TEXT("/Game/VFX/Fire/Materials/M_AST_FirePixel_Volume.M_AST_FirePixel_Volume")));
+        FSoftObjectPath(TEXT("/Game/VFX/Fire/Materials/M_AST_FireTongue.M_AST_FireTongue")));
     SurfaceMaterial = TSoftObjectPtr<UMaterialInterface>(
-        FSoftObjectPath(TEXT("/Game/VFX/Fire/Materials/M_AST_FireSurface.M_AST_FireSurface")));
+        FSoftObjectPath(TEXT("/Game/VFX/Fire/Materials/M_AST_FireSurfaceLife.M_AST_FireSurfaceLife")));
     FlameMaterial = TSoftObjectPtr<UMaterialInterface>(
         FSoftObjectPath(TEXT("/Game/VFX/Fire/Materials/M_AST_FirePixel_Core.M_AST_FirePixel_Core")));
 }
@@ -875,6 +875,8 @@ void UASTFireReactiveComponent::InitializeFire()
         if (IsValid(FreeFlames))
         {
             FreeFlames->SetSource(Parent, ProceduralMaterial, SimulationSeed);
+            FreeFlames->SetIgnitionPoints(ExtraLocalPoints);
+            FreeFlames->SetSurfaceMaterial(FireSurfaceMID);
             FreeFlames->SetThermal(Intensity, AmbientWind, 0.75f);
             FreeFlames->RegisterComponent();
         }
@@ -1310,7 +1312,7 @@ void UASTFireReactiveComponent::TickComponent(
     else if (!IsValid(FreeFlames))
         VisualEnergy = FMath::Clamp(Pulse, 0.05f, 1.0f);
     const float WantedLight = FMath::Clamp(
-        0.09f + 0.83f * VisualEnergy + 0.16f * FMath::Max(Pulse, 0.0f),
+        0.09f + 0.91f * VisualEnergy + 0.04f * FMath::Max(Pulse, 0.0f),
         0.10f, 1.22f);
     LightEnvelope = FMath::FInterpTo(LightEnvelope, WantedLight, DeltaTime,
         WantedLight > LightEnvelope ? 12.0f : 6.0f);

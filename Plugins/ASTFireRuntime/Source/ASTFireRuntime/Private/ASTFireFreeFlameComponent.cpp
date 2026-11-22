@@ -56,6 +56,7 @@ void UASTFireFreeFlameComponent::SetThermal(
 void UASTFireFreeFlameComponent::SetSurfaceMaterial(UMaterialInstanceDynamic* InMaterial)
 {
     SurfaceMID = InMaterial;
+    bClusterMapUploaded = false;
 }
 
 void UASTFireFreeFlameComponent::SetIgnitionPoints(
@@ -352,26 +353,25 @@ void UASTFireFreeFlameComponent::UpdateSurfaceMap(float Dt)
 {
     if (!IsValid(SurfaceMID)) return;
     SurfaceMID->SetScalarParameterValue(FName(TEXT("FireSpread")),Spread);
-    // Geometric union of LOCAL hotspots. As their support radii grow,
-    // adjacent burning patches merge on the *actual* animated mesh.
+    // Cluster positions are in rest-pose mesh-local space: upload once.
+    // The GPU grows their radii from FireSpread, merging adjacent patches.
+    if (bClusterMapUploaded) return;
     FVector LocalSize=FVector(110,110,110);
     if (const UPrimitiveComponent* Primitive=Cast<UPrimitiveComponent>(Source))
         LocalSize=Primitive->CalcBounds(FTransform::Identity).BoxExtent*2.f;
-    const float Radius=FMath::Clamp(LocalSize.GetMax()*
-        (.11f+.52f*ASTFireLife::SmoothStep(Spread)),12.f,420.f);
+    const float Radius=FMath::Clamp(LocalSize.GetMax()*.63f,12.f,420.f);
     for (int32 I=0; I<SurfaceClusters; ++I)
     {
         FLinearColor P(0,0,0,-1);
         if (Tongues.Num()>0 && I<Tongues.Num())
         {
             const FVector Rest=Tongues[I].RestPosition;
-            // Staggered activation prevents whole body from lighting at once.
-            const float G=FMath::Clamp((Spread-I*.055f)*3.4f,0.f,1.f);
-            P=FLinearColor(Rest.X,Rest.Y,Rest.Z,Radius*G);
+            P=FLinearColor(Rest.X,Rest.Y,Rest.Z,Radius);
         }
         SurfaceMID->SetVectorParameterValue(
             FName(*FString::Printf(TEXT("FireCluster%d"),I)),P);
     }
+    bClusterMapUploaded = true;
 }
 
 void UASTFireFreeFlameComponent::AddStrip(

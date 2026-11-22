@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
+#include "Engine/NetSerialization.h"
 #include "ASTFireFreeFlameComponent.generated.h"
 
 class USceneComponent;
@@ -107,4 +108,5 @@ private:
     int32 DetachCursor = 0;
     bool bGenerated = false;
     bool bVisible = true;
+    bool bClusterMapUploaded = false;
 };
