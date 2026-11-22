@@ -38,3 +38,28 @@ Prośba o ręczny test po ponownym uruchomieniu UE:
 5. Zgłoś zrzut ekranu, jeśli warstwa płomienia nadal jest niewidoczna.
 
 Pełny projekt i `.uasset` przechowujemy na Google Drive, GitHub na źródła, bez Git LFS.
+
+
+## Stage 4 — proceduralny płomień 3D (2026-11-22)
+
+**Weryfikacja techniczna:**
+
+- GitHub Actions (2/2) zielone dla zmian źródłowych 76510289112fe5a7adb0a0f5f72b47ca47c702a5.
+- BuildPlugin na rzeczywistym komputerze użytkownika z UE 5.8.1 zakończony sukcesem dla kodu z 09b55973182878c139a3373a7f75e61596dd7dc5; biblioteki runtime/editor wdrożone do projektu.
+- Następny headless commandlet z aktualnym setup_stage4_volume.py zakończony kodem 0; raport: VOLUME_ASSET_CONFIGURED_REQUIRES_USER_VIEW, errors: [], modified_components: 1, disabled_legacy_niagara: 2.
+- Logi i wynik: Saved/ChatGPT/NiagaraFire/Stage4/BuildPlugin_20261122_035020.log, MaterialSetup_retry.log, stage4_result.json.
+
+**Zmiany:**
+
+- Renderer runtime zastępuje statyczne karty ogniowe dynamicznym UProceduralMeshComponent z pięcioma wzajemnie nakładającymi się językami na punkt spalania (bez kolizji i cieni).
+- Deformacja wierzchołków uwzględnia prędkość, przyspieszenie, rotację, podmuchy od pobliskich postaci, wiatr, bezwładność i turbulencję.
+- Geometryczne aktualizacje są rzadsze w dalszych zakresach; stan spalania nie zależy od liczby cząsteczek.
+- RepNotify synchronizuje podstawowy stan ognia, pokrycie i punkty zapłonu; **nie przeprowadzono jeszcze testów sieciowych**.
+- Materiał unlit /Game/VFX/Fire/Materials/M_AST_FirePixel_Volume prezentuje dyskretną paletę temperatury na rzeczywistej geometrii 3D.
+- W BP_AST_FireSource wyłączono automatyczny start dwóch wcześniejszych samodzielnych NiagaraComponent, aby nie zasłaniały nowej geometrii. Oryginalny BP_Torch_U i mapy AST pozostają nietknięte.
+
+**Granice obecnej wersji:** Nie jest to pełny solver CFD ani gotowa symulacja paliwa, dymu, rozprzestrzeniania pożaru czy powierzchni każdego trójkąta mesha. Skalowanie 1/10/50/100 płonących aktorów nie zostało jeszcze zmierzone. Kompilacja i commandlet nie potwierdzają jakości wizualnej.
+
+**Ręczna ocena przez użytkownika:** uruchomić ponownie edytor, umieścić BP_AST_FireSource, włączyć Realtime/PIE, obejrzeć nieruchomy płomień, szybki ruch/rotację, zmianę intensywności i ogień na StaticMesh/SkeletalMesh. Po testach wizualnych iterować w stronę spójnego korpusu, rozrywania płomieni i dymu. Nie uruchamiać automatycznych testów PIE.
+
+**Instalator dla następnego wdrożenia:** Automation/ASTFire/deploy_stage4_windows.ps1 (pobiera z jednej przypiętej rewizji, backup małych źródeł, BuildPlugin w katalogu TEMP i headless commandlet).
