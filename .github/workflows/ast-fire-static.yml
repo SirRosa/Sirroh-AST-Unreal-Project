@@ -8,6 +8,9 @@ on:
       - "Automation/ASTFire/**"
       - "Plugins/ASTFireRuntime/**"
       - ".github/workflows/ast-fire-static.yml"
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
