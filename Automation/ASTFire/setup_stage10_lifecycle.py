@@ -72,7 +72,7 @@ def connect(asset, node, dest, color, opacity):
     require(EDIT.connect_material_expressions(node, "", opacity, dest),
             "Opacity input disconnected: " + dest)
 
-def finish(asset, color, mask, is_overlay=False):
+def finish(asset, color, mask, is_overlay=False, wpo=None):
     require(EDIT.connect_material_property(
         color, "", u.MaterialProperty.MP_EMISSIVE_COLOR),
         "Emissive property disconnected")
@@ -80,6 +80,10 @@ def finish(asset, color, mask, is_overlay=False):
         mask, "", (u.MaterialProperty.MP_OPACITY
                    if is_overlay else u.MaterialProperty.MP_OPACITY_MASK)),
         "Opacity disconnected")
+    if wpo is not None:
+        require(EDIT.connect_material_property(
+            wpo, "", u.MaterialProperty.MP_WORLD_POSITION_OFFSET),
+            "Fire cloak world-position offset disconnected")
     EDIT.recompile_material(asset)
     require(LIB.save_loaded_asset(asset, only_if_is_dirty=False),
             "Material save failed: " + str(asset.get_path_name()))
@@ -144,7 +148,8 @@ try:
     scalar = {}
     for i,(name, initial) in enumerate((
         ("FireIntensity",1.0), ("FireEnergy",0.8),
-        ("FireSpread",0.0), ("FireSeed",1729.0)
+        ("FireSpread",0.0), ("FireSeed",1729.0),
+        ("FireCloakDepth",9.0)
     )):
         n=EDIT.create_material_expression(
             surface,u.MaterialExpressionScalarParameter,-850,-20+i*105)
@@ -187,25 +192,37 @@ try:
             "hot=max(hot,cover%d);mass+=cover%d;"
             % (i,i*.045,i*.045+.36,i,i,i,i,i,i,i,i,i,i)
         )
+    # The original translucent overlay only RECOLORED the underlying mesh.
+    # Create an actual OUTWARD-DISPLACED cloak using the SAME skinned mesh
+    # polygons. A pixel falloff makes the original body remain visible while
+    # the expanded silhouette burns around it. Geometry stays animated with
+    # the source's existing skin weights, without a duplicate 100k-vertex
+    # SkeletalMeshComponent or costly CPU skinning.
     sfield = (
         "float3 p=floor(P/6.)*6.;"
         "float hot=0.;float mass=0.;"
         + "".join(union) +
         "float merged=saturate((mass-1.)*.50);"
-        # Connected burning mantle is skinned to the actual mesh polygons.
         "float full=smoothstep(.40,.98,Spread);"
         "float cover=saturate(max(hot,full));"
         "float3 adv=p-float3(M.x,M.y,M.z)*T*.11;"
-        "float n=.87+.08*sin(adv.x*.71+adv.z*.43-T*4.7+Seed*.02)"
-        "+.05*sin(adv.y*.59-adv.x*.24+T*6.1);"
-        "float h=saturate(cover*(.69+.27*hot+.22*merged+.24*full)"
-        "*n*I*(.85+.15*E));"
+        "float n=.84+.10*sin(adv.x*.71+adv.z*.43-T*4.7+Seed*.02)"
+        "+.06*sin(adv.y*.59-adv.x*.24+T*6.1);"
+        "float h=saturate(cover*(.44+.35*hot+.15*merged+.09*full)"
+        "*n*I*(.82+.18*E));"
     )
+    fresnel=EDIT.create_material_expression(
+        surface,u.MaterialExpressionFresnel,-880,-430)
+    require(fresnel,"Cloak silhouette fresnel missing")
     inputs=("P","T","I","E","Spread","Seed","M")+tuple(
         "C%d"%i for i in range(8))+tuple(
-        "R%d"%i for i in range(8))
+        "R%d"%i for i in range(8))+("F",)
+    # The center of the actor no longer gets a solid yellow coat. Nearly
+    # clear at frontal angles; brighter, thick, flickering at the outline.
+    # The opacity and emissive share the same mesh-bound hot-spot mask.
     sc,sm=custom(surface,inputs,sfield+palette,
-                 sfield+"return saturate((h-.10)*3.7);")
+        sfield+"return saturate(cover*I*(.065+.76*pow(saturate(F),.60))"
+               "*(.56+.44*n)*(.82+.18*E));")
     for node, target in (
         (interpolated,"P"),(clock,"T"),(scalar["FireIntensity"],"I"),
         (scalar["FireEnergy"],"E"),(scalar["FireSpread"],"Spread"),
@@ -216,7 +233,55 @@ try:
         connect(surface,node,"C%d"%i,sc,sm)
     for i, node in enumerate(cluster_radii):
         connect(surface,node,"R%d"%i,sc,sm)
-    finish(surface,sc,sm,is_overlay=True)
+    connect(surface,fresnel,"F",sc,sm)
+
+    normal=EDIT.create_material_expression(
+        surface,u.MaterialExpressionVertexNormalWS,-1040,1490)
+    wpo=EDIT.create_material_expression(
+        surface,u.MaterialExpressionCustom,-120,1510)
+    require(normal and wpo,"Cloak vertex normal or geometry displacement missing")
+    wpo.set_editor_property("output_type",
+                            u.CustomMaterialOutputType.CMOT_FLOAT3)
+    wpo_inputs=("P","N","T","Spread","Seed","M","Depth","I")+tuple(
+        "C%d"%i for i in range(8))+tuple(
+        "R%d"%i for i in range(8))
+    wpo.set_editor_property("inputs",[pin(name) for name in wpo_inputs])
+    # These vertex-stage measurements use the undisturbed rest-pose
+    # position, so the cloak conforms to deforming limbs AND static props.
+    # Every point in a hot cluster belongs to one connected displaced
+    # mesh envelope; tongues remain additive extensions of this source.
+    wfield=(
+        "float3 p=floor(P/7.)*7.;"
+        "float hot=0.;float mass=0.;"
+        + "".join(union) +
+        "float full=smoothstep(.40,.98,Spread);"
+        "float cover=saturate(max(hot,full));"
+        "float wave=.56+.27*sin(p.x*.143+p.y*.071+T*8.9+Seed*.023)"
+        "+.19*sin(p.y*.117+p.z*.159-T*6.4+Seed*.011);"
+        "float spike=saturate((wave-.39)*2.0);"
+        "float depth=Depth*cover*saturate(I)*(.57+1.33*spike);"
+        "float3 dir=normalize(N+float3(0.,0.,.23));"
+        "float3 drift=float3(M.x,M.y,0.)*.014*cover;"
+        "return dir*depth+float3(0.,0.,1.)*"
+        "(Depth*cover*spike*.52)+drift;"
+    )
+    wpo.set_editor_property("code",wfield)
+    wconnections=[
+        (pre,"P"),(normal,"N"),(clock,"T"),
+        (scalar["FireSpread"],"Spread"),(scalar["FireSeed"],"Seed"),
+        (flow,"M"),(scalar["FireCloakDepth"],"Depth"),
+        (scalar["FireIntensity"],"I")
+    ]
+    for node,target in wconnections:
+        require(EDIT.connect_material_expressions(node,"",wpo,target),
+                "Cloak WPO input not wired: "+target)
+    for i,node in enumerate(clusters):
+        require(EDIT.connect_material_expressions(node,"",wpo,"C%d"%i),
+                "Cloak WPO cluster input disconnected")
+    for i,node in enumerate(cluster_radii):
+        require(EDIT.connect_material_expressions(node,"",wpo,"R%d"%i),
+                "Cloak WPO radius input disconnected")
+    finish(surface,sc,sm,is_overlay=True,wpo=wpo)
 
     # Configure only AST-owned actors. Runtime dynamically ignited arbitrary
     # meshes use the same built-in default material references.
