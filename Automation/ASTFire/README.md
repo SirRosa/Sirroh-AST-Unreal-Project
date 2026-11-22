@@ -299,3 +299,16 @@ After Stage9 feedback, do not describe Stage10 as another box/grid patch.
   tongue counts, runtime invariants and vertex/triangle budgets for 1/10/30
   actors. This is not a true PIE FPS/GPU benchmark and cannot validate art.
   Visual and multiplayer test still required before claiming final quality.
+
+
+### Stage 10 — potwierdzone wykonanie i instalacja (2026-11-22)
+
+- **Przypięty kod:** `2efc24ebcf701d95928468362e2d829740cda299` (zawiera pełny model: mesh-local union, cykle narodziny–wzrost–split–odlot–stygnięcie, osobny zanik końcówki, termiczną paletę i światło). GitHub Actions: oba przebiegi status `success`.
+- **Realny UE 5.8.1 BuildPlugin:** `BUILD SUCCESSFUL`, `STAGE10_BUILD_EXIT=0`, runtime/editor DLL faktycznie zainstalowane: `STAGE10_DEPLOYED_DLLS=2`. Build log `Saved/ChatGPT/NiagaraFire/Stage10/BuildPlugin_20261122_063906.log`.
+- **Backup przed instalacją:** `Saved/ChatGPT/NiagaraFire/Stage10/Backup_20261122_063906` (poprzednie własne pliki systemu ognia, dwa nowe assety jeśli już istniały oraz DLL; nie nadpisano map AST).
+- **Commandlety:** Stage4 volume — exit 0; Stage6 igniter — exit 0; Stage8 existing surface — exit 0; **Stage10** — exit 0, `STAGE10_THERMAL_MATERIALS_CONFIGURED_REQUIRES_VISUAL_TEST`. Instalator kończy `STAGE10_INSTALL_SUCCESS_VISUAL_AND_CONTACT_TEST_PENDING`, exit 0.
+- **Raport Stage10:** `Saved/ChatGPT/NiagaraFire/Stage10/stage10_result.json`, `errors: []`. Utworzone i zapisane własne materiały `M_AST_FireTongue.uasset` (7979 bytes) i `M_AST_FireSurfaceLife.uasset` (21234 bytes), oba skrypty BP zaktualizowane. `setup_stage10_lifecycle.py_20261122_063906.log`: 0 pasujących krytycznych błędów materiałów, shaderów lub Pythona.
+- **Testy:** `test_stage10_lifecycle.py` potwierdza referencyjny cykl życia i termiczny porządek, łączenie obszarów, zakres liczby języków oraz ograniczenie wielkości pojedynczej proceduranej siatki. To kontrola liczbowa/statyczna; **nie** jest to pomiar FPS GPU ani test wizualny w PIE.
+- **Wymagane jeszcze w grze:** wizualne sprawdzenie ognia na animowanej postaci, małym i dużym StaticMesh, krótkiego okresu po zapłonie i łączenia obszarów, oderwania końcówek wraz z kolorem, bardzo szybkiego ruchu, kosztu 1/10/30 aktorów, zachowania multiplayer.
+- **Dokładność:** warstwa bazowa jest materiałem faktycznego mesha, ale sąsiedztwo punktów zapłonu na nim aproksymuje dystans euklidesowy w lokalnym rest pose, nie geodezję po topologii trójkątów. Wystające języki pozostają kamerowo orientowanymi, ciągłymi pasami w świecie. Bez użytecznej kolizji StaticMesh emitter może mieć wyłącznie warstwę bazową. Nie należy twierdzić, że to pełny CFD lub ostatecznie zweryfikowany wygląd.
+
