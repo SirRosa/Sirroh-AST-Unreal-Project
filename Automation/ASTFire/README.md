@@ -195,3 +195,17 @@ commandlets (once each). It refuses to overwrite binaries if UE is open.
 not full skinned-triangle GPU particle sampling. Overlay shape IS exactly the
 real render surface. No char/damage. No claims about final looks or movement
 until user PIE tests. Tests verify source/structure, not perception.
+
+
+### Stage 8 — verified UE 5.8.1 deployment (2026-11-22)
+
+- Source revision: `322a5ece2324056d8620472832ea1b1e1065bf01` (both GitHub Actions workflows passed).
+- Real Win64 UE 5.8.1 `BuildPlugin`: `STAGE8_BUILD_EXIT=0`, 2 editor DLLs actually deployed.
+- Backup: `Saved/ChatGPT/NiagaraFire/Stage8/Backup_20261122_053638`.
+- Stage4 volume commandlet: EXIT 0, `VOLUME_ASSET_CONFIGURED_REQUIRES_USER_VIEW`.
+- Stage6 contact actor commandlet: EXIT 0, `IGNITER_CREATED_REQUIRES_CONTACT_TEST`.
+- Stage8 surface commandlet: EXIT 0, `SURFACE_FIRE_CONFIGURED_REQUIRES_VISUAL_TEST`. Created material `/Game/VFX/Fire/Materials/M_AST_FireSurface` and updated both `BP_AST_FireSource` and `BP_AST_FireSource_Igniter`. Result `stage8_result.json` had `errors: []`.
+- Material setup log `setup_stage8_surface.py_20261122_053638.log`: zero critical shader/material/Python errors matching targeted filters.
+- Overall installer exit code 0: `STAGE8_INSTALL_SUCCESS_VISUAL_AND_CONTACT_TEST_PENDING`.
+- **Not verified:** subjective appearance, actual skinned-surface coverage, sprint attachment, dynamic light perception, in-game performance, PIE contact behavior and multiplayer. These require manual game testing. Do not equate build success to a final fire look.
+
