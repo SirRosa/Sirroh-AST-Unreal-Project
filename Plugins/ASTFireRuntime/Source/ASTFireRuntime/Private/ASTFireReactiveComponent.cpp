@@ -89,9 +89,8 @@ void UASTFireReactiveComponent::BeginPlay()
     Super::BeginPlay();
     bPlaying = true;
     bStartLit = bStartLit && Intensity > 0.005f;
+    SmoothIntensity = bStartLit ? Intensity : 0.0f;
     InitializeFire();
-    if (!bStartLit) SmoothIntensity = 0.0f;
-    else SmoothIntensity = Intensity;
 
     if (Light) Light->SetIntensity(LightPower * SmoothIntensity);
     UpdateVisibility();
@@ -272,15 +271,138 @@ void UASTFireReactiveComponent::AddFlamePoint(
 }
 
 
-// Stage 4 - lightweight 3D procedural flame geometry. One CPU mesh section per
-// burn anchor, no per-spark ticks, particle transforms or simulation-grid readbacks.
+
+// Stage 5: advected 2D heat field projected onto a 3D, spatially anchored mesh.
+// Nothing here simulates combustion for gameplay. All temperatures and fragments
+// are expendable local visual data; network authority remains in burning state.
+namespace ASTHeat
+{
+    constexpr int32 Width = 22;
+    constexpr int32 Height = 30;
+    constexpr int32 FragmentCount = 9;
+    constexpr int32 Cells = Width * Height;
+    constexpr float Threshold = 0.21f;
+
+    float HashWave(float X)
+    {
+        return FMath::Sin(X * 1.932f) * 0.55f +
+            FMath::Sin(X * 3.117f + 1.4f) * 0.30f;
+    }
+
+    float Read(const TArray<float>& Data, float X, float Y)
+    {
+        if (X < 0.0f || Y < 0.0f ||
+            X >= float(Width - 1) || Y >= float(Height - 1))
+            return 0.0f;
+        const int32 X0 = FMath::FloorToInt(X), Y0 = FMath::FloorToInt(Y);
+        const float AX = X - float(X0), AY = Y - float(Y0);
+        const int32 I = Y0 * Width + X0;
+        return FMath::Lerp(
+            FMath::Lerp(Data[I], Data[I + 1], AX),
+            FMath::Lerp(Data[I + Width], Data[I + Width + 1], AX), AY);
+    }
+
+    float Source(float X, float Time, float Seed)
+    {
+        const float U = (X + 0.5f) / float(Width) * 2.0f - 1.0f;
+        const float Center = 0.09f * FMath::Sin(Time * 2.3f + Seed);
+        const float Left = -0.36f + 0.12f * FMath::Sin(Time * 3.1f + Seed * 1.37f);
+        const float Right = 0.32f + 0.14f * FMath::Sin(Time * 2.7f + Seed * 0.79f);
+        const float Body = FMath::Exp(-FMath::Square((U - Center) / 0.49f));
+        const float LobeL = 0.82f * FMath::Exp(-FMath::Square((U - Left) / 0.22f));
+        const float LobeR = 0.73f * FMath::Exp(-FMath::Square((U - Right) / 0.23f));
+        return FMath::Clamp(FMath::Max3(Body, LobeL, LobeR), 0.0f, 1.0f);
+    }
+
+    // Fill the editor preview immediately: a broad base, several unequal peaks
+    // and small detached pockets. Runtime then evolves the SAME field by advection.
+    void Prewarm(FASTLocalFlameField& Field, int32 Seed)
+    {
+        Field.Temperature.SetNumZeroed(Cells);
+        Field.Work.SetNumZeroed(Cells);
+        Field.Fragments.SetNum(FragmentCount);
+        const float Phase = float(Seed % 1009) * 0.0137f;
+        for (int32 Y = 0; Y < Height; ++Y)
+        {
+            const float V = (float(Y) + 0.5f) / float(Height);
+            for (int32 X = 0; X < Width; ++X)
+            {
+                const float U = (float(X) + 0.5f) / float(Width) * 2.0f - 1.0f;
+                const float Drift = 0.105f * FMath::Sin(V * 11.0f + Phase) +
+                    0.048f * FMath::Sin(V * 26.0f - Phase);
+                const float BaseWidth = 0.76f *
+                    FMath::Pow(FMath::Max(0.0f, 1.0f - V / 0.77f), 0.55f);
+                const float Base = FMath::Clamp(
+                    (BaseWidth - FMath::Abs(U - Drift)) * 7.0f, 0.0f, 1.0f) *
+                    (0.94f - V * 0.49f);
+                float Tips = 0.0f;
+                for (int32 B = 0; B < 3; ++B)
+                {
+                    const float MaxHeight = B == 0 ? 0.96f : (B == 1 ? 0.74f : 0.86f);
+                    const float Center = (B == 0 ? -0.09f : (B == 1 ? -0.36f : 0.33f)) +
+                        0.15f * FMath::Sin(V * (9.0f + float(B)) +
+                            Phase + float(B) * 1.8f);
+                    const float HalfWidth = 0.19f * (1.0f - 0.68f * V);
+                    const float Edge = FMath::Clamp(
+                        (HalfWidth - FMath::Abs(U - Center)) * 11.0f, 0.0f, 1.0f);
+                    const float Cap = FMath::Clamp(
+                        (MaxHeight - V) * 11.0f, 0.0f, 1.0f);
+                    Tips = FMath::Max(Tips, Edge * Cap * (0.72f - V * 0.31f));
+                }
+                Field.Temperature[Y * Width + X] = FMath::Max(Base, Tips);
+            }
+        }
+        for (int32 K = 0; K < 3; ++K)
+        {
+            FASTFlameFragment& Part = Field.Fragments[K];
+            Part.X = float(Width) * (0.28f + K * 0.19f);
+            Part.Y = float(Height) * (0.77f + K * 0.075f);
+            Part.VX = float(K - 1) * 2.5f;
+            Part.VY = 7.0f + K * 1.4f;
+            Part.Life = 0.32f + K * 0.11f;
+            Part.Heat = 0.55f;
+        }
+        Field.bReady = true;
+    }
+
+    void AddQuad(
+        TArray<FVector>& Vertices, TArray<int32>& Triangles,
+        TArray<FVector2D>& UV, TArray<FLinearColor>& Colors, bool bCreate,
+        const FTransform& Transform, const FVector& Center,
+        const FVector& Right, const FVector& Up,
+        float HalfX, float HalfY, float Heat, float LocalHeight)
+    {
+        const int32 Start = Vertices.Num();
+        const FVector A = Center - Right * HalfX - Up * HalfY;
+        const FVector B = Center + Right * HalfX - Up * HalfY;
+        const FVector C = Center + Right * HalfX + Up * HalfY;
+        const FVector D = Center - Right * HalfX + Up * HalfY;
+        Vertices.Add(Transform.InverseTransformPosition(A));
+        Vertices.Add(Transform.InverseTransformPosition(B));
+        Vertices.Add(Transform.InverseTransformPosition(C));
+        Vertices.Add(Transform.InverseTransformPosition(D));
+        for (int32 K = 0; K < 4; ++K)
+        {
+            Colors.Add(FLinearColor(Heat, LocalHeight, 0.0f, 1.0f));
+        }
+        UV.Add(FVector2D(0.0f, 1.0f));
+        UV.Add(FVector2D(1.0f, 1.0f));
+        UV.Add(FVector2D(1.0f, 0.0f));
+        UV.Add(FVector2D(0.0f, 0.0f));
+        if (bCreate)
+        {
+            Triangles.Add(Start);     Triangles.Add(Start + 1); Triangles.Add(Start + 2);
+            Triangles.Add(Start);     Triangles.Add(Start + 2); Triangles.Add(Start + 3);
+        }
+    }
+}
+
 void UASTFireReactiveComponent::AddVolume(
     USceneComponent* Parent, FName Socket, FVector LocalPosition,
     float Scale, UMaterialInterface* Material)
 {
     AActor* Owner = GetOwner();
     if (!Owner || !Parent || !Material) return;
-
     UProceduralMeshComponent* Volume = NewObject<UProceduralMeshComponent>(
         Owner, NAME_None, RF_Transient);
     if (!Volume) return;
@@ -294,114 +416,180 @@ void UASTFireReactiveComponent::AddVolume(
     Volume->RegisterComponent();
     FireVolumes.Add(Volume);
     FireVolumeScales.Add(FMath::Max(0.12f, Scale * FlameSize));
-    UpdateVolume(Volume, FireVolumes.Num() - 1, true);
+    const int32 Index = FireVolumes.Num() - 1;
+    FASTLocalFlameField& Field = LocalFields.AddDefaulted_GetRef();
+    ASTHeat::Prewarm(Field, SimulationSeed + Index * 5381);
+    Field.LastAnchorLocation = Volume->GetComponentLocation();
+    UpdateVolume(Volume, Index, true);
     Volume->SetVisibility(bStartLit && Intensity > 0.005f);
 }
 
 void UASTFireReactiveComponent::UpdateVolume(
-    UProceduralMeshComponent* Volume, int32 Index, bool bCreate)
+    UProceduralMeshComponent* Volume, int32 Index, bool bCreate, float StepSeconds)
 {
-    if (!IsValid(Volume) || !FireVolumeScales.IsValidIndex(Index)) return;
+    if (!IsValid(Volume) || !FireVolumeScales.IsValidIndex(Index) ||
+        !LocalFields.IsValidIndex(Index))
+        return;
+    FASTLocalFlameField& Field = LocalFields[Index];
+    if (!Field.bReady) return;
 
-    // Vertex budget: 5 connected and branching tongues x 8 rings x 7 sides.
-    // Topology never changes, so a single mesh section is updated in-place.
-    constexpr int32 Tongues = 5;
-    constexpr int32 Rings = 8;
-    constexpr int32 Sides = 7;
-    TArray<FVector> Vertices;
-    TArray<FVector2D> UVs;
-    TArray<FLinearColor> Colors;
-    TArray<int32> Triangles;
-    TArray<FVector> Normals;
-    TArray<FProcMeshTangent> Tangents;
-    Vertices.Reserve(Tongues * Rings * Sides);
-    UVs.Reserve(Tongues * Rings * Sides);
-    Colors.Reserve(Tongues * Rings * Sides);
-    if (bCreate) Triangles.Reserve(Tongues * (Rings - 1) * Sides * 6);
-
-    const FTransform Transform = Volume->GetComponentTransform();
-    const FVector Up = Transform.InverseTransformVectorNoScale(FVector::UpVector).GetSafeNormal();
-    const FVector Reference = FMath::Abs(Up.Z) > 0.95f ? FVector::ForwardVector : FVector::UpVector;
-    const FVector Right = FVector::CrossProduct(Reference, Up).GetSafeNormal();
-    const FVector Forward = FVector::CrossProduct(Up, Right).GetSafeNormal();
-    const FVector OwnerPos = GetOwner() ? GetOwner()->GetActorLocation() : FVector::ZeroVector;
-    const FVector TangentialVelocity = -FVector::CrossProduct(
-        SmoothedAngularVelocity, Volume->GetComponentLocation() - OwnerPos);
-    const FVector Flow = Transform.InverseTransformVectorNoScale(
-        (SmoothedFlow + TangentialVelocity * 0.5f).GetClampedToMaxSize(800.0f));
-    const float T = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
     const float Scale = FireVolumeScales[Index];
-    const float Heat = FMath::Clamp(bPlaying ? SmoothIntensity : Intensity, 0.0f, 1.0f);
-    const float BurnScale = 0.28f + 0.72f * Heat;
+    const float Heat = FMath::Clamp(
+        bPlaying ? SmoothIntensity : Intensity, 0.0f, 1.0f);
+    const float Size = 0.42f + 0.58f * Heat;
+    const float RealWidth = 102.0f * Scale * Size;
+    const float RealHeight = 135.0f * Scale * Size;
+    const FVector Origin = Volume->GetComponentLocation();
+    const FTransform Transform = Volume->GetComponentTransform();
+    const FVector WorldUp = FVector::UpVector;
 
-    for (int32 Tongue = 0; Tongue < Tongues; ++Tongue)
+    // Camera-facing sampling plane, but PHYSICAL deformation happens in the
+    // scalar field and world-space wind before the projection.
+    FVector ViewDirection = GetOwner() ? GetOwner()->GetActorForwardVector() : FVector::ForwardVector;
+    if (const UWorld* World = GetWorld())
     {
-        const float Phase = (float(SimulationSeed % 997) * 0.017f) +
-            float(Index * 7 + Tongue) * 2.39996323f;
-        const float BranchAngle = Phase + 0.16f * FMath::Sin(T * 1.9f + Phase);
-        const FVector Branch = Tongue == 0 ? FVector::ZeroVector :
-            (Right * FMath::Cos(BranchAngle) + Forward * FMath::Sin(BranchAngle)) *
-            (12.0f + float(Tongue % 2) * 6.0f) * Scale;
-        const float HeightVariation = 0.93f + 0.07f * FMath::Sin(
-            T * (2.1f + 0.29f * Tongue) + Phase);
-        const float Height = (Tongue == 0 ? 145.0f :
-            86.0f + float((Tongue * 13 + Index * 3) % 5) * 14.0f) *
-            Scale * BurnScale * HeightVariation;
-        const float Radius = (Tongue == 0 ? 26.0f : 14.0f) * Scale *
-            FMath::Sqrt(BurnScale);
+        if (const APlayerController* PC = World->GetFirstPlayerController())
+            if (const APlayerCameraManager* Cam = PC->PlayerCameraManager)
+                ViewDirection = Cam->GetCameraLocation() - Origin;
+    }
+    ViewDirection.Z = 0.0f;
+    ViewDirection = ViewDirection.GetSafeNormal();
+    if (ViewDirection.IsNearlyZero()) ViewDirection = FVector::ForwardVector;
+    const FVector Right = FVector::CrossProduct(WorldUp, ViewDirection).GetSafeNormal();
 
-        for (int32 Ring = 0; Ring < Rings; ++Ring)
+    if (!bCreate && StepSeconds > 0.0f)
+    {
+        const float Dt = FMath::Clamp(StepSeconds, 0.005f, 0.4f);
+        Field.Time += Dt;
+        const float Seed = float((SimulationSeed + Index * 5381) % 1009) * 0.0137f;
+
+        // React to motion of the attachment/socket, including skeletal motion.
+        const FVector AnchorVelocity = (Origin - Field.LastAnchorLocation) / Dt;
+        const FVector LocalFlow = (SmoothedFlow - AnchorVelocity * 0.23f)
+            .GetClampedToMaxSize(900.0f);
+        Field.LastAnchorLocation = Origin;
+        const float Wind = FMath::Clamp(
+            FVector::DotProduct(LocalFlow, Right) / 450.0f, -1.0f, 1.0f);
+
+        // Semi-Lagrangian advection of heat: upward buoyancy + moving eddies.
+        // Simulates temperature distribution rather than deforming fixed tubes.
+        for (int32 Y = 0; Y < ASTHeat::Height; ++Y)
         {
-            const float H = float(Ring) / float(Rings - 1);
-            const float Sway = H * H;
-            const float Bend = 7.0f * Scale * Sway;
-            const FVector Eddy = Bend * (
-                Right * FMath::Sin(Phase + T * 3.1f + H * 7.0f) +
-                Forward * FMath::Cos(Phase * 0.73f + T * 2.4f + H * 9.0f));
-            const FVector Center = Branch * (1.0f - 0.28f * H) +
-                Up * Height * H + Flow * (0.22f * Sway) + Eddy;
-            const float Taper = FMath::Max(0.025f,
-                FMath::Pow(1.0f - H, 0.82f) * (0.72f + 0.28f * FMath::Sin(PI * H)));
-            const float RingRadius = Radius * Taper *
-                (0.94f + 0.06f * FMath::Sin(T * 5.2f + Phase + H * 14.0f));
-
-            for (int32 Side = 0; Side < Sides; ++Side)
+            const float V = (float(Y) + 0.5f) / float(ASTHeat::Height);
+            const float Cooling = FMath::Exp(-Dt * (0.33f + 0.78f * V));
+            for (int32 X = 0; X < ASTHeat::Width; ++X)
             {
-                const float A = 2.0f * PI * float(Side) / float(Sides);
-                const FVector Radial = Right * FMath::Cos(A) + Forward * FMath::Sin(A);
-                const float Jagged = 1.0f + 0.075f *
-                    FMath::Sin(A * 3.0f + Phase * 2.0f + H * 11.0f + T * 4.0f);
-                Vertices.Add(Center + Radial * RingRadius * Jagged);
-                UVs.Add(FVector2D(float(Side) / float(Sides), H));
-                const float Temperature = FMath::Clamp(
-                    0.96f - H * 0.51f - float(Tongue > 0) * 0.11f +
-                    0.11f * FMath::Sin(Phase + T * 3.4f + H * 12.0f), 0.0f, 1.0f);
-                Colors.Add(FLinearColor(Temperature, H, float(Tongue) / Tongues, 1.0f));
+                const int32 Cell = Y * ASTHeat::Width + X;
+                const float OldHeat = Field.Temperature[Cell];
+                const float U = (float(X) + 0.5f) / float(ASTHeat::Width) * 2.0f - 1.0f;
+                const float Eddies =
+                    2.8f * FMath::Sin(U * 7.0f + V * 14.0f + Field.Time * 3.2f + Seed) +
+                    1.9f * FMath::Sin(U * 13.0f - V * 8.0f - Field.Time * 2.7f + Seed * 0.6f);
+                const float Rise = (8.2f + 3.8f * OldHeat + Heat * 2.3f) * Dt;
+                const float Shift = (Wind * 9.2f + Eddies) * Dt;
+                const float Sample = ASTHeat::Read(
+                    Field.Temperature, float(X) - Shift, float(Y) - Rise);
+                float NewHeat = Sample * Cooling;
 
-                if (bCreate && Ring < Rings - 1)
+                // Three asynchronously fluctuating burners grow one broad base.
+                if (Y < 5)
                 {
-                    const int32 Here = (Tongue * Rings + Ring) * Sides + Side;
-                    const int32 NextSide = (Tongue * Rings + Ring) * Sides +
-                        (Side + 1) % Sides;
-                    const int32 Above = Here + Sides;
-                    const int32 AboveNext = NextSide + Sides;
-                    Triangles.Add(Here); Triangles.Add(NextSide); Triangles.Add(Above);
-                    Triangles.Add(NextSide); Triangles.Add(AboveNext); Triangles.Add(Above);
+                    const float Falloff = FMath::Clamp(
+                        1.0f - float(Y) / 5.0f, 0.0f, 1.0f);
+                    const float Source = ASTHeat::Source(float(X), Field.Time, Seed) *
+                        (0.82f + 0.18f * ASTHeat::HashWave(Field.Time * 2.1f + U * 3.0f + Seed));
+                    NewHeat = FMath::Max(NewHeat, Source * Falloff * Heat);
                 }
+                // Turbulent pockets create short-lived detached islands.
+                if (Y > 14 && Y < ASTHeat::Height - 2)
+                {
+                    const float Pocket = 0.11f * FMath::Max(0.0f,
+                        FMath::Sin(Field.Time * 9.7f + float(X * 13 + Y * 7) + Seed));
+                    NewHeat += Pocket * Dt * Heat;
+                }
+                Field.Work[Cell] = FMath::Clamp(NewHeat, 0.0f, 1.0f);
             }
+        }
+        Swap(Field.Temperature, Field.Work);
+
+        // Discrete torn-off fire islands; fixed budget, no per-fragment components.
+        for (FASTFlameFragment& Fragment : Field.Fragments)
+        {
+            if (Fragment.Life <= 0.0f) continue;
+            Fragment.X += (Fragment.VX + Wind * 8.0f) * Dt;
+            Fragment.Y += Fragment.VY * Dt;
+            Fragment.VX += 1.3f * FMath::Sin(Field.Time * 5.0f + Fragment.Y) * Dt;
+            Fragment.Life = FMath::Max(0.0f, Fragment.Life - Dt);
+        }
+        Field.SpawnDebt = FMath::Min(4.0f, Field.SpawnDebt + Dt * Heat * 5.5f);
+        for (FASTFlameFragment& Fragment : Field.Fragments)
+        {
+            if (Field.SpawnDebt < 1.0f) break;
+            if (Fragment.Life > 0.0f) continue;
+            Field.SpawnDebt -= 1.0f;
+            Fragment.X = float(ASTHeat::Width) * (0.29f + 0.42f *
+                FMath::Abs(FMath::Sin(Field.Time * 2.7f + Seed)));
+            Fragment.Y = float(ASTHeat::Height) * (0.52f + 0.14f *
+                FMath::Abs(FMath::Cos(Field.Time * 4.1f + Seed)));
+            Fragment.VX = 3.5f * FMath::Sin(Field.Time * 3.7f + Seed);
+            Fragment.VY = 8.0f + 3.0f * FMath::Abs(FMath::Sin(Field.Time * 5.1f));
+            Fragment.Life = 0.38f + 0.21f *
+                FMath::Abs(FMath::Sin(Field.Time * 1.9f + Seed));
+            Fragment.Heat = 0.55f;
         }
     }
 
+    TArray<FVector> Vertices;
+    TArray<int32> Triangles;
+    TArray<FVector2D> UV;
+    TArray<FLinearColor> Colors;
+    TArray<FVector> Normals;
+    TArray<FProcMeshTangent> Tangents;
+    const int32 QuadCount = ASTHeat::Cells + ASTHeat::FragmentCount;
+    Vertices.Reserve(QuadCount * 4);
+    UV.Reserve(QuadCount * 4);
+    Colors.Reserve(QuadCount * 4);
+    if (bCreate) Triangles.Reserve(QuadCount * 6);
+
+    const float CellW = RealWidth / float(ASTHeat::Width);
+    const float CellH = RealHeight / float(ASTHeat::Height);
+    const float FlowSide = FMath::Clamp(
+        FVector::DotProduct(SmoothedFlow, Right), -600.0f, 600.0f);
+    for (int32 Y = 0; Y < ASTHeat::Height; ++Y)
+    {
+        const float V = (float(Y) + 0.5f) / float(ASTHeat::Height);
+        // Upper cells lag behind the anchor. No global sprite rotation.
+        const float Lag = FlowSide * 0.14f * V * V;
+        for (int32 X = 0; X < ASTHeat::Width; ++X)
+        {
+            const float U = (float(X) + 0.5f) / float(ASTHeat::Width) - 0.5f;
+            const FVector Center = Origin + Right * (U * RealWidth + Lag) +
+                WorldUp * (V * RealHeight);
+            const float T = Field.Temperature[Y * ASTHeat::Width + X];
+            ASTHeat::AddQuad(Vertices, Triangles, UV, Colors, bCreate,
+                Transform, Center, Right, WorldUp,
+                CellW * 0.503f, CellH * 0.503f, T, V);
+        }
+    }
+    for (const FASTFlameFragment& Fragment : Field.Fragments)
+    {
+        const float V = Fragment.Y / float(ASTHeat::Height);
+        const float U = Fragment.X / float(ASTHeat::Width) - 0.5f;
+        const FVector Center = Origin + Right * (U * RealWidth +
+            FlowSide * 0.14f * V * V) + WorldUp * (V * RealHeight);
+        const float Bright = Fragment.Life > 0.0f
+            ? Fragment.Heat * FMath::Min(1.0f, Fragment.Life * 3.2f) : 0.0f;
+        ASTHeat::AddQuad(Vertices, Triangles, UV, Colors, bCreate,
+            Transform, Center, Right, WorldUp,
+            CellW * 0.80f, CellH * 1.12f, Bright, V);
+    }
+
     if (bCreate)
-    {
         Volume->CreateMeshSection_LinearColor(
-            0, Vertices, Triangles, Normals, UVs, Colors, Tangents, false);
-    }
+            0, Vertices, Triangles, Normals, UV, Colors, Tangents, false);
     else
-    {
         Volume->UpdateMeshSection_LinearColor(
-            0, Vertices, Normals, UVs, Colors, Tangents);
-    }
+            0, Vertices, Normals, UV, Colors, Tangents);
 }
 
 void UASTFireReactiveComponent::InitializeFire()
@@ -530,6 +718,7 @@ void UASTFireReactiveComponent::RemoveGeneratedVisuals()
         if (IsValid(Volume)) Volume->DestroyComponent();
     FireVolumes.Empty();
     FireVolumeScales.Empty();
+    LocalFields.Empty();
     VolumeUpdateDebt = 0.0f;
 
     if (IsValid(GeneratedLight))
@@ -737,9 +926,10 @@ void UASTFireReactiveComponent::TickComponent(
         VolumeUpdateDebt += DeltaTime;
         if (VolumeUpdateDebt >= UpdateInterval)
         {
+            const float Elapsed = VolumeUpdateDebt;
             VolumeUpdateDebt = 0.0f;
             for (int32 i = 0; i < FireVolumes.Num(); ++i)
-                if (IsValid(FireVolumes[i])) UpdateVolume(FireVolumes[i], i, false);
+                if (IsValid(FireVolumes[i])) UpdateVolume(FireVolumes[i], i, false, Elapsed);
         }
     }
 }

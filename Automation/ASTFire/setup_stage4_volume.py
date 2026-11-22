@@ -43,29 +43,35 @@ try:
     uv = EDIT.create_material_expression(asset, u.MaterialExpressionTextureCoordinate, -560, -10)
     time = EDIT.create_material_expression(asset, u.MaterialExpressionTime, -560, 150)
     shader = EDIT.create_material_expression(asset, u.MaterialExpressionCustom, -170, -40)
-    opaque = EDIT.create_material_expression(asset, u.MaterialExpressionConstant, -150, 200)
+    opaque = EDIT.create_material_expression(asset, u.MaterialExpressionCustom, -170, 220)
     require(all((col, uv, time, shader, opaque)), "Material graph creation failed")
-    opaque.set_editor_property("r", 1.0)
     shader.set_editor_property("output_type", u.CustomMaterialOutputType.CMOT_FLOAT3)
     shader.set_editor_property("inputs", [pin("C"), pin("UV"), pin("T")])
-    # Silhouette comes from procedural polygons, NOT an oscillating sprite mask.
-    # Vertex temperature is quantized into a compact, hot-to-cool palette.
+    # The temperature field supplies shape and temperature. Mask empty cells.
+    # Restrained *linear* emission avoids the clipped white/yellow silhouette
+    # caused by Stage 4's 2.5x HDR multiplier.
     shader.set_editor_property("code",
-        "float2 p=floor(UV*float2(16,28))/float2(16,28);"
-        "float v=saturate(C.r+0.06*sin(p.y*37+T*3.7+C.b*13)"
-        "+0.035*cos(p.x*23-T*4.1));"
-        "float3 a=float3(.34,.035,.008);"
-        "a=lerp(a,float3(.93,.18,.016),step(.27,v));"
-        "a=lerp(a,float3(1,.39,.028),step(.51,v));"
-        "a=lerp(a,float3(1,.75,.15),step(.76,v));"
-        "a=lerp(a,float3(1,.93,.45),step(.91,v));"
-        "return a*2.5;")
+        "float h=saturate(C.r);"
+        "float2 p=floor(UV*float2(20,30))/float2(20,30);"
+        "h=saturate(h+0.02*sin(T*5.3+p.x*17+C.g*12));"
+        "float3 color=float3(.10,.008,.003);"
+        "color=lerp(color,float3(.39,.026,.008),step(.24,h));"
+        "color=lerp(color,float3(.68,.085,.013),step(.38,h));"
+        "color=lerp(color,float3(.88,.23,.025),step(.56,h));"
+        "color=lerp(color,float3(1.00,.47,.055),step(.76,h));"
+        "color=lerp(color,float3(1.00,.70,.18),step(.91,h));"
+        "return color*0.82;")
+    opaque.set_editor_property("output_type", u.CustomMaterialOutputType.CMOT_FLOAT1)
+    opaque.set_editor_property("inputs", [pin("C")])
+    opaque.set_editor_property("code", "return step(.21,C.r);")
     for label, src, output, dest in (
         ("color", col, "", "C"),
         ("uv", uv, "", "UV"),
         ("time", time, "", "T")):
         require(EDIT.connect_material_expressions(src, output, shader, dest),
                 "Disconnected shader input: " + label)
+    require(EDIT.connect_material_expressions(col, "", opaque, "C"),
+            "Disconnected temperature mask")
     require(EDIT.connect_material_property(
         shader, "", u.MaterialProperty.MP_EMISSIVE_COLOR), "No emissive")
     require(EDIT.connect_material_property(
@@ -80,6 +86,7 @@ try:
     funcs = u.SubobjectDataBlueprintFunctionLibrary
     modified = 0
     disabled_legacy_niagara = 0
+    adjusted_lights = 0
     for handle in subsystem.k2_gather_subobject_data_for_blueprint(blueprint):
         component = funcs.get_object(funcs.get_data(handle))
         if component is None:
@@ -89,17 +96,21 @@ try:
             component.set_editor_property("auto_activate", False)
             component.set_editor_property("visible", False)
             disabled_legacy_niagara += 1
+        elif component.get_class().get_name() == "PointLightComponent":
+            component.set_editor_property("intensity", 450.0)
+            adjusted_lights += 1
         elif component.get_class().get_name() == "ASTFireReactiveComponent":
             component.set_editor_property("enable_procedural_flames", True)
             component.set_editor_property("enable_flame_cards", False)
             component.set_editor_property("enable_niagara", False)
             component.set_editor_property("volume_material", asset)
+            component.set_editor_property("light_power", 450.0)
             modified += 1
     require(modified == 1, "Expected one ASTFireReactiveComponent in fire source BP")
     require(disabled_legacy_niagara >= 1, "Expected Stage3 Niagara component to disable")
     u.BlueprintEditorLibrary.compile_blueprint(blueprint)
     require(LIB.save_loaded_asset(blueprint, only_if_is_dirty=False), "BP save failed")
-    OUT.update({"status": "VOLUME_ASSET_CONFIGURED_REQUIRES_USER_VIEW", "modified_components": modified, "disabled_legacy_niagara": disabled_legacy_niagara})
+    OUT.update({"status": "VOLUME_ASSET_CONFIGURED_REQUIRES_USER_VIEW", "modified_components": modified, "disabled_legacy_niagara": disabled_legacy_niagara, "adjusted_lights": adjusted_lights})
 except Exception as exc:
     OUT["status"] = "FAILED"
     OUT["errors"].append({"message": str(exc), "trace": traceback.format_exc()[-2600:]})

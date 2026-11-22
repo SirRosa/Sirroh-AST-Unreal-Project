@@ -21,6 +21,29 @@ class UMaterialInterface;
 class UProceduralMeshComponent;
 class FLifetimeProperty;
 
+
+/** Purely local visual state. Never replicated: gameplay cannot depend on pixels. */
+struct FASTFlameFragment
+{
+    float X = 0.0f;
+    float Y = 0.0f;
+    float VX = 0.0f;
+    float VY = 0.0f;
+    float Life = 0.0f;
+    float Heat = 0.0f;
+};
+
+struct FASTLocalFlameField
+{
+    TArray<float> Temperature;
+    TArray<float> Work;
+    TArray<FASTFlameFragment> Fragments;
+    FVector LastAnchorLocation = FVector::ZeroVector;
+    float Time = 0.0f;
+    float SpawnDebt = 0.0f;
+    bool bReady = false;
+};
+
 /** Placement options shared by torches, characters, trees, furniture and physics actors. */
 UENUM(BlueprintType)
 enum class EASTFireCoverage : uint8
@@ -58,7 +81,7 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="AST Fire|Visuals")
     bool bEnableNiagara = false;
 
-    /** Procedural 3D flame geometry; replaces intersecting flat cards. */
+    /** Procedural camera-facing 2.5D heat-field flame, following spatial burn anchors. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="AST Fire|Visuals")
     bool bEnableProceduralFlames = true;
 
@@ -106,7 +129,7 @@ public:
     FVector PointOffset = FVector::ZeroVector;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="AST Fire|Light", meta=(ClampMin="0"))
-    float LightPower = 1300.0f;
+    float LightPower = 450.0f;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="AST Fire|Light", meta=(ClampMin="0"))
     float LightRadius = 525.0f;
@@ -174,7 +197,7 @@ private:
         bool bUseExistingFX);
     void AddVolume(USceneComponent* Parent, FName Socket,
         FVector LocalPosition, float Scale, UMaterialInterface* Material);
-    void UpdateVolume(UProceduralMeshComponent* Volume, int32 Index, bool bCreate);
+    void UpdateVolume(UProceduralMeshComponent* Volume, int32 Index, bool bCreate, float StepSeconds = 0.0f);
     void UpdateVisibility();
 
     UPROPERTY(Transient)
@@ -190,6 +213,7 @@ private:
     TArray<TObjectPtr<UProceduralMeshComponent>> FireVolumes;
 
     TArray<float> FireVolumeScales;
+    TArray<FASTLocalFlameField> LocalFields;
 
     UPROPERTY(Transient)
     TObjectPtr<UPointLightComponent> Light = nullptr;

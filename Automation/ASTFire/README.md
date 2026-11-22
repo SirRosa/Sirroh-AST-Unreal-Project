@@ -63,3 +63,13 @@ Pełny projekt i `.uasset` przechowujemy na Google Drive, GitHub na źródła, b
 **Ręczna ocena przez użytkownika:** uruchomić ponownie edytor, umieścić BP_AST_FireSource, włączyć Realtime/PIE, obejrzeć nieruchomy płomień, szybki ruch/rotację, zmianę intensywności i ogień na StaticMesh/SkeletalMesh. Po testach wizualnych iterować w stronę spójnego korpusu, rozrywania płomieni i dymu. Nie uruchamiać automatycznych testów PIE.
 
 **Instalator dla następnego wdrożenia:** Automation/ASTFire/deploy_stage4_windows.ps1 (pobiera z jednej przypiętej rewizji, backup małych źródeł, BuildPlugin w katalogu TEMP i headless commandlet).
+
+
+## Stage 5 — kierunek po negatywnej ocenie wizualnej
+
+Użytkownik zdecydowanie odrzucił Stage 4: macki/stożki zamiast ognia, za jasny i niemal jednolity żółty kolor, brak podziału na języki i odrywające się fragmenty. Nie uważać kompilacji za dowód jakości wizualnej.
+
+W Stage 5 zmieniono renderer na **lokalne 22×30 pole temperatury na punkt spalania**, którego obraz jest prezentowany w orientacji kamery jako stylizowane 2.5D w świecie 3D (punkty spalania pozostają przestrzenne i podążają za socketami). Adwekcja w górę, wiry, schładzanie, trzy zmienne źródła zasilające wspólny korpus i 9 odrywanych fragmentów na klaster. Stan spalania pozostaje oddzielny od stanu wizualnego; weryfikacja multiplayer nadal wymagana. Stała topologia 22×30 quads + 9 fragments umożliwia UpdateMeshSection zamiast rekonstrukcji powierzchni w każdej klatce. Kolory są ograniczone do pięciu ciemniejszej czerwieni → pomarańczy → żółci, bez 2.5-krotnego wzmocnienia HDR, z maską niskiej temperatury.
+
+**Przed oceną:** wymagane zielone GitHub Actions, BuildPlugin UE 5.8.1, ponowne wykonanie commandletu setup_stage4_volume.py (materiał modyfikowany w swoim folderze) oraz ręczny test wizualny użytkownika. Nie modyfikować oryginalnych map, Advanced Parkour ani pochodni.
+
