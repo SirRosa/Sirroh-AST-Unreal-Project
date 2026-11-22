@@ -1148,7 +1148,10 @@ void UASTFireReactiveComponent::IgniteAtWorldPosition(FVector WorldPosition)
         ExtraLocalPoints.Add(Parent->GetComponentTransform()
             .InverseTransformPosition(WorldPosition));
         if (!bStartLit) Ignite(1.0f);
-        RefreshFireVisuals();
+        if (IsValid(FreeFlames))
+            FreeFlames->SetIgnitionPoints(ExtraLocalPoints);
+        else
+            RefreshFireVisuals();
     }
 }
 

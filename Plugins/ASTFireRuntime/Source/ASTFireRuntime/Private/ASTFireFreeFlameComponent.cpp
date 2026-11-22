@@ -65,6 +65,13 @@ void UASTFireFreeFlameComponent::SetIgnitionPoints(
     IgnitionPoints.Reset();
     for (const FVector_NetQuantize10& Point : InPoints)
         IgnitionPoints.Add(FVector(Point.X, Point.Y, Point.Z));
+    // An additional contact expands the SAME source region without respawning
+    // all tongues or restarting the thermal spread/cycle.
+    if (bGenerated)
+    {
+        bClusterMapUploaded = false;
+        UpdateSurfaceMap(0.f);
+    }
 }
 
 void UASTFireFreeFlameComponent::SetFlamesVisible(bool bInVisible)
@@ -438,12 +445,35 @@ void UASTFireFreeFlameComponent::UpdateSurfaceMap(float Dt)
     if (const UPrimitiveComponent* Primitive=Cast<UPrimitiveComponent>(Source))
         LocalSize=Primitive->CalcBounds(FTransform::Identity).BoxExtent*2.f;
     const float Radius=FMath::Clamp(LocalSize.GetMax()*.63f,12.f,420.f);
+    TArray<FVector> Centers;
+    Centers.Reserve(SurfaceClusters);
+    // Contact ignition areas join the existing burn mask; no independent
+    // actor-level source appears at every new collision. Prioritize contacts.
+    for (int32 I=IgnitionPoints.Num()-1; I>=0 &&
+        Centers.Num()<SurfaceClusters; --I)
+    {
+        const FVector Candidate=IgnitionPoints[I];
+        bool bTooClose=false;
+        for (const FVector& Other:Centers)
+            if (FVector::DistSquared(Candidate,Other)<FMath::Square(8.f))
+                {bTooClose=true;break;}
+        if (!bTooClose) Centers.Add(Candidate);
+    }
+    for (const FTongue& Tongue:Tongues)
+    {
+        if (Centers.Num()>=SurfaceClusters) break;
+        bool bTooClose=false;
+        for (const FVector& Other:Centers)
+            if (FVector::DistSquared(Tongue.RestPosition,Other)<FMath::Square(8.f))
+                {bTooClose=true;break;}
+        if (!bTooClose) Centers.Add(Tongue.RestPosition);
+    }
     for (int32 I=0; I<SurfaceClusters; ++I)
     {
         FLinearColor P(0,0,0,-1);
-        if (Tongues.Num()>0 && I<Tongues.Num())
+        if (Centers.IsValidIndex(I))
         {
-            const FVector Rest=Tongues[I].RestPosition;
+            const FVector Rest=Centers[I];
             P=FLinearColor(Rest.X,Rest.Y,Rest.Z,Radius);
         }
         SurfaceMID->SetVectorParameterValue(

@@ -42,6 +42,11 @@ assert "T.BridgedChild = EmitTip(T,Base,T.SplitLength,Flow)" in c
 assert "BW.Add(bBridge?Width*.31f*(1.f-BridgeAlpha)" in c
 assert "RootBlend=ASTFireLife::SmoothStep(V/.20f)" in c
 assert "BestSkeleton" in reactive
+assert "bClusterMapUploaded = false;" in c
+assert "Centers.Reserve(SurfaceClusters)" in c
+assert "IgnitionPoints.Num()-1" in c
+assert "FreeFlames->SetIgnitionPoints(ExtraLocalPoints)" in reactive
+assert "if (IsValid(FreeFlames))" in reactive
 assert "Tongues.Num()*2+MaxDetached" in c
 assert "RingsPerTongue = 9" in h
 assert "RingsPerDetached = 5" in h
