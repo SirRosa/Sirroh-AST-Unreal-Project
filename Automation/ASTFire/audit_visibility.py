@@ -88,7 +88,10 @@ def run():
                 d=b.get_data(h)
                 c=b.get_object(d)
                 if c:
-                    OUT["blueprint"]["subobjects"].append({"name":c.get_name(),"class":c.get_class().get_name()})
+                    OUT["blueprint"]["subobjects"].append({"name":c.get_name(),"class":c.get_class().get_name(),
+                        "properties":inspection(c,["asset","auto_activate","visible","hidden_in_game",
+                            "is_editor_only","active","relative_location","relative_scale3d",
+                            "intensity","attenuation_radius","component_tags","attach_parent"])})
             except Exception:pass
     except Exception as e:OUT["blueprint"]["subobject_error"]=str(e)[:500]
 
