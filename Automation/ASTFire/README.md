@@ -456,3 +456,30 @@ inputs and scalar MID upload. Exact source change:
   (SHA `b163652061fb398b7fbcfefb1e35c2a20b784b22`),
   and physical `Saved/ChatGPT/NiagaraFire/Stage10_BEST_20261122`.
 
+
+
+### Stage11 displaced source cloak — not a recolor (2026-11-22)
+
+User PIE evidence showed that the shader now compiled, but simply painted
+the character and cube yellow; existing independent tongue strips remained
+visually isolated. **The original material overlay did not have ANY
+WorldPositionOffset**, so by construction it could not envelope the mesh.
+This is a distinct architectural defect, not another shader-error workaround.
+
+New shared source pass **reuses the actual original mesh triangles and bone
+skinning**, using `MaterialExpressionVertexNormalWS` and a mesh-local
+cluster-field `MaterialExpressionCustom` in VERTEX stage linked to
+`MP_WORLD_POSITION_OFFSET`. Thus no duplicate CPU skinning, no replacement
+base materials, and no additional per-actor skeletal mesh required. Cluster
+radius/position calculations are shared with the pixel mask. Outward normal
+extrusion (10–28 cm nominal depth, sized to mesh bounds) plus upward motion,
+hotspot noise and wind makes a single moving silhouette envelope. Tongues
+continue from this one connected source, retaining previously approved
+bridge split and detached life. The color uses the existing heat palette,
+but the surface opacity is now **Fresnel/edge-driven** (thin alpha on face,
+stronger alpha at silhouette), rather than coating the entire skin yellow.
+
+Limits: true silhouette detail depends on original mesh topology/vertex
+density; hard-edge normals may reveal seams; translucent overlay + WPO
+requires GPU in-game verification. Does **not** add new mesh triangles,
+geodesic burning simulation, or 3D fluid dynamics.

@@ -93,7 +93,19 @@ assert "BLEND_TRANSLUCENT" in mat
 assert "MP_OPACITY" in mat
 assert 'new_material("M_AST_FireSurfaceLife", is_overlay=True)' in mat
 assert 'finish(surface,sc,sm,is_overlay=True)' in mat
-assert 'return saturate((h-.10)*3.7)' in mat
+assert "MaterialExpressionVertexNormalWS" in mat
+assert "MaterialExpressionFresnel" in mat
+assert '"FireCloakDepth",9.0' in mat
+assert "MP_WORLD_POSITION_OFFSET" in mat
+assert "finish(surface,sc,sm,is_overlay=True,wpo=wpo)" in mat
+assert "wpo.set_editor_property" in mat
+assert 'float depth=Depth*cover*saturate(I)' in mat
+assert '"return dir*depth+float3(0.,0.,1.)*"' in mat
+assert 'cover*I*(.065+.76*pow(saturate(F),.60))' in mat
+assert "9.f + LongestSide*.025f" in reactive
+assert "FireCloakDepth" in reactive
+assert "GetSkinnedVertexPosition" in c  # existing tongue anchors preserved
+assert "EFlameLife::Bridging" in c  # original user-approved split preserved
 assert "setup_stage10_lifecycle.py" in install
 assert "M_AST_FireTongue.uasset" in install
 assert "M_AST_FireSurfaceLife.uasset" in install
@@ -198,6 +210,15 @@ def tongue_count(kind,max_side):
 assert 3<=tongue_count("skeletal",190)<=6
 assert 4<=tongue_count("static",90)<=5
 assert 10<=tongue_count("static",600)<=15
+
+# Geometry is displaced on the same GPU-skinned overlay triangles, not
+# copied or CPU-skinned again. Thickens with prop dimension.
+for side in (75.,190.,500.,1500.):
+    depth=max(10., min(28., 9.+side*.025))
+    assert 10.<=depth<=28.
+assert 9.+190.*.025 < 9.+500.*.025
+assert "Blend_TRANSLUCENT" not in mat  # correct enum name below
+assert "BLEND_TRANSLUCENT" in mat
 
 # Upper-bound budget: this is a SIZE check, not a measured UE benchmark.
 vertices=(15*(9+4)+16*5)*2

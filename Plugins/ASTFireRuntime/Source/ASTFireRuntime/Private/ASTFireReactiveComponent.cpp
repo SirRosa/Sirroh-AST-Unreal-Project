@@ -794,6 +794,20 @@ void UASTFireReactiveComponent::SetupSurfaceFire(USceneComponent* Parent)
     FireSurfaceMID->SetScalarParameterValue(FName(TEXT("FireIntensity")),
         FMath::Clamp(Intensity, 0.0f, 1.0f));
     FireSurfaceMID->SetScalarParameterValue(FName(TEXT("FireEnergy")), 0.9f);
+    // A single displaced overlay pass forms an animated shell outside the
+    // entire original skinned/static silhouette. This is not a base-color
+    // change; the original material and mesh are left untouched.
+    float LongestSide = 180.f;
+    if (const UPrimitiveComponent* Primitive=Cast<UPrimitiveComponent>(Mesh))
+        LongestSide = Primitive->CalcBounds(FTransform::Identity)
+            .BoxExtent.GetAbs().GetMax()*2.f;
+    const float CloakDepth = FMath::Clamp(
+        9.f + LongestSide*.025f, 10.f, 28.f);
+    FireSurfaceMID->SetScalarParameterValue(
+        FName(TEXT("FireCloakDepth")), CloakDepth);
+    UE_LOG(LogTemp, Log,
+        TEXT("AST Fire: connected displaced cloak %s depth=%.1f cm"),
+        *GetOwner()->GetName(),CloakDepth);
     UpdateSurfaceVisibility();
 }
 
