@@ -23,6 +23,39 @@ namespace ASTFire
 {
     static const FName FireLightTag(TEXT("ASTFireOwnedLight"));
     static const FName FireFXTag(TEXT("ASTFireOwnedFX"));
+    // Bounds are used to generate candidate rays, not as the flame's final
+    // surface. A triangle/physics collision hit puts the anchor on the mesh.
+    // When a mesh has no collision there is an explicit bounds fallback.
+    bool ProjectToSurface(UPrimitiveComponent* Mesh,
+        const FVector& OutsideWorld, const FVector& InsideWorld,
+        FVector& SurfaceWorld)
+    {
+        if (!IsValid(Mesh) || Mesh->GetCollisionEnabled() == ECollisionEnabled::NoCollision)
+            return false;
+        FHitResult Hit;
+        FCollisionQueryParams Params;
+        Params.bTraceComplex = true;
+        Params.bReturnPhysicalMaterial = false;
+        if (!Mesh->LineTraceComponent(Hit, OutsideWorld, InsideWorld, Params))
+            return false;
+        const FVector Normal = FVector(
+            Hit.ImpactNormal.X, Hit.ImpactNormal.Y, Hit.ImpactNormal.Z);
+        SurfaceWorld = FVector(
+            Hit.ImpactPoint.X, Hit.ImpactPoint.Y, Hit.ImpactPoint.Z) +
+            Normal.GetSafeNormal() * 2.0;
+        return true;
+    }
+
+    bool ValidFlameBone(const FName Name)
+    {
+        if (Name.IsNone()) return false;
+        const FString Key = Name.ToString().ToLower();
+        return !Key.Contains(TEXT("ik_")) && !Key.Contains(TEXT("twist"))
+            && !Key.Contains(TEXT("weapon")) && !Key.Contains(TEXT("socket"))
+            && !Key.Contains(TEXT("virtual")) && !Key.Contains(TEXT("cloth"))
+            && !Key.Contains(TEXT("vb_")) && !Key.Contains(TEXT("_end"))
+            && !Key.Equals(TEXT("root"));
+    }
     static bool IsDedicatedFireActor(const AActor* Actor)
     {
         return Actor && Actor->GetClass()->GetName().StartsWith(TEXT("BP_AST_FireSource"));
@@ -460,7 +493,7 @@ void UASTFireReactiveComponent::AddVolume(
     Volume->SetMaterial(0, Material);
     Volume->RegisterComponent();
     FireVolumes.Add(Volume);
-    FireVolumeScales.Add(FMath::Max(0.12f, Scale * FlameSize));
+    FireVolumeScales.Add(FMath::Clamp(Scale * FlameSize, 0.12f, 2.0f));
     const int32 Index = FireVolumes.Num() - 1;
     FASTLocalFlameField& Field = LocalFields.AddDefaulted_GetRef();
     ASTHeat::Prewarm(Field, SimulationSeed + Index * 5381);
@@ -720,24 +753,119 @@ void UASTFireReactiveComponent::InitializeFire()
         }
     }
 
+    // Mesh-aware auto coverage: no actor-sized glowing blob. Animated
+    // characters get independent flame attachments on distributed bones;
+    // props get local surface hits. A missing collision mesh uses bounds
+    // only as an explicit fallback, never as our preferred placement.
     if (Coverage == EASTFireCoverage::Bounds && Points.IsEmpty())
     {
-        UPrimitiveComponent* Primitive = Cast<UPrimitiveComponent>(Parent);
-        const FBoxSphereBounds LocalBounds = Primitive
-            ? Primitive->CalcBounds(FTransform::Identity)
-            : FBoxSphereBounds(FVector::ZeroVector, FVector(45.0f), 80.0f);
-        const FVector Extent = LocalBounds.BoxExtent;
-        const float Height = FMath::Max(30.0f, Extent.Z * 2.0f);
-        const float Size = FMath::Clamp(Height / (Count > 2 ? 300.0f : 190.0f), 0.45f, 3.0f);
-        for (int32 i = 0; i < Count; ++i)
+        if (USkeletalMeshComponent* Skeletal = Cast<USkeletalMeshComponent>(Parent))
         {
-            const float Fraction = (float(i) + 0.5f) / float(Count);
-            const float Angle = i * 2.39996323f; // golden angle, deterministic placement
-            const FVector Offset = LocalBounds.Origin + FVector(
-                FMath::Cos(Angle) * Extent.X * 0.67f,
-                FMath::Sin(Angle) * Extent.Y * 0.67f,
-                (Fraction * 1.45f - 0.65f) * Extent.Z);
-            Points.Add({NAME_None, Offset, Size});
+            struct FBoneCandidate { FName Name; FVector World; float Scale; };
+            TArray<FBoneCandidate> Candidates;
+            Candidates.Reserve(Skeletal->GetNumBones());
+            for (int32 BoneIndex = 0; BoneIndex < Skeletal->GetNumBones(); ++BoneIndex)
+            {
+                const FName Name = Skeletal->GetBoneName(BoneIndex);
+                if (!ASTFire::ValidFlameBone(Name)) continue;
+                const FVector P = Skeletal->GetBoneLocation(Name, EBoneSpaces::WorldSpace);
+                if (P.ContainsNaN()) continue;
+                const FName ParentName = Skeletal->GetParentBone(Name);
+                const float SegmentLength = ParentName.IsNone() ? 38.0f :
+                    FVector::Dist(P, Skeletal->GetBoneLocation(ParentName, EBoneSpaces::WorldSpace));
+                Candidates.Add({Name, P, FMath::Clamp(SegmentLength / 120.0f, 0.22f, 0.62f)});
+            }
+
+            // Farthest-point bone sampling avoids selecting six spine bones
+            // while leaving arms, legs or head completely unlit.
+            TArray<int32> Chosen;
+            for (int32 Slot = 0; Slot < Count && Chosen.Num() < Candidates.Num(); ++Slot)
+            {
+                int32 Best = INDEX_NONE;
+                double BestDistance = -1.0;
+                for (int32 CandidateIndex = 0; CandidateIndex < Candidates.Num(); ++CandidateIndex)
+                {
+                    if (Chosen.Contains(CandidateIndex)) continue;
+                    double Distance = Chosen.Num() == 0 ?
+                        -FVector::DistSquared(Candidates[CandidateIndex].World,
+                            Skeletal->Bounds.Origin) : TNumericLimits<double>::Max();
+                    for (int32 Existing : Chosen)
+                        Distance = FMath::Min(Distance, FVector::DistSquared(
+                            Candidates[CandidateIndex].World, Candidates[Existing].World));
+                    if (Distance > BestDistance || Best == INDEX_NONE)
+                    {
+                        Best = CandidateIndex;
+                        BestDistance = Distance;
+                    }
+                }
+                if (Best == INDEX_NONE) break;
+                Chosen.Add(Best);
+                const FBoneCandidate& Part = Candidates[Best];
+                FVector SurfaceWorld = Part.World;
+                FVector Radial = (Part.World - Skeletal->Bounds.Origin).GetSafeNormal();
+                if (Radial.IsNearlyZero()) Radial = FVector::ForwardVector;
+                const FVector Outer = Part.World + Radial * 58.0f;
+                const FVector Inner = Part.World - Radial * 15.0f;
+                ASTFire::ProjectToSurface(Skeletal, Outer, Inner, SurfaceWorld);
+                const FTransform BoneTransform = Skeletal->GetSocketTransform(Part.Name, RTS_World);
+                const FVector BoneOffset = BoneTransform.InverseTransformPosition(SurfaceWorld);
+                Points.Add({Part.Name, BoneOffset, Part.Scale});
+            }
+            UE_LOG(LogTemp, Verbose,
+                TEXT("AST Fire: %s generated %d skeletal surface/bone anchors"),
+                *Owner->GetName(), Points.Num());
+        }
+
+        if (Points.IsEmpty())
+        {
+            UPrimitiveComponent* Primitive = Cast<UPrimitiveComponent>(Parent);
+            const FBoxSphereBounds LocalBounds = Primitive
+                ? Primitive->CalcBounds(FTransform::Identity)
+                : FBoxSphereBounds(FVector::ZeroVector, FVector(45.0f), 80.0f);
+            const FVector Extent = LocalBounds.BoxExtent.GetAbs();
+            const FVector Centre = LocalBounds.Origin;
+            const FTransform ComponentTransform = Parent->GetComponentTransform();
+
+            // Patch size is determined from LOCAL surface area divided over
+            // anchors; total actor height alone must never set flame radius.
+            const double LargestFace = FMath::Max3(Extent.X * Extent.Y,
+                Extent.X * Extent.Z, Extent.Y * Extent.Z);
+            const float PatchScale = FMath::Clamp(
+                FMath::Sqrt(FMath::Max(1.0, LargestFace * 4.0 / double(Count))) /
+                    115.0, 0.18, 1.35);
+
+            for (int32 i = 0; i < Count; ++i)
+            {
+                const float A = (FMath::Frac(0.618034f * i + 0.17f) * 1.7f - 0.85f);
+                const float B = (FMath::Frac(0.754877f * i + 0.39f) * 1.7f - 0.85f);
+                FVector Face(0, 0, 1);
+                if (i % 5 == 1) Face = FVector(1, 0, 0);
+                if (i % 5 == 2) Face = FVector(-1, 0, 0);
+                if (i % 5 == 3) Face = FVector(0, 1, 0);
+                if (i % 5 == 4) Face = FVector(0, -1, 0);
+                FVector Offset = Centre;
+                if (FMath::Abs(Face.Z) > 0.5f)
+                    Offset += FVector(A * Extent.X, B * Extent.Y, Extent.Z);
+                else if (FMath::Abs(Face.X) > 0.5f)
+                    Offset += FVector(Face.X * Extent.X, A * Extent.Y, B * Extent.Z);
+                else
+                    Offset += FVector(A * Extent.X, Face.Y * Extent.Y, B * Extent.Z);
+
+                FVector Outer = Offset + Face * 24.0f;
+                FVector Inner = Offset - Face * FMath::Max(
+                    30.0f, FMath::Max3(Extent.X, Extent.Y, Extent.Z) * 2.1f);
+                FVector HitWorld;
+                if (ASTFire::ProjectToSurface(Primitive,
+                    ComponentTransform.TransformPosition(Outer),
+                    ComponentTransform.TransformPosition(Inner), HitWorld))
+                {
+                    Offset = ComponentTransform.InverseTransformPosition(HitWorld);
+                }
+                Points.Add({NAME_None, Offset, PatchScale});
+            }
+            UE_LOG(LogTemp, Verbose,
+                TEXT("AST Fire: %s generated %d static surface anchors"),
+                *Owner->GetName(), Points.Num());
         }
     }
     if (Points.IsEmpty())
@@ -746,7 +874,30 @@ void UASTFireReactiveComponent::InitializeFire()
     for (const FVector_NetQuantize10& HitOffset : ExtraLocalPoints)
     {
         if (Points.Num() >= 16) break;
-        Points.Add({NAME_None, HitOffset, 0.72f});
+        const FVector LocalHit(HitOffset.X, HitOffset.Y, HitOffset.Z);
+        if (USkeletalMeshComponent* Skeletal = Cast<USkeletalMeshComponent>(Parent))
+        {
+            const FVector WorldHit = Skeletal->GetComponentTransform().TransformPosition(LocalHit);
+            FName NearestBone = NAME_None;
+            double BestDistance = TNumericLimits<double>::Max();
+            for (int32 BoneIndex = 0; BoneIndex < Skeletal->GetNumBones(); ++BoneIndex)
+            {
+                const FName Name = Skeletal->GetBoneName(BoneIndex);
+                if (!ASTFire::ValidFlameBone(Name)) continue;
+                const double D = FVector::DistSquared(WorldHit,
+                    Skeletal->GetBoneLocation(Name, EBoneSpaces::WorldSpace));
+                if (D < BestDistance) { BestDistance = D; NearestBone = Name; }
+            }
+            if (!NearestBone.IsNone())
+            {
+                const FTransform Bone = Skeletal->GetSocketTransform(NearestBone, RTS_World);
+                Points.Add({NearestBone, Bone.InverseTransformPosition(WorldHit), 0.25f});
+                continue;
+            }
+        }
+        // Static impact is localized and never bigger than the nearby clusters.
+        Points.Add({NAME_None, LocalHit, Points.Num() ?
+            FMath::Clamp(Points[0].Size * 0.6f, 0.18f, 0.55f) : 0.32f});
     }
     for (int32 i = 0; i < Points.Num(); ++i)
     {

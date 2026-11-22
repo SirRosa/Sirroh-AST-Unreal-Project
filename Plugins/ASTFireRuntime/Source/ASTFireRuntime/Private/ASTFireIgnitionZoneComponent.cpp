@@ -3,6 +3,7 @@
 #include "ASTFireBlueprintLibrary.h"
 #include "GameFramework/Actor.h"
 #include "Components/PrimitiveComponent.h"
+#include "Components/SkeletalMeshComponent.h"
 #include "Engine/World.h"
 
 UASTFireIgnitionZoneComponent::UASTFireIgnitionZoneComponent()
@@ -115,6 +116,8 @@ void UASTFireIgnitionZoneComponent::IgniteTarget(
     if (LongestDimension >= 240.0f) Points = 4;
     if (LongestDimension >= 500.0f) Points = 6;
     if (LongestDimension >= 950.0f) Points = 8;
+    if (Target->FindComponentByClass<USkeletalMeshComponent>())
+        Points = FMath::Max(Points, 7);
     Points = FMath::Clamp(Points, 1, FMath::Clamp(MaxDistributedFlames, 1, 12));
 
     if (UASTFireBlueprintLibrary::IgniteActor(

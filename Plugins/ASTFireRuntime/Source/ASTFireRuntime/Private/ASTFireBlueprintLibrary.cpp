@@ -1,6 +1,7 @@
 #include "ASTFireBlueprintLibrary.h"
 #include "ASTFireReactiveComponent.h"
 #include "GameFramework/Actor.h"
+#include "Components/SkeletalMeshComponent.h"
 #include "Engine/World.h"
 
 UASTFireReactiveComponent* UASTFireBlueprintLibrary::FindFireComponent(
@@ -36,12 +37,13 @@ UASTFireReactiveComponent* UASTFireBlueprintLibrary::IgniteActor(
         Fire->RegisterComponent();
     }
 
-    if (DesiredFlamePoints > 1)
-    {
-        Fire->SetFireCoverage(
-            EASTFireCoverage::Bounds,
-            FMath::Clamp(DesiredFlamePoints, 1, 16));
-    }
+    // A character is not a cylinder: give articulated limbs multiple
+    // surface-bound clusters even for callers who request a single point.
+    if (Target->FindComponentByClass<USkeletalMeshComponent>())
+        DesiredFlamePoints = FMath::Max(DesiredFlamePoints, 7);
+    Fire->SetFireCoverage(
+        EASTFireCoverage::Bounds,
+        FMath::Clamp(DesiredFlamePoints, 1, 16));
 
     Fire->Ignite(FMath::Clamp(Strength, 0.05f, 1.0f));
     Fire->IgniteAtWorldPosition(HitWorldPosition);

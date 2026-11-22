@@ -28,6 +28,11 @@ assert "OnComponentEndOverlap.AddDynamic" in igniterC
 assert "GetNetMode() == NM_Client" in igniterC
 assert "IgnitedDuringOverlap.Contains" in igniterC
 assert "GetComponentsBoundingBox" in igniterC
+assert "FindComponentByClass<USkeletalMeshComponent>()" in igniterC
+assert "ASTFire::ProjectToSurface" in cpp
+assert "GetSocketTransform(Part.Name, RTS_World)" in cpp
+assert "Farthest-point bone sampling" in cpp
+assert "FMath::Sqrt(FMath::Max(1.0, LargestFace" in cpp
 assert "UASTFireBlueprintLibrary::IgniteActor" in igniterC
 assert "BP_AST_FireSource_Igniter" in builder
 assert "ASSET.duplicate_asset(SOURCE, TARGET)" in builder
