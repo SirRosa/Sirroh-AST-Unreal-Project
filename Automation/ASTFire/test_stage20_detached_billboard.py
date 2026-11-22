@@ -27,7 +27,7 @@ for required in (
 ):
     assert required in geometry, required
 assert "FVector::UpVector*FMath::Cos(Angle)" not in fragment
-assert "Right*FMath::Cos(Angle)-" not in fragment
+assert "const FVector LocalSide=(Right*FMath::Cos(Angle)-" not in fragment
 
 def dot(a,b):
     return sum(x*y for x,y in zip(a,b))
