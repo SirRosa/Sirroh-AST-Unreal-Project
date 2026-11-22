@@ -474,7 +474,7 @@ void UASTFireFreeFlameComponent::AddStrip(
         UVs.Add(FVector2D(0.f,V));
         UVs.Add(FVector2D(1.f,V));
         Colors.Add(FLinearColor(Thermal,V,FMath::Frac(ShapeSeed*.017f),1.f));
-        Colors.Add(FLinearColor(Thermal,V,ShapeSeed,1.f));
+        Colors.Add(FLinearColor(Thermal,V,FMath::Frac(ShapeSeed*.017f),1.f));
     }
 }
 
@@ -484,7 +484,7 @@ void UASTFireFreeFlameComponent::UpdateGeometry(bool bCreate)
     TArray<FVector> Verts;
     TArray<FVector2D> UVs;
     TArray<FLinearColor> Colors;
-    const int32 Vertices=(Tongues.Num()*RingsPerTongue+
+    const int32 Vertices=(Tongues.Num()*(RingsPerTongue+BridgeRings)+
         MaxDetached*RingsPerDetached)*2;
     Verts.Reserve(Vertices);
     UVs.Reserve(Vertices);
@@ -504,9 +504,9 @@ void UASTFireFreeFlameComponent::UpdateGeometry(bool bCreate)
         const FVector Base=SampleRoot(T);
         const float Fraction=FMath::Clamp(T.Age/FMath::Max(.1f,T.GrowSeconds),0.f,1.f);
         const float Growth=ASTFireLife::SmoothStep(Fraction);
-        const float Length=T.MaxLength*(T.RemainingFraction+
-            (1.f-T.RemainingFraction)*Growth);
-        const float Width=T.BaseWidth*(.63f+.37f*Growth);
+        const float Length=T.CurrentLength;
+        const float Width=T.CurrentWidth;
+        const float ShapePhase=FMath::Lerp(T.PreviousPhase,T.Phase,Growth);
         const FVector Flow=(Wind-T.WorldVelocity*.64f).GetClampedToMaxSize(1600.f);
         TArray<FVector> C;
         TArray<float> W;
@@ -514,23 +514,50 @@ void UASTFireFreeFlameComponent::UpdateGeometry(bool bCreate)
         for (int32 K=0;K<RingsPerTongue;++K)
         {
             const float V=float(K)/float(RingsPerTongue-1);
-            const float Curl=FMath::Sin(V*9.4f+Elapsed*11.3f+T.Phase)*
-                V*V*(2.f+9.f*T.Scale);
-            const float Curl2=FMath::Sin(V*16.3f-Elapsed*6.7f+T.Seed)*
-                V*(1.3f+3.f*T.Scale);
+            const float Curl=FMath::Sin(V*8.1f+Elapsed*8.3f+ShapePhase)*
+                V*V*(1.2f+5.f*T.Scale);
+            const float Curl2=FMath::Sin(V*13.3f-Elapsed*5.1f+T.Seed)*
+                V*(.9f+2.8f*T.Scale);
             C.Add(Base+FVector::UpVector*Length*V+
                 Flow*V*V*.095f+Right*(Curl+Curl2));
             // One continuous silhouette. Vary each ring instead of stacking
             // identical camera-facing sprite/rectangle pieces.
-            const float Ridge=FMath::Clamp(.83f+.16f*
-                FMath::Sin(V*17.1f+T.Phase+.37f*Elapsed),.48f,1.05f);
-            W.Add(Width*FMath::Pow(FMath::Max(0.f,1.f-V),.62f)*Ridge);
-            H.Add(FMath::Clamp(1.02f-.65f*V + .10f*
-                FMath::Sin(V*8.2f+T.Phase),.10f,1.f));
+            const float Ridge=FMath::Clamp(.80f+.20f*
+                FMath::Sin(V*13.8f+ShapePhase+.57f*Elapsed),.38f,1.08f);
+            // The root has ZERO planar width: its heat comes from the mesh
+            // surface mantle, not a horizontal sprite glued to one vertex.
+            const float RootBlend=ASTFireLife::SmoothStep(V/.20f);
+            const float Tip=FMath::Pow(FMath::Max(0.f,1.f-V),.73f);
+            W.Add(Width*RootBlend*Tip*Ridge);
+            H.Add(FMath::Clamp(1.04f-.66f*V + .09f*
+                FMath::Sin(V*8.2f+ShapePhase),.10f,1.f));
         }
         if (T.Age<0.f || Heat<.015f)
             for (float& Temperature:H)Temperature=0.f;
         AddStrip(C,W,H,T.Seed,1.f,Right,Verts,UVs,Colors);
+
+        // Fixed-size bridge geometry: 3–5 visible simulation frames of hot
+        // stretched gas between the old tip and the departing child. The
+        // width eases to zero before the parent begins its gradual retreat.
+        TArray<FVector> BC;
+        TArray<float> BW;
+        TArray<float> BH;
+        const bool bBridge=T.Life==EFlameLife::Bridging &&
+            T.BridgedChild>=0 && T.BridgedChild<Detached.Num() &&
+            Detached[T.BridgedChild].bAlive;
+        const float BridgeAlpha=bBridge?ASTFireLife::SmoothStep(
+            T.PhaseAge/FMath::Max(.04f,T.BridgeSeconds)):1.f;
+        const FVector BridgeEnd=bBridge?Detached[T.BridgedChild].Position:C.Last();
+        for (int32 K=0;K<BridgeRings;++K)
+        {
+            const float V=float(K)/float(BridgeRings-1);
+            BC.Add(FMath::Lerp(C.Last(),BridgeEnd,V)+Right*
+                (bBridge?FMath::Sin(PI*V)*1.5f:0.f));
+            BW.Add(bBridge?Width*.31f*(1.f-BridgeAlpha)*
+                FMath::Sin(PI*(.08f+.84f*V)):.0f);
+            BH.Add(bBridge?(.88f-.28f*V)*(1.f-BridgeAlpha):0.f);
+        }
+        AddStrip(BC,BW,BH,T.Seed,1.f,Right,Verts,UVs,Colors);
     }
 
     for (const FDetached& D:Detached)
@@ -555,13 +582,15 @@ void UASTFireFreeFlameComponent::UpdateGeometry(bool bCreate)
     }
 
     TArray<int32> Triangles;
-    const int32 StripCount=Tongues.Num()+MaxDetached;
-    Triangles.Reserve((Tongues.Num()*(RingsPerTongue-1)+
+    const int32 StripCount=Tongues.Num()*2+MaxDetached;
+    Triangles.Reserve((Tongues.Num()*(RingsPerTongue+BridgeRings-2)+
         MaxDetached*(RingsPerDetached-1))*6);
     int32 Offset=0;
     for (int32 I=0;I<StripCount;++I)
     {
-        const int32 N=I<Tongues.Num()?RingsPerTongue:RingsPerDetached;
+        const int32 N=I<Tongues.Num()*2
+            ? (I%2==0?RingsPerTongue:BridgeRings)
+            : RingsPerDetached;
         for (int32 K=0;K<N-1;++K)
         {
             const int32 A=Offset+2*K;

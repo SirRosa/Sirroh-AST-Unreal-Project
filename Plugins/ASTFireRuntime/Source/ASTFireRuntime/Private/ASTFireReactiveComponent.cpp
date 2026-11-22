@@ -182,6 +182,8 @@ USceneComponent* UASTFireReactiveComponent::FindTargetComponent() const
     Owner->GetComponents<UMeshComponent>(Meshes);
     UMeshComponent* Best = nullptr;
     float BestRadius = -1.0f;
+    USkeletalMeshComponent* BestSkeleton = nullptr;
+    float SkeletonRadius = -1.f;
 
     for (UMeshComponent* Mesh : Meshes)
     {
@@ -190,14 +192,24 @@ USceneComponent* UASTFireReactiveComponent::FindTargetComponent() const
             Mesh->GetFName() == PreferredMeshComponentName)
             return Mesh;
         const float Radius = Mesh->Bounds.SphereRadius;
-        // Prefer the largest visible mesh; works for static and skeletal geometry.
+        // The torso's skinned mesh is the correct burnable surface. A backpack
+        // or attached static weapon may have larger bounds than the character.
+        if (USkeletalMeshComponent* Skeleton=Cast<USkeletalMeshComponent>(Mesh))
+        {
+            if (Radius > SkeletonRadius)
+            {
+                BestSkeleton=Skeleton;
+                SkeletonRadius=Radius;
+            }
+        }
         if (Radius > BestRadius)
         {
             BestRadius = Radius;
             Best = Mesh;
         }
     }
-    return Best ? static_cast<USceneComponent*>(Best) : Owner->GetRootComponent();
+    return BestSkeleton ? static_cast<USceneComponent*>(BestSkeleton)
+        : (Best ? static_cast<USceneComponent*>(Best) : Owner->GetRootComponent());
 }
 
 UPointLightComponent* UASTFireReactiveComponent::FindOwnedLight() const
