@@ -8,7 +8,7 @@ Backs up every source/config file before overwriting and stops on any failure.
 param(
     [string]$ProjectRoot = 'D:\0 Sirro\Unreal Projects\AST_V1_18',
     [string]$EngineRoot = 'D:\0 Sirro\UE 5.8.1\UE_5.8',
-    [string]$Revision = '8a77a696b82475dcd60dbe9a468424d1259fcc43'
+    [string]$Revision = 'cdfe542e54b74601a9b67d1a51b2c302e3c4cd96'
 )
 
 $ErrorActionPreference = 'Stop'
