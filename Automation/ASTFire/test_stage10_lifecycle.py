@@ -112,7 +112,7 @@ check_tokens(c,(
     "TArray<float> SampleDepths;",
     "float FrontDepth=-BIG_NUMBER;",
     "FrontDepth=FMath::Max(FrontDepth,BestDepth[I]);",
-    "const float Depth=FrontDepth>-BIG_NUMBER*.5f",
+    "float Depth=FrontDepth>-BIG_NUMBER*.5f",
     "float Thermal=FMath::Clamp(",
     "UpdateConnectedSource(bCreate, View, Right)",
     "1,Verts,Tris,Normals,UVs,Colors,Tangents,false",
