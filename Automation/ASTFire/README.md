@@ -156,3 +156,15 @@ to the actual mesh**, not just the actor's bounding sphere/capsule.
   intensity-of-change of thermal life cycles and wind strength.
 - **Unreal build, visual fidelity and actual PIE network/contact testing are
   required before claiming the implementation validated.**
+
+
+### Stage 7 — potwierdzenie kompilacji i instalacji UE 5.8.1 (2026-11-22)
+
+- Zweryfikowany commit źródłowy: `36d2d1738e155da44b1693f75347c5d661eff818`. Dwa przebiegi GitHub Actions zakończone sukcesem.
+- `BuildPlugin` (Win64) na komputerze użytkownika: `STAGE6_BUILD_EXIT=0`. Obie biblioteki DLL wtyczki zostały wdrożone: `STAGE6_DEPLOYED_DLLS=2`.
+- Backup: `Saved/ChatGPT/NiagaraFire/Stage6/Backup_20261122_050545`.
+- Commandlet materiału: `EXIT=0`, `VOLUME_ASSET_CONFIGURED_REQUIRES_USER_VIEW`.
+- Commandlet wariantu podpalającego: `EXIT=0`, `IGNITER_CREATED_REQUIRES_CONTACT_TEST`.
+- Cały instalator: `STAGE6_INSTALL_SUCCESS_VISUAL_AND_CONTACT_TEST_PENDING`, exit 0.
+- Silnik renderujący dopasowuje płomienie do kości oraz próbuje osadzić punkty na powierzchni fizycznej/kolizyjnej mesha. Bez właściwej kolizji następuje awaryjny fallback na obwiednię, co **nie gwarantuje** zgodności z renderowanymi trójkątami każdego mesha.
+- **Brak testów PIE, zweryfikowanej jakości wizualnej, benchmarków 1/10/50 aktorów oraz testów multiplayer.** Kompilacja i commandlety nie potwierdzają, że deformacja, cykle życia i światło spełniają wymagania użytkownika w ruchu.
