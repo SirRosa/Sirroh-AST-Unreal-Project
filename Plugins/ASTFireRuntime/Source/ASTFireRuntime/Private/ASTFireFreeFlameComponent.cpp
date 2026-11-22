@@ -273,6 +273,15 @@ void UASTFireFreeFlameComponent::BuildAnchors()
                 for (int32 Id : Candidates)
                 {
                     const FVector P(LOD.StaticVertexBuffers.PositionVertexBuffer.VertexPosition(Id));
+                    // Nearby skinned roots belong to ONE source. The previous
+                    // farthest-point sampling scattered one flame per limb.
+                    if (!Tongues.IsEmpty())
+                    {
+                        const float PatchRadius=FMath::Clamp(
+                            Skeletal->Bounds.BoxExtent.GetMax()*.42f,38.f,78.f);
+                        if (FVector::DistSquared(P,Tongues[0].RestPosition)>
+                            FMath::Square(PatchRadius)) continue;
+                    }
                     double Distance = Tongues.IsEmpty()
                         ? -FVector::DistSquared(P, FVector::ZeroVector)
                         : TNumericLimits<double>::Max();
@@ -670,12 +679,9 @@ void UASTFireFreeFlameComponent::UpdateGeometry(bool bCreate)
             const float RootBlend=ASTFireLife::SmoothStep(V/.20f);
             const float Tip=FMath::Pow(FMath::Max(0.f,1.f-V),.73f);
             W.Add(Width*RootBlend*Tip*Ridge);
-            // The first 42% of each tongue is drawn by the mantle field.
-            // Its ribbon fades in only AFTER the shared hot body already
-            // supports the same centerline. No separate visible root card.
-            const float Emergence=ASTFireLife::SmoothStep((V-.20f)/.26f);
-            H.Add(Emergence*FMath::Clamp(1.04f-.66f*V + .09f*
-                FMath::Sin(V*8.2f+ShapePhase),.10f,1.f));
+            // Section 1 owns the COMPLETE living flame silhouette.
+            // Section 0 preserves split bridges and detached fragments only.
+            H.Add(0.f);
         }
         if (!T.bActive || T.Age<0.f || Heat<.015f)
             for (float& Temperature:H)Temperature=0.f;
@@ -907,10 +913,7 @@ void UASTFireFreeFlameComponent::UpdateConnectedSource(
         Samples.Add(P);
         SampleDepths.Add(
             float(FVector::DotProduct(Diff,Normal))-DepthCompensation);
-        MinX=FMath::Min(MinX,float(P.X));
-        MaxX=FMath::Max(MaxX,float(P.X));
-        MinY=FMath::Min(MinY,float(P.Y));
-        MaxY=FMath::Max(MaxY,float(P.Y));
+        // Mesh samples are used ONLY for foreground depth, never heat bounds.
         HighestDepth=FMath::Max(HighestDepth,
             float(FVector::DotProduct(Diff,Normal)));
     };
@@ -1033,8 +1036,10 @@ void UASTFireFreeFlameComponent::UpdateConnectedSource(
         float EndV = 0.f;
     };
     TArray<FNeckSegment> Necks;
-    Necks.Reserve(Tongues.Num()*3);
-    static constexpr float NeckFractions[4] = {0.f,.14f,.28f,.42f};
+    Necks.Reserve(Tongues.Num()*(RingsPerTongue-1)+Tongues.Num());
+    // One continuous living field from the root to the moving pointed tip.
+    static constexpr float NeckFractions[9] =
+        {0.f,.125f,.25f,.375f,.5f,.625f,.75f,.875f,1.f};
     auto Project=[&](const FVector& World)
     {
         const FVector Delta=World-Origin;
@@ -1048,7 +1053,7 @@ void UASTFireFreeFlameComponent::UpdateConnectedSource(
         if(!T.bActive || T.Age<0.f || Heat<.015f) continue;
         const FVector& Root=ConnectedRoots[I];
         FVector WorldA=TongueCenterAt(T,Root,NeckFractions[0],Right);
-        for(int32 K=1;K<4;++K)
+        for(int32 K=1;K<RingsPerTongue;++K)
         {
             const float V0=NeckFractions[K-1];
             const float V1=NeckFractions[K];
@@ -1056,10 +1061,17 @@ void UASTFireFreeFlameComponent::UpdateConnectedSource(
             FNeckSegment Neck;
             Neck.Start=Project(WorldA);
             Neck.End=Project(WorldB);
-            Neck.StartRadius=FMath::Clamp(T.CurrentWidth*(.94f-.19f*V0),
-                6.f,28.f);
-            Neck.EndRadius=FMath::Clamp(T.CurrentWidth*(.94f-.19f*V1),
-                6.f,28.f);
+            const float Phase=FMath::Lerp(T.PreviousPhase,T.Phase,
+                ASTFireLife::SmoothStep(T.Age/FMath::Max(.1f,T.GrowSeconds)));
+            auto RadiusAt=[&](float V)
+            {
+                const float Ridge=FMath::Clamp(.85f+.15f*
+                    FMath::Sin(V*13.8f+Phase+.57f*Elapsed),.4f,1.05f);
+                return FMath::Max(0.f,T.CurrentWidth*(.94f-.18f*V)*
+                    FMath::Pow(FMath::Max(0.f,1.f-V),.73f)*Ridge);
+            };
+            Neck.StartRadius=RadiusAt(V0);
+            Neck.EndRadius=RadiusAt(V1);
             Neck.StartDepth=FVector::DotProduct(WorldA-Origin,Normal);
             Neck.EndDepth=FVector::DotProduct(WorldB-Origin,Normal);
             Neck.StartV=V0;
@@ -1080,6 +1092,37 @@ void UASTFireFreeFlameComponent::UpdateConnectedSource(
         }
     }
 
+    // Fuse nearby source roots with thin animated bridges. Far-apart
+    // ignition patches stay separate rather than forming a body-sized blob.
+    for(int32 I=1;I<ConnectedRoots.Num();++I)
+    {
+        const FTongue& T=Tongues[I];
+        if(!T.bActive || T.Age<0.f) continue;
+        int32 Best=INDEX_NONE;
+        float BestDist=FMath::Square(75.f);
+        for(int32 J=0;J<I;++J)
+        {
+            if(!Tongues[J].bActive || Tongues[J].Age<0.f)continue;
+            const float D=float(FVector2D::DistSquared(
+                Project(ConnectedRoots[I]),Project(ConnectedRoots[J])));
+            if(D<BestDist){BestDist=D;Best=J;}
+        }
+        if(Best==INDEX_NONE) continue;
+        FNeckSegment Link;
+        Link.Start=Project(ConnectedRoots[I]);
+        Link.End=Project(ConnectedRoots[Best]);
+        Link.StartRadius=FMath::Clamp(T.CurrentWidth*.58f,4.f,12.f);
+        Link.EndRadius=FMath::Clamp(Tongues[Best].CurrentWidth*.58f,4.f,12.f);
+        Link.StartDepth=FVector::DotProduct(ConnectedRoots[I]-Origin,Normal);
+        Link.EndDepth=FVector::DotProduct(ConnectedRoots[Best]-Origin,Normal);
+        Link.StartV=0.f;
+        Link.EndV=.12f;
+        Necks.Add(Link);
+    }
+    if(Necks.IsEmpty())
+    {
+        MinX=-24.f;MaxX=24.f;MinY=-24.f;MaxY=24.f;
+    }
     const float Extent=FMath::Max(20.f,FMath::Max(MaxX-MinX,MaxY-MinY));
     const float Radius=FMath::Clamp(
         Extent/(FMath::Sqrt(float(Samples.Num()))*1.5f),10.f,26.f);
@@ -1089,36 +1132,7 @@ void UASTFireFreeFlameComponent::UpdateConnectedSource(
     MinX-=Margin;MaxX+=Margin;MinY-=Margin;MaxY+=Margin;
     HighestDepth+=3.f; // fallback only; depth follows nearest skin points
 
-    // Prim MST provides a connected supporting source, including long limbs
-    // and compact fire without a physical mesh. Links are thickened small
-    // capsules, not stand-alone flame cards/independent "tentacles".
-    const int32 N=Samples.Num();
-    TArray<int32> Parent;
-    Parent.Init(INDEX_NONE,N);
-    TArray<uint8> Added;
-    Added.Init(0,N);
-    TArray<float> Nearest;
-    Nearest.Init(BIG_NUMBER,N);
-    Nearest[0]=0.f;
-    for(int32 Iter=0;Iter<N;++Iter)
-    {
-        int32 Best=INDEX_NONE;
-        float Score=BIG_NUMBER;
-        for(int32 J=0;J<N;++J)
-            if(!Added[J] && Nearest[J]<Score)
-            {Best=J;Score=Nearest[J];}
-        if(Best==INDEX_NONE)break;
-        Added[Best]=1;
-        for(int32 J=0;J<N;++J)
-            if(!Added[J])
-            {
-                const float D=FVector2D::DistSquared(
-                    Samples[Best],Samples[J]);
-                if(D<Nearest[J])
-                {Nearest[J]=D;Parent[J]=Best;}
-            }
-    }
-
+    const int32 N=Samples.Num(); // depth-only skinned sample field
     const int32 Width=SourceGridX+1,Height=SourceGridY+1;
     TArray<FVector> Verts;
     TArray<FVector2D> UVs;
@@ -1136,7 +1150,7 @@ void UASTFireFreeFlameComponent::UpdateConnectedSource(
             const FVector2D P(X,Y);
             // Two square roots per grid cell, NOT one per skin sample:
             // ~100x cheaper than repeatedly evaluating distances at 25Hz.
-            float PointD2=BIG_NUMBER,EdgeD2=BIG_NUMBER;
+            // The silhouette is the living tongue union, not depth samples.
             // Interpolate the depth of nearby animated mesh samples, rather
             // than drawing a floating plane at the furthest vertex.
             float BestD2[3]={BIG_NUMBER,BIG_NUMBER,BIG_NUMBER};
@@ -1144,7 +1158,6 @@ void UASTFireFreeFlameComponent::UpdateConnectedSource(
             for(int32 I=0;I<N;++I)
             {
                 const float D2=float(FVector2D::DistSquared(P,Samples[I]));
-                PointD2=FMath::Min(PointD2,D2);
                 if(D2<BestD2[2])
                 {
                     int32 Slot=2;
@@ -1157,37 +1170,15 @@ void UASTFireFreeFlameComponent::UpdateConnectedSource(
                     BestD2[Slot]=D2;
                     BestDepth[Slot]=SampleDepths[I];
                 }
-                const int32 J=Parent[I];
-                if(J==INDEX_NONE)continue;
-                const FVector2D A=Samples[I],B=Samples[J];
-                const FVector2D AB=B-A;
-                const float T=FMath::Clamp(
-                    FVector2D::DotProduct(P-A,AB)/
-                    FMath::Max(1.f,float(AB.SizeSquared())),0.f,1.f);
-                EdgeD2=FMath::Min(EdgeD2,
-                    float((P-(A+AB*T)).SizeSquared()));
             }
-            const float Distance=FMath::Min(
-                FMath::Sqrt(PointD2)-Radius,
-                FMath::Sqrt(EdgeD2)-Radius*.68f);
-            // Small bounded flicker: never a 30cm WPO polygon extrusion.
-            const float Curl=FMath::Sin(X*.091f+Elapsed*6.6f+Seed*.023f)*
-                (2.3f+2.5f*Heat)+
-                FMath::Sin(Y*.123f-X*.054f-Elapsed*9.4f)*1.8f;
-            const float Dist=Distance-Curl;
-            // Previous implementation multiplied Near*Far. Near==0 for
-            // points INSIDE a source, literally hollowing it into a ring.
-            // Fill the combustion body; only the OUTER edge fades to embers.
-            const float Fill=FMath::Clamp(1.f-Dist/Outer,0.f,1.f);
-            const float Core=FMath::Clamp((-Dist)/(Radius+Inner),0.f,1.f);
-            const float Flicker=.88f+
-                .09f*FMath::Sin(Elapsed*7.2f+X*.077f+Y*.039f)+
-                .08f*FMath::Sin(Y*.17f-X*.11f-Elapsed*5.4f);
+            const float Flicker=.90f+.10f*
+                FMath::Sin(Elapsed*7.2f+X*.077f+Y*.039f);
             // A signed capsule union includes all living tongue necks in
             // the SAME mantle. Their geometry and the ribbon use the same
             // TongueCenterAt curve, current length, wind and curl.
             float NeckSupport=0.f;
             float NeckDepth=0.f;
+            float StrokeU=.5f,StrokeV=.2f;
             for(const FNeckSegment& Neck:Necks)
             {
                 // Early cull keeps cost bounded for large animated meshes.
@@ -1209,17 +1200,26 @@ void UASTFireFreeFlameComponent::UpdateConnectedSource(
                 const float Cover=FMath::Clamp(1.f-
                     (FMath::Sqrt(D2)-R)/FadeWidth,0.f,1.f);
                 const float V=FMath::Lerp(Neck.StartV,Neck.EndV,Along);
-                const float Support=Cover*(.48f+.32f*(1.f-V));
+                const float D=FMath::Sqrt(D2);
+                const float Core=FMath::Clamp((R-D)/
+                    FMath::Max(1.f,R),0.f,1.f);
+                const float Support=Cover*(.19f+
+                    .81f*FMath::Pow(Core,.56f))*(1.f-.19f*V);
                 if(Support>NeckSupport)
                 {
                     NeckSupport=Support;
                     NeckDepth=FMath::Lerp(
                         Neck.StartDepth,Neck.EndDepth,Along);
+                    const FVector2D Side=FVector2D(-Axis.Y,Axis.X)
+                        .GetSafeNormal();
+                    StrokeU=FMath::Clamp(.5f+.47f*
+                        float(FVector2D::DotProduct(P-Center,Side))/
+                        FMath::Max(1.f,R),0.f,1.f);
+                    StrokeV=V;
                 }
             }
-            const float BodyHeat=Fill*(.43f+.26f*Core+.13f*Spread);
             const float Thermal=FMath::Clamp(
-                Heat*FMath::Max(BodyHeat,NeckSupport)*Flicker,0.f,1.f);
+                Heat*NeckSupport*Flicker,0.f,1.f);
 
             // Use the same nearest-front-depth rule as ConnectedRoots so
             // ribbon mouths and mantle pixels occupy a single depth surface.
@@ -1232,14 +1232,13 @@ void UASTFireFreeFlameComponent::UpdateConnectedSource(
             // The hot neck has the SAME depth as the strip that will emerge
             // from it: no hidden root on the opposite side of the character.
             if(NeckSupport>.02f)
-                Depth=FMath::Lerp(Depth,NeckDepth,
-                    ASTFireLife::SmoothStep(NeckSupport/.8f));
+                Depth=FMath::Max(Depth,NeckDepth+1.5f);
             const FVector World=Origin+Right*X+Up*Y+Normal*Depth;
             Verts.Add(RenderTransform.InverseTransformPosition(World));
             // UV.x=.5 gives the same bright center as tongue ribbons;
             // UV.y adds the exact same 16-bit stepped palette variation.
-            UVs.Add(FVector2D(.5f,float(Row)/float(SourceGridY)));
-            Colors.Add(FLinearColor(Thermal,.12f,FMath::Frac(
+            UVs.Add(FVector2D(StrokeU,StrokeV));
+            Colors.Add(FLinearColor(Thermal,StrokeV,FMath::Frac(
                 (Seed+Col*7+Row*13)*.017f),1.f));
         }
 

@@ -46,46 +46,46 @@ for item in LOCKS:
         f"{actual} != {item['hash']}"
     )
 
-src = c[c.index("void UASTFireFreeFlameComponent::UpdateConnectedSource("):]
-ribbon = c[c.index("void UASTFireFreeFlameComponent::UpdateGeometry("):
-           c.index("void UASTFireFreeFlameComponent::BuildSourceAnchors()")]
-assert "Necks.Reserve(Tongues.Num()*3)" in src
-assert "static constexpr float NeckFractions[4] = {0.f,.14f,.28f,.42f};" in src
+# Stage15: a single source mesh section owns full living tongue silhouettes.
+src=c[c.index("void UASTFireFreeFlameComponent::UpdateConnectedSource("):
+      c.index("void UASTFireFreeFlameComponent::TickComponent(")]
+ribbon=c[c.index("void UASTFireFreeFlameComponent::UpdateGeometry("):
+         c.index("void UASTFireFreeFlameComponent::BuildSourceAnchors()")]
+assert "Necks.Reserve(Tongues.Num()*(RingsPerTongue-1)+Tongues.Num());" in src
+assert "static constexpr float NeckFractions[9] =" in src
 assert "const FVector WorldB=TongueCenterAt(T,Root,V1,Right);" in src
 assert "Necks.Add(Neck);" in src
-assert "const float Support=Cover*(.48f+.32f*(1.f-V));" in src
-assert "Heat*FMath::Max(BodyHeat,NeckSupport)*Flicker" in src
-assert "Depth=FMath::Lerp(Depth,NeckDepth," in src
-assert "Include(TongueCenterAt(" not in src
-assert "const float Emergence=ASTFireLife::SmoothStep((V-.20f)/.26f);" in ribbon
+assert "const float Support=Cover*(.19f+" in src
+assert "const float Thermal=FMath::Clamp(" in src
+assert "Heat*NeckSupport*Flicker" in src
+assert "Depth=FMath::Max(Depth,NeckDepth+1.5f);" in src
+assert "StrokeU=FMath::Clamp(" in src
+assert "UVs.Add(FVector2D(StrokeU,StrokeV));" in src
+assert "Samples.Add(P)" in src and "TArray<float> SampleDepths;" in src
+assert "Parent[J]=Best" not in src
+assert "FMath::Sqrt(PointD2)" not in src
+assert "FMath::Sqrt(EdgeD2)" not in src
+assert "H.Add(0.f);" in ribbon
+assert ribbon.count("AddStrip(C,W,H")==2  # attached hidden; detached unchanged
+assert ribbon.count("AddStrip(BC,BW,BH")==1
 assert ribbon.index("UpdateConnectedSource(bCreate, View, Right)") < ribbon.index(
     "const FVector Base=ConnectedRoots.IsValidIndex(I)")
+assert "PatchRadius=FMath::Clamp(" in c
 
-def smooth(v):
-    t = max(0., min(1., v))
-    return t * t * (3.-2.*t)
-
-def cover(orthogonal_distance, radius):
-    return max(0., min(1., 1.-(orthogonal_distance-radius)/max(4.,radius*.45)))
-
-# The mantle owns a growing branch through v=.42, and the very same
-# ribbon fades in smoothly from v=.20 to .46. Their supports overlap.
-fractions = [0., .14, .28, .42]
-width = 18.
-for v in fractions:
-    radius = max(6., min(28., width*(.94-.19*v)))
-    assert cover(0., radius) == 1.
-    support = cover(0.,radius)*(.48+.32*(1.-v))
-    assert support > .6
-assert smooth((.125-.20)/.26) == 0.
-assert 0. < smooth((.375-.20)/.26) < 1.
-assert smooth((.5-.20)/.26) == 1.
-assert .375 < fractions[-1] < .5
-
-# Each tongue contributes 3 neck segments; the grid remains fixed topology.
-# This is NOT an FPS performance claim.
-assert 15 * (len(fractions)-1) == 45
+from math import sin
+def radius(v,width=18.):
+    ridge=max(.4,min(1.05,.85+.15*sin(v*13.8)))
+    return max(0.,width*(.94-.18*v)*max(0.,1.-v)**.73*ridge)
+fractions=[0.,.125,.25,.375,.5,.625,.75,.875,1.]
+assert len(fractions)==9
+assert radius(0.)>radius(.5)>radius(.875)>radius(1.)==0.
+def heat_at(distance,r):
+    cover=max(0.,min(1.,1.-(distance-r)/max(4.,r*.45)))
+    core=max(0.,min(1.,(r-distance)/max(1.,r)))
+    return cover*(.19+.81*core**.56)
+assert heat_at(0.,14.)>heat_at(7.,14.)>heat_at(14.,14.)>0
+assert heat_at(21.,14.)==0
 assert "static constexpr int32 SourceGridX = 32;" in Path(
     "Plugins/ASTFireRuntime/Source/ASTFireRuntime/Public/ASTFireFreeFlameComponent.h"
 ).read_text()
-print("Stage14: approved growth/bridging/retraction/detachment unchanged; continuous mantle neck field OK")
+print("Stage15: lifecycle hashes intact, single living field, no full-body MST/blanket")

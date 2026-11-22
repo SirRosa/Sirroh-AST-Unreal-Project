@@ -36,10 +36,10 @@ check_tokens(c,(
     "ConnectedRoots.IsValidIndex(I)",
     "ConnectedRoots.Add(Root+Normal*(Front+6.5f-RootDepth));",
     "const FVector WorldB=TongueCenterAt(T,Root,V1,Right);",
-    "const float Support=Cover*(.48f+.32f*(1.f-V));",
+    "const float Support=Cover*(.19f+",
     "C.Add(TongueCenterAt(T,Base,V,Right));",
-    "Necks.Reserve(Tongues.Num()*3);",
-    "static constexpr float NeckFractions[4] = {0.f,.14f,.28f,.42f};",
+    "Necks.Reserve(Tongues.Num()*(RingsPerTongue-1)+Tongues.Num());",
+    "static constexpr float NeckFractions[9] =",
     "const FVector VisualBase=ConnectedRoots.IsValidIndex(TongueIndex)",
     "Render->CreateMeshSection_LinearColor(",
     "Render->UpdateMeshSection_LinearColor(",
@@ -89,9 +89,8 @@ assert "const float Curl=FMath::Sin(V*8.1f" in c
 assert "const float Curl2=FMath::Sin(V*13.3f" in c
 assert "DepthCompensation=0.f" in c
 
-# Mesh samples are taken from CURRENT skinned geometry and collision hits.
-# The fixed-topology marching-like mask is a single connected source, not
-# independent source cards corresponding to each tongue/bone.
+# Stage15: skin samples provide only FRONT DEPTH. The pixel silhouette is
+# driven entirely by independently lived, tapered active tongue curves.
 check_tokens(c,(
     "BuildSourceAnchors()", "SourceAnchors.Reset()",
     "StaticVertexBuffers.PositionVertexBuffer",
@@ -99,96 +98,50 @@ check_tokens(c,(
     "Transform.InverseTransformPosition(", "Transform.TransformPosition(",
     "if(SourceAnchors.IsEmpty())", "Source->GetComponentTransform()",
     "for(const FTongue& T:Tongues)",
-    "Samples.Add(P)", "Parent[J]=Best", "Nearest[J]=D",
+    "Samples.Add(P)",
     "FVector2D::DistSquared(P,Samples[I])",
-    "float PointD2=BIG_NUMBER,EdgeD2=BIG_NUMBER;",
-    "FMath::Sqrt(PointD2)-Radius", "FMath::Sqrt(EdgeD2)-Radius*.68f",
-    "const float Fill=FMath::Clamp(1.f-Dist/Outer,0.f,1.f);",
-    "const float Core=FMath::Clamp((-Dist)/(Radius+Inner),0.f,1.f);",
-    "Include(Origin); // no donut in free-standing fire",
     "Necks.Add(Neck);",
-    "const float BurnRadius = FMath::Clamp(",
-    "const UPrimitiveComponent* Primitive =",
+    "Necks.Reserve(Tongues.Num()*(RingsPerTongue-1)+Tongues.Num());",
     "TArray<float> SampleDepths;",
     "float FrontDepth=-BIG_NUMBER;",
     "FrontDepth=FMath::Max(FrontDepth,BestDepth[I]);",
     "float Depth=FrontDepth>-BIG_NUMBER*.5f",
-    "float Thermal=FMath::Clamp(",
+    "const float Support=Cover*(.19f+",
+    "Heat*NeckSupport*Flicker",
+    "H.Add(0.f);",
     "UpdateConnectedSource(bCreate, View, Right)",
     "1,Verts,Tris,Normals,UVs,Colors,Tangents,false",
     "1,Verts,Normals,UVs,Colors,Tangents",
 ))
+field=c[c.index("void UASTFireFreeFlameComponent::UpdateConnectedSource("):
+        c.index("void UASTFireFreeFlameComponent::TickComponent(")]
+assert "Parent[J]=Best" not in field
+assert "FMath::Sqrt(PointD2)" not in field
+assert "FMath::Sqrt(EdgeD2)" not in field
+assert field.index("Samples.Add(P)") < field.index("Necks.Add(Neck)")
+assert field.count("Heat*NeckSupport*Flicker")==1
+assert c.count("H.Add(0.f);")==1
 assert "Source.IsValid()" not in c
 assert "Render->UpdateMeshSection_LinearColor(1" not in c  # formatting differs
 assert "return dir*depth" not in c
 assert "FMath::Sin(Cycle * PI)" not in c
 
-# Numerical reference for the connected-source geometry and thermal profile.
-# A single fire source has its own contour even without any source mesh.
+# Numeric field reference: a root broadens into a tall, tapering tongue,
+# rather than creating full-skeleton filled geometry.
+from math import sqrt, sin
 def smooth(x):
-    t=max(0.,min(1.,x))
-    return t*t*(3.-2.*t)
-
-def mst(points):
-    n=len(points)
-    parent=[None]*n
-    visited=[False]*n
-    best=[float("inf")]*n
-    best[0]=0.
-    for _ in range(n):
-        i=min((i for i in range(n) if not visited[i]),
-              key=lambda i:best[i])
-        visited[i]=True
-        for j in range(n):
-            if visited[j]:continue
-            delta=sum((points[i][k]-points[j][k])**2 for k in range(2))
-            if delta<best[j]:
-                best[j]=delta
-                parent[j]=i
-    return parent
-
-def shape_distance(point,points,parent,radius):
-    px,py=point
-    dpoint=min(sqrt((px-x)**2+(py-y)**2)-radius
-               for x,y in points)
-    dedge=float("inf")
-    for i,j in enumerate(parent):
-        if j is None:continue
-        x0,y0=points[i]
-        x1,y1=points[j]
-        dx,dy=x1-x0,y1-y0
-        t=max(0.,min(1.,((px-x0)*dx+(py-y0)*dy)/max(1.,dx*dx+dy*dy)))
-        dedge=min(dedge,sqrt((px-(x0+t*dx))**2+
-                             (py-(y0+t*dy))**2)-radius*.68)
-    return min(dpoint,dedge)
-
-def thermal(d,radius=10,spread=.22):
-    inner=max(5.,min(12.,radius*.65))
-    outer=max(9.,min(18.,radius*.85))
-    fill=max(0.,min(1.,1-d/outer))
-    core=max(0.,min(1.,(-d)/(radius+inner)))
-    return fill*(.43+.26*core+.13*spread)
-
-# Even if the tongues are far apart, their common base has a connecting
-# manifold. This must ALSO hold for the free-standing case (no mesh).
-samples=[(-30.,0.),(-5.,0.),(21.,0.),(47.,0.)]
-parents=mst(samples)
-assert parents[0] is None
-assert all(p is not None for p in parents[1:])
-for x in range(-30,48,3):
-    assert shape_distance((float(x),0.),samples,parents,10.)<0.
-assert thermal(-20.)>.6  # NO hollow center; source core is hot
-assert thermal(-5.)>thermal(0.)>thermal(5.)>0.
-assert thermal(30.)==0.
-assert thermal(-10.)>thermal(10.)
-# Root at the origin plus close roots produce solid fuel, not a donut:
-free_roots=[(0.,0.),(13.,0.),(-10.,8.),(-10.,-8.)]
-free_parents=mst(free_roots)
-assert shape_distance((0.,0.),free_roots,free_parents,10.)<0.
-assert thermal(shape_distance((0.,0.),free_roots,free_parents,10.))>.4
-# A living tongue sprouts from inside that same connected body.
-assert "const FVector Root=SampleRoot(T);" in c
-assert "const float Emergence=ASTFireLife::SmoothStep((V-.20f)/.26f);" in c
+    v=max(0.,min(1.,x))
+    return v*v*(3.-2.*v)
+def radius(v,width=18.):
+    ridge=max(.4,min(1.05,.85+.15*sin(v*13.8)))
+    return max(0.,width*(.94-.18*v)*max(0.,1.-v)**.73*ridge)
+assert radius(0.)>radius(.5)>radius(.8)>radius(1.)==0.
+def heat_at(distance,r):
+    cover=max(0.,min(1.,1.-(distance-r)/max(4.,r*.45)))
+    core=max(0.,min(1.,(r-distance)/max(1.,r)))
+    return cover*(.19+.81*core**.56)
+assert heat_at(0.,14.)>heat_at(7.,14.)>heat_at(14.,14.)>0
+assert heat_at(21.,14.)==0
 
 # Previously approved bridge: multi-frame visible neck followed by eased
 # retraction, not instant parent length teleport.
@@ -220,4 +173,4 @@ check_tokens(install,(
     "STAGE10_BUILD_EXIT=", "Get-Process -Name UnrealEditor",
     "setup_stage10_lifecycle.py", "STAGE10_COMMANDLET=",
 ))
-print("Stage13 filled source: no hollow rings, root blending, mesh depth and backup checks OK")
+print("Stage15 one living flame silhouette: lifecycle, mesh depths, heat shape and backup checks OK")

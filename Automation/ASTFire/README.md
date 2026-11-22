@@ -507,3 +507,26 @@ geodesic burning simulation, or 3D fluid dynamics.
   adjacency; the source remains camera-facing and mesh-aware,
   not a full 3D fluid solver. Never infer quality from static checks;
   user PIE inspection and multi-actor profiling are necessary.
+
+
+### Stage15 — live source = full flame curves (2026-11-22)
+
+User screenshots showed an opaque full-body yellow blanket and independent
+ribbons. The previous screen-space MST of dozens of skinned vertices was
+used for **shape** as well as depth and was the main cause of the oversized
+sphere-like mantle. Stage15 keeps those samples **only for depth** and
+computes source coverage exclusively from the complete 0–100% growth path
+of each skinned, wind-curved, tapering tongue. The original attached ribbon
+section is invisible, so the source and its living tongues are genuinely
+one masked image, not two overlaid visual objects. Bridged detachment and
+world-space detached geometry are preserved exactly as before.
+
+- Nearby skeletal roots remain in a localized 38–78 cm patch on the actual
+  animated mesh, instead of being forcibly distributed over all distant limbs.
+- Only short root links join close tongue bases. There is no thermal body
+  generated from arbitrary mesh samples or cross-body MST edges.
+- Same masked pixel-art tongue shader and fixed 32×44 source grid.
+- Updated Stage10 and Stage14/15 tests keep independent generation,
+  bridging, retraction, split trajectories and heat palette intact.
+- This is still a 2.5D camera-facing style, **not a 3D fluid simulation**.
+- Visual appearance and gameplay must be checked by the user in PIE.
