@@ -246,3 +246,19 @@ Installer: `Automation/ASTFire/deploy_stage9_windows.ps1` builds exact GitHub
 commit in TEMP, backs up all owned source/material/Blueprints and only deploys
 if UnrealEditor is closed. It runs all three existing asset configuration
 commandlets.
+
+
+### Stage 9 — sprawdzona instalacja na UE 5.8.1 (2026-11-22)
+
+- Kod renderera z przypiętego commita `b07c05fbc292f4eb6f183c93ddf9a62a6907f365`.
+- Dwa workflowy GitHub Actions zakończone `success`; Win64 `BuildPlugin EXIT=0`.
+- Wdrożono dwie DLL (`STAGE9_DEPLOYED_DLLS=2`), backup:
+  `Saved/ChatGPT/NiagaraFire/Stage9/Backup_20261122_055140`.
+- Trzy commandlety zakończone `EXIT=0`:
+  - `setup_stage4_volume.py` — `VOLUME_ASSET_CONFIGURED_REQUIRES_USER_VIEW`
+  - `setup_stage6_igniter.py` — `IGNITER_CREATED_REQUIRES_CONTACT_TEST`
+  - `setup_stage8_surface.py` — `SURFACE_FIRE_CONFIGURED_REQUIRES_VISUAL_TEST`
+- Instalator kończy `STAGE9_INSTALL_SUCCESS_VISUAL_AND_CONTACT_TEST_PENDING`, exit 0.
+- Krytyczne zachowanie: `bUseLegacyHeatGrid = false` jest domyślne i ustawione w skrypcie BP. W normalnym trybie **nie instancjonujemy** poprzednich prostokątnych `FireVolumes` na kościach. Zamiast nich `UASTFireFreeFlameComponent` próbuje próbkując renderowane, skórkowane wierzchołki (LOD0). Free-space embers mają współrzędne świata i czas życia, a nie granice siatki 22×30.
+- Ograniczenia: kilka płaskich segmentów w ramach każdego języka nadal renderuje się jako dwustronne billboarding quady (nie pełny solver CFD). Płonący StaticMesh bez użytecznej kolizji może mieć jedynie materiał powierzchniowy. Brak dostępnego CPU skin vertex buffer w buildzie może zablokować sampling geometryczny; nie należy wtedy sztucznie przenosić płomieni na kości.
+- **Niepotwierdzone**: rzeczywisty wygląd, animacja i kolizje w PIE, multiplayer oraz profilowanie GPU/CPU. Testy CI i commandlety nie są dowodem jakości wizualnej.
