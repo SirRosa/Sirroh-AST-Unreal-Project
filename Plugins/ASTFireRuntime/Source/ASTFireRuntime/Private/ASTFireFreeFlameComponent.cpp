@@ -106,7 +106,12 @@ void UASTFireFreeFlameComponent::OnRegister()
     Render->SetMaterial(2, Material); // tiny bright embers in matching palette
     SmokeMaterial = LoadObject<UMaterialInterface>(nullptr,
         TEXT("/Game/VFX/Fire/Materials/M_AST_FireSmoke.M_AST_FireSmoke"));
-    if (IsValid(SmokeMaterial)) Render->SetMaterial(3, SmokeMaterial);
+    if (IsValid(SmokeMaterial))
+        Render->SetMaterial(3, SmokeMaterial);
+    else
+        UE_LOG(LogTemp, Error, TEXT(
+            "AST Fire: missing M_AST_FireSmoke; smoke section disabled for %s"),
+            *GetOwner()->GetName());
     Render->RegisterComponent();
 
     Sparks.SetNum(MaxSparks);
@@ -1167,9 +1172,22 @@ void UASTFireFreeFlameComponent::UpdateGeometry(bool bCreate)
                         Up*(DY+Warp*DX)*Radius*.82f;
                     MV.Add(RenderTransform.InverseTransformPosition(P));
                     MU.Add(FVector2D(U,V));
+                    // CPU alpha mask: an irregular stepped smoke edge,
+                    // rather than a broad translucent square/checker.
+                    // Native material only reads vertex alpha.
+                    const float Radial=FMath::Sqrt(DX*DX+DY*DY);
+                    const float Density=FMath::Clamp(
+                        (1.12f-Radial)/.95f,0.f,1.f);
+                    const float Bands=FMath::FloorToFloat(
+                        Density*4.f+.001f)*.25f;
+                    const float EdgeWobble=FMath::Clamp(.88f+
+                        .12f*FMath::Sin(Phase+DX*5.3f+DY*6.9f),
+                        .65f,1.f);
+                    const float Opacity=S.bAlive
+                        ? Fade*(.58f+.32f*S.EmissionHeat)*
+                            Bands*EdgeWobble : 0.f;
                     MC.Add(FLinearColor(S.EmissionHeat,V,
-                        FMath::Frac(S.Seed*.017f),
-                        S.bAlive?Fade*(.34f+.36f*S.EmissionHeat):0.f));
+                        FMath::Frac(S.Seed*.017f),Opacity));
                 }
             if (bCreate)
                 for (int32 Y=0;Y<SmokeGrid-1;++Y)
@@ -1187,8 +1205,11 @@ void UASTFireFreeFlameComponent::UpdateGeometry(bool bCreate)
         MN.Init(FVector::ForwardVector,MV.Num());
         MX.Init(FProcMeshTangent(1,0,0),MV.Num());
         if (bCreate)
+        {
             Render->CreateMeshSection_LinearColor(
                 3,MV,MT,MN,MU,MC,MX,false);
+            Render->SetMaterial(3,SmokeMaterial);
+        }
         else
             Render->UpdateMeshSection_LinearColor(
                 3,MV,MN,MU,MC,MX);
