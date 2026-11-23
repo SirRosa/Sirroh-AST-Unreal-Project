@@ -1128,26 +1128,38 @@ void UASTFireFreeFlameComponent::UpdateGeometry(bool bCreate)
         Render->UpdateMeshSection_LinearColor(
             2,SV,SN,SU,SC,SX);
 
-    // Stage24: 5x5 warped billboard surface per evolving smoke fragment.
-    // Every puff has fixed topology, independent velocity and thermal fade.
+    // A smoke particle is three contiguous solid, slightly offset disks:
+    // charcoal rim, grey-green body and a dark core. Each disk has angular,
+    // mildly quantized edges. There are NO alpha gradients or textures, and
+    // every disk keeps the same topology to use UpdateMeshSection per tick.
     if (IsValid(SmokeMaterial))
     {
         TArray<FVector> MV;
         TArray<FVector2D> MU;
         TArray<FLinearColor> MC;
         TArray<int32> MT;
-        MV.Reserve(MaxSmoke*SmokeGrid*SmokeGrid);
-        MU.Reserve(MaxSmoke*SmokeGrid*SmokeGrid);
-        MC.Reserve(MaxSmoke*SmokeGrid*SmokeGrid);
-        if (bCreate) MT.Reserve(MaxSmoke*(SmokeGrid-1)*(SmokeGrid-1)*6);
+        constexpr int32 VerticesPerLayer = SmokeSegments + 1;
+        MV.Reserve(MaxSmoke * SmokeLayers * VerticesPerLayer);
+        MU.Reserve(MaxSmoke * SmokeLayers * VerticesPerLayer);
+        MC.Reserve(MaxSmoke * SmokeLayers * VerticesPerLayer);
+        if (bCreate)
+            MT.Reserve(MaxSmoke * SmokeLayers * SmokeSegments * 3);
+        const FLinearColor Palette[SmokeLayers] = {
+            FLinearColor(.085f,.092f,.084f,1.f), // darkest rim
+            FLinearColor(.151f,.158f,.145f,1.f), // muted middle
+            FLinearColor(.109f,.117f,.104f,1.f)  // soot core
+        };
+        const float LayerScale[SmokeLayers] = {1.f,.70f,.38f};
         for (int32 I=0;I<MaxSmoke;++I)
         {
             const FSmoke& S=Smoke[I];
-            const float Age=S.bAlive?FMath::Clamp(
-                S.Age/FMath::Max(.05f,S.Lifetime),0.f,1.f):1.f;
-            const float Birth=ASTFireLife::SmoothStep(Age/.16f);
-            const float Fade=(1.f-Age)*(1.f-Age)*Birth;
-            const float Radius=S.Radius*(.62f+1.65f*Age);
+            const float Age=S.bAlive ? FMath::Clamp(
+                S.Age/FMath::Max(.05f,S.Lifetime),0.f,1.f) : 1.f;
+            // Grow and vanish by silhouette size, never transparency.
+            const float Birth=FMath::Clamp(Age/.14f,0.f,1.f);
+            const float Exit=FMath::Clamp((1.f-Age)/.24f,0.f,1.f);
+            const float Size=S.bAlive ? Birth*Exit : 0.f;
+            const float Radius=S.Radius*(.84f+1.24f*Age)*Size;
             const FVector Ray=(CameraLocation-S.Position).GetSafeNormal();
             const FVector N=Ray.IsNearlyZero()?View:Ray;
             FVector Side=(CameraRight-N*
@@ -1157,48 +1169,49 @@ void UASTFireFreeFlameComponent::UpdateGeometry(bool bCreate)
             if (Side.IsNearlyZero())
                 Side=FVector::CrossProduct(FVector::ForwardVector,N).GetSafeNormal();
             const FVector Up=FVector::CrossProduct(N,Side).GetSafeNormal();
-            for (int32 Y=0;Y<SmokeGrid;++Y)
-                for (int32 X=0;X<SmokeGrid;++X)
+            for (int32 Layer=0;Layer<SmokeLayers;++Layer)
+            {
+                // Offset each layer in its billboard plane and depth to
+                // preserve crisp, non-Z-fighting blocks while drifting.
+                const float Phase=S.Seed*.23f+S.Age*(1.45f+
+                    .27f*Layer);
+                const FVector Center=S.Position+N*(Layer*.75f)+
+                    Side*(Layer*1.8f*FMath::Sin(Phase*.57f))+
+                    Up*(Layer*1.35f*FMath::Cos(Phase*.71f));
+                const int32 First=MV.Num();
+                MV.Add(RenderTransform.InverseTransformPosition(Center));
+                MU.Add(FVector2D(.5f,.5f));
+                MC.Add(Palette[Layer]*FLinearColor(1.f,1.f,1.f,Size>0.f?1.f:0.f));
+                for (int32 K=0;K<SmokeSegments;++K)
                 {
-                    const float U=float(X)/float(SmokeGrid-1);
-                    const float V=float(Y)/float(SmokeGrid-1);
-                    const float DX=U*2.f-1.f, DY=V*2.f-1.f;
-                    const float Phase=S.Seed*.18f+S.Age*4.3f;
-                    const float Warp=.12f*FMath::Sin(
-                        DX*7.1f+DY*5.8f+Phase)+.07f*
-                        FMath::Sin(DY*11.4f-DX*3.7f-Phase*.71f);
-                    const FVector P=S.Position+
-                        Side*(DX+Warp*DY)*Radius+
-                        Up*(DY+Warp*DX)*Radius*.82f;
+                    const float Angle=2.f*PI*float(K)/float(SmokeSegments);
+                    const float Wave=.92f+
+                        .11f*FMath::Sin(Angle*3.f+Phase)+
+                        .08f*FMath::Sin(Angle*5.f-Phase*.7f)+
+                        .08f*(ASTFireLife::Hash(S.Seed*.33f+K*1.91f)-.5f);
+                    const float R=Radius*LayerScale[Layer]*
+                        FMath::Clamp(Wave,.72f,1.16f);
+                    // ~2 cm palette-pixel edge; quantize in camera plane.
+                    constexpr float PixelStep=2.f;
+                    const float DX=FMath::RoundToFloat(
+                        R*FMath::Cos(Angle)/PixelStep)*PixelStep;
+                    const float DY=FMath::RoundToFloat(
+                        R*FMath::Sin(Angle)/PixelStep)*PixelStep;
+                    const FVector P=Center+Side*DX+Up*(DY*.88f);
                     MV.Add(RenderTransform.InverseTransformPosition(P));
-                    MU.Add(FVector2D(U,V));
-                    // CPU alpha mask: an irregular stepped smoke edge,
-                    // rather than a broad translucent square/checker.
-                    // Native material only reads vertex alpha.
-                    const float Radial=FMath::Sqrt(DX*DX+DY*DY);
-                    const float Density=FMath::Clamp(
-                        (1.12f-Radial)/.95f,0.f,1.f);
-                    const float Bands=FMath::FloorToFloat(
-                        Density*4.f+.001f)*.25f;
-                    const float EdgeWobble=FMath::Clamp(.88f+
-                        .12f*FMath::Sin(Phase+DX*5.3f+DY*6.9f),
-                        .65f,1.f);
-                    const float Opacity=S.bAlive
-                        ? Fade*(.58f+.32f*S.EmissionHeat)*
-                            Bands*EdgeWobble : 0.f;
-                    MC.Add(FLinearColor(S.EmissionHeat,V,
-                        FMath::Frac(S.Seed*.017f),Opacity));
+                    MU.Add(FVector2D(.5f+.5f*FMath::Cos(Angle),
+                                    .5f+.5f*FMath::Sin(Angle)));
+                    MC.Add(Palette[Layer]*FLinearColor(
+                        1.f,1.f,1.f,Size>0.f?1.f:0.f));
                 }
-            if (bCreate)
-                for (int32 Y=0;Y<SmokeGrid-1;++Y)
-                    for (int32 X=0;X<SmokeGrid-1;++X)
+                if (bCreate)
+                    for (int32 K=0;K<SmokeSegments;++K)
                     {
-                        const int32 A=I*SmokeGrid*SmokeGrid+
-                            Y*SmokeGrid+X;
-                        MT.Add(A);MT.Add(A+SmokeGrid);MT.Add(A+1);
-                        MT.Add(A+1);MT.Add(A+SmokeGrid);
-                        MT.Add(A+SmokeGrid+1);
+                        MT.Add(First);
+                        MT.Add(First+K+1);
+                        MT.Add(First+((K+1)%SmokeSegments)+1);
                     }
+            }
         }
         TArray<FVector> MN;
         TArray<FProcMeshTangent> MX;

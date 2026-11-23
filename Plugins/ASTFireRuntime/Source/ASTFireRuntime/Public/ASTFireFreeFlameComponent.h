@@ -40,7 +40,8 @@ private:
     static constexpr int32 MaxDetached = 16;
     static constexpr int32 MaxSparks = 24;
     static constexpr int32 MaxSmoke = 18;
-    static constexpr int32 SmokeGrid = 5;
+    static constexpr int32 SmokeSegments = 12; // angular hard-edged silhouette
+    static constexpr int32 SmokeLayers = 3;  // discrete, opaque shades
     static constexpr int32 RingsPerDetached = 5;
     static constexpr int32 BridgeRings = 4;
     static constexpr int32 SurfaceClusters = 8;
