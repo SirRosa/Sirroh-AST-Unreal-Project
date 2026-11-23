@@ -11,12 +11,17 @@ for key in (
 ): assert key in h,key
 for key in (
     "Sparks.SetNum(MaxSparks);",
-    "Render->SetMaterial(2, Material);",
+    "Render->SetMaterial(2, SparkMaterial);",
     "void UASTFireFreeFlameComponent::UpdateSparks(float Dt)",
     "SparkSpawnDebt",
     "Heat<.15f",
     "T.WorldVelocity*.16f+Wind*.07f",
     "S.Position+=S.Velocity*Dt",
+    "const FTongue* Chosen=nullptr;",
+    "ConnectedRoots.IsValidIndex(Index)",
+    "S.Size=2.8f+2.9f*Other;",
+    "S.EmissionHeat=FMath::Clamp(Heat*",
+    "if (IsValid(SparkMaterial)) Render->SetMaterial(2,SparkMaterial);",
     "const float Fade=S.bAlive?FMath::Pow(",
     "SV.Reserve(MaxSparks*4)",
     "Render->CreateMeshSection_LinearColor(",
@@ -36,14 +41,14 @@ assert "DetachedColumns=7;" in c
 assert 24*4==96 and 24*2==48
 # Reference particle count stays bounded even if the spawn debt is huge.
 def births(debt,dt,heat,energy):
-    debt=min(3.,debt+dt*(2.2+9*heat*max(.2,min(1.2,energy))))
-    born=min(2,int(debt))
+    debt=min(4.,debt+dt*(6.+16*heat*max(.2,min(1.2,energy))))
+    born=min(3,int(debt))
     return debt-born,born
 d=0.
 count=0
 for _ in range(250):
     d,n=births(d,.04,1.,.75)
-    assert 0<=n<=2 and 0<=d<=3.
+    assert 0<=n<=3 and 0<=d<=4.
     count+=n
-assert 0<count<250*2
+assert 0<count<250*3
 print("Stage23: finite sparks, velocity/wind, thermal and detached regression OK")

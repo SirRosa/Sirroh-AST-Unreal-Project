@@ -103,7 +103,16 @@ void UASTFireFreeFlameComponent::OnRegister()
     Render->SetupAttachment(GetOwner()->GetRootComponent());
     Render->SetMaterial(0, Material);
     Render->SetMaterial(1, Material); // unified mesh-bound source, same pixels
-    Render->SetMaterial(2, Material); // tiny bright embers in matching palette
+    SparkMaterial = LoadObject<UMaterialInterface>(nullptr,
+        TEXT("/Game/VFX/Fire/Materials/M_AST_FireSpark.M_AST_FireSpark"));
+    if (IsValid(SparkMaterial))
+        Render->SetMaterial(2, SparkMaterial);
+    else
+    {
+        Render->SetMaterial(2, Material); // conservative fallback
+        UE_LOG(LogTemp, Warning,TEXT(
+            "AST Fire: missing M_AST_FireSpark on %s"),*GetOwner()->GetName());
+    }
     SmokeMaterial = LoadObject<UMaterialInterface>(nullptr,
         TEXT("/Game/VFX/Fire/Materials/M_AST_FireSmoke.M_AST_FireSmoke"));
     if (IsValid(SmokeMaterial))
@@ -141,6 +150,7 @@ void UASTFireFreeFlameComponent::OnUnregister()
     Smoke.Reset();
     SmokeSpawnDebt = 0.f;
     SmokeMaterial = nullptr;
+    SparkMaterial = nullptr;
     bGenerated = false;
     Super::OnUnregister();
 }
@@ -718,31 +728,49 @@ void UASTFireFreeFlameComponent::UpdateSparks(float Dt)
         S.Position+=S.Velocity*Dt;
     }
     if (!bVisible || Heat<.15f || Tongues.IsEmpty()) return;
-    SparkSpawnDebt=FMath::Min(3.f,SparkSpawnDebt+
-        Dt*(2.2f+9.f*Heat*FMath::Clamp(Energy,.2f,1.2f)));
-    const int32 Born=FMath::Min(2,FMath::FloorToInt(SparkSpawnDebt));
+    // The flame is animated: some tongues rest while others burn. Always
+    // sample an ACTIVE tongue, otherwise discarded births made sparks rare.
+    SparkSpawnDebt=FMath::Min(4.f,SparkSpawnDebt+
+        Dt*(6.f+16.f*Heat*FMath::Clamp(Energy,.2f,1.2f)));
+    const int32 Born=FMath::Min(3,FMath::FloorToInt(SparkSpawnDebt));
     SparkSpawnDebt-=Born;
     for (int32 I=0;I<Born;++I)
     {
-        FSpark& S=Sparks[SparkCursor%MaxSparks];
         const int32 Salt=SparkCursor++;
-        const FTongue& T=Tongues[Salt%Tongues.Num()];
-        if (!T.bActive || T.Age<0.f) { S.bAlive=false; continue; }
+        const int32 Start=Salt%Tongues.Num();
+        const FTongue* Chosen=nullptr;
+        int32 Index=INDEX_NONE;
+        for (int32 J=0;J<Tongues.Num();++J)
+        {
+            const int32 Candidate=(Start+J)%Tongues.Num();
+            if (Tongues[Candidate].bActive && Tongues[Candidate].Age>=0.f)
+            {
+                Chosen=&Tongues[Candidate];
+                Index=Candidate;
+                break;
+            }
+        }
+        if (!Chosen) continue;
+        const FTongue& T=*Chosen;
+        FSpark& S=Sparks[Salt%MaxSparks];
         const float Random=ASTFireLife::Hash(float(Salt)+T.Seed*.91f);
         const float Other=ASTFireLife::Hash(float(Salt)*.71f+T.Seed);
-        const FVector Root=SampleRoot(T);
+        // The mantle root is already camera-front and skinned; emitting from
+        // it prevents embers from hiding INSIDE a character or source mesh.
+        const FVector Root=ConnectedRoots.IsValidIndex(Index)
+            ? ConnectedRoots[Index] : SampleRoot(T);
         S.Seed=float(Salt)*.731f+T.Seed*.38f;
         S.Position=Root+FVector::UpVector*
-            (T.CurrentLength*(.28f+.55f*Random));
+            (T.CurrentLength*(.38f+.50f*Random));
         S.Position+=FVector(
             (Other-.5f)*T.CurrentWidth,
-            (Random-.5f)*T.CurrentWidth,
-            0.f);
+            (Random-.5f)*T.CurrentWidth,0.f);
         S.Velocity=FVector(
-            (Other-.5f)*170.f,(Random-.5f)*150.f,
-            120.f+170.f*Random)+T.WorldVelocity*.16f+Wind*.07f;
-        S.Size=1.1f+2.1f*Other;
-        S.Lifetime=.21f+.45f*Random;
+            (Other-.5f)*200.f,(Random-.5f)*180.f,
+            145.f+185.f*Random)+T.WorldVelocity*.16f+Wind*.07f;
+        S.Size=2.8f+2.9f*Other; // legible 2.5D heat pixels, not dust motes
+        S.Lifetime=.35f+.50f*Random;
+        S.EmissionHeat=FMath::Clamp(Heat*(.86f+.14f*Other),.35f,1.f);
         S.Age=0.f;
         S.bAlive=true;
     }
@@ -1069,7 +1097,7 @@ void UASTFireFreeFlameComponent::UpdateGeometry(bool bCreate)
     else
         Render->UpdateMeshSection_LinearColor(0,Verts,Normals,UVs,Colors,Tangents);
 
-    // Stage23: compact pixel-hot sparks, in fixed-size quad section 2.
+    // Stage30: distinct high-contrast hot pixels, fixed-size quad section 2.
     // Even dead particles contribute degenerate, fully masked geometry;
     // section topology never changes at runtime.
     TArray<FVector> SV;
@@ -1106,9 +1134,16 @@ void UASTFireFreeFlameComponent::UpdateGeometry(bool bCreate)
         {
             SV.Add(RenderTransform.InverseTransformPosition(World[J]));
             SU.Add(FVector2D((J%2)?1.f:0.f,(J/2)?1.f:0.f));
-            SC.Add(FLinearColor(Heat*Fade*(.87f+.13f*
-                ASTFireLife::Hash(S.Seed)),0.15f,
-                FMath::Frac(S.Seed*.017f),1.f));
+            // Fixed three-shade palette, no transparency: shrink to zero
+            // geometrically; keep the heat from the emission frame.
+            const float Temperature=S.EmissionHeat*Fade;
+            const FLinearColor SparkColor=Temperature>.63f
+                ? FLinearColor(1.f,.84f,.28f,1.f)
+                : Temperature>.29f
+                    ? FLinearColor(1.f,.40f,.055f,1.f)
+                    : FLinearColor(.80f,.115f,.019f,1.f);
+            SC.Add(FLinearColor(SparkColor.R,SparkColor.G,
+                SparkColor.B,S.bAlive && Fade>.03f ? 1.f : 0.f));
         }
         if(bCreate)
         {
@@ -1122,8 +1157,11 @@ void UASTFireFreeFlameComponent::UpdateGeometry(bool bCreate)
     SN.Init(FVector::ForwardVector,SV.Num());
     SX.Init(FProcMeshTangent(1,0,0),SV.Num());
     if (bCreate)
+    {
         Render->CreateMeshSection_LinearColor(
             2,SV,ST,SN,SU,SC,SX,false);
+        if (IsValid(SparkMaterial)) Render->SetMaterial(2,SparkMaterial);
+    }
     else
         Render->UpdateMeshSection_LinearColor(
             2,SV,SN,SU,SC,SX);

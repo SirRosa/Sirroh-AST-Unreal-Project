@@ -116,6 +116,7 @@ private:
     {
         FVector Position = FVector::ZeroVector;
         FVector Velocity = FVector::ZeroVector;
+        float EmissionHeat = 1.f; // retained after the source cools
         float Age = 0.f;
         float Lifetime = .4f;
         float Size = 2.f;
@@ -166,6 +167,8 @@ private:
     TObjectPtr<UMaterialInterface> Material = nullptr;
     UPROPERTY(Transient)
     TObjectPtr<UMaterialInterface> SmokeMaterial = nullptr;
+    UPROPERTY(Transient)
+    TObjectPtr<UMaterialInterface> SparkMaterial = nullptr;
     UPROPERTY(Transient)
     TObjectPtr<UMaterialInstanceDynamic> SurfaceMID = nullptr;
 

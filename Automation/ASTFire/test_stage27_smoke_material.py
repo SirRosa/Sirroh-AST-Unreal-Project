@@ -11,5 +11,5 @@ assert 'EDIT.connect_material_property(vertex,"",' in m
 assert "const FLinearColor Palette[SmokeLayers]" in c
 assert "Palette[Layer]" in c
 assert "const float Size=S.bAlive ? Birth*Exit : 0.f;" in c
-assert "const float Radius" not in c[c.index("const FLinearColor Palette[SmokeLayers]"):c.index("    // Section 1 was authored")]
+assert "const float Radius=S.Radius*" in c
 print("Stage27->29: native masked smoke graph, no alpha blending and RGB palette")

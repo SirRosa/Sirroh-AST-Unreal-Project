@@ -11,7 +11,9 @@ for s in (
     "float CharringRate = 1.5f;",
     "M_AST_FireChar",
     "DOREPLIFETIME(UASTFireReactiveComponent, CharProgress)",
-    "GetOwner()->HasAuthority() && bEnableCharring && bStartLit",
+    "if (GetOwner()->HasAuthority() && bEnableCharring)",
+    "if (bStartLit)",
+
     "DeltaTime*FMath::Max(0.f,Intensity)",
     "FName(TEXT(\"CharProgress\")),CharProgress",
     "FName(TEXT(\"CharGlow\"))",
