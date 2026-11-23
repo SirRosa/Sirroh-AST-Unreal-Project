@@ -11,12 +11,17 @@ for x in ('M_AST_FireSpark.M_AST_FireSpark','Render->SetMaterial(2, SparkMateria
           'if (Tongues[Candidate].bActive && Tongues[Candidate].Age>=0.f)',
           'ConnectedRoots.IsValidIndex(Index)',
           'S.Size=2.8f+2.9f*Other;',
-          'S.Lifetime=.35f+.50f*Random;',
+          'S.Lifetime=.68f+.70f*Random;',
+          'S.WaveSide=FVector::CrossProduct(',
+          'S.WaveAmplitude=11.f+21.f*Random;',
+          'S.WaveFrequency=6.4f+5.2f*Other;',
           'const float Temperature=S.EmissionHeat*Fade;',
           'FLinearColor(1.f,.84f,.28f,1.f)',
           'FLinearColor(1.f,.40f,.055f,1.f)',
           'FLinearColor(.80f,.115f,.019f,1.f)',
           'SparkSpawnDebt=FMath::Min(4.f,',
+          'const float Angle=2.f*PI*ASTFireLife::Hash(',
+          'Outward*(T.CurrentWidth*(.45f+.40f*Other))',
           'S.EmissionHeat=FMath::Clamp(Heat*'):
     assert x in c,x
 for x in ('BLEND_MASKED','MP_OPACITY_MASK','MP_EMISSIVE_COLOR',

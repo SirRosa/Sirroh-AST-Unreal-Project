@@ -717,6 +717,9 @@ void UASTFireFreeFlameComponent::UpdateSurfaceMap(float Dt)
 
 // Stage23: independent short-lived ember pool. Does not modify tongue/bridge
 // cycles or the approved detached vortices. Fixed topology and 25 Hz updates.
+// Stage32: surface-perimeter sparks, not vertically-launched projectiles.
+// The actual position is the advected point PLUS a perpendicular harmonic
+// oscillation; tangential directions include left/right/diagonals and top.
 void UASTFireFreeFlameComponent::UpdateSparks(float Dt)
 {
     for (FSpark& S:Sparks)
@@ -724,19 +727,40 @@ void UASTFireFreeFlameComponent::UpdateSparks(float Dt)
         if (!S.bAlive) continue;
         S.Age+=Dt;
         if (S.Age>=S.Lifetime) { S.bAlive=false; continue; }
-        const float Phase=S.Seed*.17f+S.Age*(12.f+S.Seed*.003f);
-        const FVector Whirl(
-            FMath::Sin(Phase)*75.f,FMath::Cos(Phase*1.37f)*55.f,
-            225.f+45.f*FMath::Sin(Phase*.67f));
-        S.Velocity+=(Whirl+Wind*.12f)*Dt;
-        S.Velocity=S.Velocity.GetClampedToMaxSize(750.f);
-        S.Position+=S.Velocity*Dt;
+        // The base flight may arc upward slowly. It is NOT forced onto Z.
+        S.Velocity+=(FVector::UpVector*38.f+Wind*.085f-
+            S.Velocity*.22f)*Dt;
+        S.Velocity=S.Velocity.GetClampedToMaxSize(560.f);
+        S.DriftPosition+=S.Velocity*Dt;
+        const float Offset=FMath::Sin(
+            S.WavePhase+S.Age*S.WaveFrequency)-
+            FMath::Sin(S.WavePhase);
+        const float Second=.28f*FMath::Sin(
+            S.WavePhase*.71f+S.Age*S.WaveFrequency*.49f)-
+            .28f*FMath::Sin(S.WavePhase*.71f);
+        S.Position=S.DriftPosition+
+            S.WaveSide*(S.WaveAmplitude*(Offset+Second));
     }
     if (!bVisible || Heat<.15f || Tongues.IsEmpty()) return;
-    // The flame is animated: some tongues rest while others burn. Always
-    // sample an ACTIVE tongue, otherwise discarded births made sparks rare.
+
+    FVector CameraScreenRight=FVector::RightVector;
+    FVector CameraForward=FVector::ForwardVector;
+    if (const UWorld* World=GetWorld())
+        if (const APlayerController* PC=World->GetFirstPlayerController())
+            if (const APlayerCameraManager* Cam=PC->PlayerCameraManager)
+            {
+                CameraScreenRight=Cam->GetCameraRotation()
+                    .RotateVector(FVector::RightVector);
+                CameraForward=Cam->GetCameraRotation()
+                    .RotateVector(FVector::ForwardVector);
+            }
+    CameraScreenRight.Z=0.f;
+    CameraScreenRight=CameraScreenRight.GetSafeNormal();
+    if (CameraScreenRight.IsNearlyZero())
+        CameraScreenRight=FVector::RightVector;
+
     SparkSpawnDebt=FMath::Min(4.f,SparkSpawnDebt+
-        Dt*(6.f+16.f*Heat*FMath::Clamp(Energy,.2f,1.2f)));
+        Dt*(7.f+17.f*Heat*FMath::Clamp(Energy,.2f,1.2f)));
     const int32 Born=FMath::Min(3,FMath::FloorToInt(SparkSpawnDebt));
     SparkSpawnDebt-=Born;
     for (int32 I=0;I<Born;++I)
@@ -760,21 +784,34 @@ void UASTFireFreeFlameComponent::UpdateSparks(float Dt)
         FSpark& S=Sparks[Salt%MaxSparks];
         const float Random=ASTFireLife::Hash(float(Salt)+T.Seed*.91f);
         const float Other=ASTFireLife::Hash(float(Salt)*.71f+T.Seed);
-        // The mantle root is already camera-front and skinned; emitting from
-        // it prevents embers from hiding INSIDE a character or source mesh.
+        const float Angle=2.f*PI*ASTFireLife::Hash(
+            float(Salt)*.419f+T.Seed*.31f);
+        // Circle in the camera plane: both sides, upward diagonals, and
+        // occasional downward/outward embers. Depth is independently varied.
+        const FVector Outward=(CameraScreenRight*FMath::Cos(Angle)+
+            FVector::UpVector*FMath::Sin(Angle)+
+            CameraForward*((Other-.5f)*.27f)).GetSafeNormal();
         const FVector Root=ConnectedRoots.IsValidIndex(Index)
             ? ConnectedRoots[Index] : SampleRoot(T);
+        const float HeightFraction=.08f+.86f*Random;
         S.Seed=float(Salt)*.731f+T.Seed*.38f;
-        S.Position=Root+FVector::UpVector*
-            (T.CurrentLength*(.38f+.50f*Random));
-        S.Position+=FVector(
-            (Other-.5f)*T.CurrentWidth,
-            (Random-.5f)*T.CurrentWidth,0.f);
-        S.Velocity=FVector(
-            (Other-.5f)*200.f,(Random-.5f)*180.f,
-            145.f+185.f*Random)+T.WorldVelocity*.16f+Wind*.07f;
-        S.Size=2.8f+2.9f*Other; // legible 2.5D heat pixels, not dust motes
-        S.Lifetime=.35f+.50f*Random;
+        S.DriftPosition=Root+
+            FVector::UpVector*(T.CurrentLength*HeightFraction)+
+            Outward*(T.CurrentWidth*(.45f+.40f*Other));
+        S.Position=S.DriftPosition;
+        S.Velocity=Outward*(115.f+145.f*Other)+
+            FVector::UpVector*26.f+T.WorldVelocity*.12f+
+            Wind*.055f;
+        S.WaveSide=FVector::CrossProduct(
+            Outward,CameraForward).GetSafeNormal();
+        if (S.WaveSide.IsNearlyZero())
+            S.WaveSide=CameraScreenRight;
+        S.WaveAmplitude=11.f+21.f*Random;
+        S.WaveFrequency=6.4f+5.2f*Other;
+        S.WavePhase=2.f*PI*ASTFireLife::Hash(
+            float(Salt)*.57f+T.Seed*.29f);
+        S.Size=2.8f+2.9f*Other;
+        S.Lifetime=.68f+.70f*Random;
         S.EmissionHeat=FMath::Clamp(Heat*(.86f+.14f*Other),.35f,1.f);
         S.Age=0.f;
         S.bAlive=true;

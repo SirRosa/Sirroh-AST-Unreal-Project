@@ -4,7 +4,7 @@ p=Path("Plugins/ASTFireRuntime/Source/ASTFireRuntime")
 c=(p/"Private/ASTFireFreeFlameComponent.cpp").read_text()
 h=(p/"Public/ASTFireFreeFlameComponent.h").read_text()
 for key in (
-    "static constexpr int32 MaxSparks = 24;",
+    "static constexpr int32 MaxSparks = 48;",
     "struct FSpark",
     "TArray<FSpark> Sparks;",
     "void UpdateSparks(float Dt);",
@@ -15,8 +15,13 @@ for key in (
     "void UASTFireFreeFlameComponent::UpdateSparks(float Dt)",
     "SparkSpawnDebt",
     "Heat<.15f",
-    "T.WorldVelocity*.16f+Wind*.07f",
-    "S.Position+=S.Velocity*Dt",
+    "S.Velocity=S.Velocity.GetClampedToMaxSize(560.f);",
+    "S.DriftPosition+=S.Velocity*Dt",
+    "S.WaveSide*(S.WaveAmplitude*(Offset+Second))",
+    "const float Angle=2.f*PI*ASTFireLife::Hash(",
+    "FMath::Cos(Angle)",
+    "FMath::Sin(Angle)",
+    "S.Lifetime=.68f+.70f*Random;",
     "const FTongue* Chosen=nullptr;",
     "ConnectedRoots.IsValidIndex(Index)",
     "S.Size=2.8f+2.9f*Other;",
@@ -38,10 +43,10 @@ assert c.index("AdvanceSimulation(SimDt);")<c.index(
     "UpdateDetachedVortices(SimDt);")<c.index("UpdateSparks(SimDt);")
 assert "MaxDetached = 16;" in h
 assert "DetachedColumns=7;" in c
-assert 24*4==96 and 24*2==48
+assert 48*4==192 and 48*2==96
 # Reference particle count stays bounded even if the spawn debt is huge.
 def births(debt,dt,heat,energy):
-    debt=min(4.,debt+dt*(6.+16*heat*max(.2,min(1.2,energy))))
+    debt=min(4.,debt+dt*(7.+17*heat*max(.2,min(1.2,energy))))
     born=min(3,int(debt))
     return debt-born,born
 d=0.

@@ -39,7 +39,7 @@ private:
     static constexpr int32 MaxTongues = 15;
     static constexpr int32 RingsPerTongue = 9;
     static constexpr int32 MaxDetached = 16;
-    static constexpr int32 MaxSparks = 24;
+    static constexpr int32 MaxSparks = 48;
     static constexpr int32 MaxSmoke = 96; // flowing centreline: ~12 samples/s * 7 s
     static constexpr int32 SmokeLayers = 4; // exactly four solid grey shades
     static constexpr int32 RingsPerDetached = 5;
@@ -115,7 +115,12 @@ private:
     struct FSpark
     {
         FVector Position = FVector::ZeroVector;
+        FVector DriftPosition = FVector::ZeroVector;
+        FVector WaveSide = FVector::RightVector;
         FVector Velocity = FVector::ZeroVector;
+        float WaveAmplitude = 0.f;
+        float WaveFrequency = 0.f;
+        float WavePhase = 0.f;
         float EmissionHeat = 1.f; // retained after the source cools
         float Age = 0.f;
         float Lifetime = .4f;
