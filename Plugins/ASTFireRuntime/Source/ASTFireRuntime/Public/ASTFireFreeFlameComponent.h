@@ -9,6 +9,7 @@ class USceneComponent;
 class UProceduralMeshComponent;
 class UMaterialInterface;
 class UMaterialInstanceDynamic;
+class UPointLightComponent;
 
 /** Stage10: mesh-conforming ignition and connected growing flame tongues.
  * Cosmetic simulation only; burn authority stays with ASTFireReactiveComponent.
@@ -39,9 +40,8 @@ private:
     static constexpr int32 RingsPerTongue = 9;
     static constexpr int32 MaxDetached = 16;
     static constexpr int32 MaxSparks = 24;
-    static constexpr int32 MaxSmoke = 18;
-    static constexpr int32 SmokeSegments = 12; // angular hard-edged silhouette
-    static constexpr int32 SmokeLayers = 3;  // discrete, opaque shades
+    static constexpr int32 MaxSmoke = 96; // flowing centreline: ~12 samples/s * 7 s
+    static constexpr int32 SmokeLayers = 4; // exactly four solid grey shades
     static constexpr int32 RingsPerDetached = 5;
     static constexpr int32 BridgeRings = 4;
     static constexpr int32 SurfaceClusters = 8;
@@ -130,9 +130,9 @@ private:
         FVector Velocity = FVector::ZeroVector;
         float Age = 0.f;
         float Lifetime = 1.4f;
-        float Radius = 13.f;
+        float Radius = 24.f;
         float Seed = 0.f;
-        float EmissionHeat = 0.f;
+        float BaseZ = 0.f; // travelled height survives owner motion
         bool bAlive = false;
     };
 
@@ -185,6 +185,8 @@ private:
     TArray<FSmoke> Smoke;
     float SmokeSpawnDebt = 0.f;
     int32 SmokeCursor = 0;
+    float SmokeLightScanDebt = 0.f;
+    TArray<TWeakObjectPtr<UPointLightComponent>> NearbySmokeLights;
     TArray<FVector> IgnitionPoints;
     FVector Wind = FVector::ZeroVector;
     float Heat = 1.f;

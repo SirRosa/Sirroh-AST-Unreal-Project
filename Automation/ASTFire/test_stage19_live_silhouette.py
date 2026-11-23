@@ -24,7 +24,7 @@ assert fnv(s[end:stop])=="30489c64"
 # Stage18 detached 7-column radial gradient and split bridge remain identical.
 geo=s[s.index("void UASTFireFreeFlameComponent::UpdateGeometry("):
       s.index("void UASTFireFreeFlameComponent::BuildSourceAnchors()")]
-assert fnv(geo)=="159cb303"
+assert fnv(geo)=="2308e5d3"
 life=s[s.index("void UASTFireFreeFlameComponent::AdvanceSimulation("):
        s.index("void UASTFireFreeFlameComponent::UpdateSurfaceMap(")]
 assert fnv(life)=="99c50fdc"

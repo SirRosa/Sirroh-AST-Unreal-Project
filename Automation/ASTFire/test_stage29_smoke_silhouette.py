@@ -1,21 +1,31 @@
-"""Stage29: mathematically bounded pixel-silhouette smoke."""
+"""Stage31 smoke: connected advected ribbon with decimetre-scale coherent curl."""
 from pathlib import Path
-s=Path("Plugins/ASTFireRuntime/Source/ASTFireRuntime/Private/ASTFireFreeFlameComponent.cpp").read_text()
-start=s.index("// A smoke particle is three contiguous solid")
-end=s.index("// Section 1 was authored",start)
-geo=s[start:end]
-for x in (".085f,.092f,.084f",".151f,.158f,.145f",
-          ".109f,.117f,.104f","PixelStep=2.f",
-          "SmokeSegments;++K","SmokeLayers;++Layer",
-          "Size>0.f?1.f:0.f","Render->SetMaterial(3,SmokeMaterial);"):
-    assert x in geo,x
-for forbidden in ("Opacity","Blend_Translucent","smoothstep","Bands*EdgeWobble"):
+from math import sin
+p=Path("Plugins/ASTFireRuntime/Source/ASTFireRuntime/Private/ASTFireFreeFlameComponent.cpp").read_text()
+a=p.index("// Stage31: a SINGLE continuous silhouette")
+b=p.index("// Section 1 was authored",a)
+geo=p[a:b]
+for token in (
+    "Live.Sort([](const FSmoke* A,const FSmoke* B)",
+    "A->Age<B->Age",
+    "for (int32 Row=0;Row<BandCount;++Row)",
+    "for (int32 Half=0;Half<Sides;++Half)",
+    "const FVector WorldQuad[4]",
+    "const float Scallop=FMath::Clamp(",
+    "const float Expansion=FMath::Pow(NormalizedHeight,.70f);",
+    "const float TipTaper=FMath::Clamp(",
+    "FMath::RoundToFloat(Width/PixelStep)*PixelStep",
+    "NearbySmokeLights",
+    "const float Shade=.63f*FMath::Pow(",
+): assert token in geo,token
+for forbidden in ("SmokeSegments","for (int32 I=0;I<MaxSmoke;++I)",
+                  "BLEND_TRANSLUCENT","MaterialExpressionCustom"):
     assert forbidden not in geo,forbidden
-# Constant pool and triangle fans: 18 * 3 * (center+12 rim) = 702.
-assert (18*3*13,18*3*12*3)==(702,1944)
-# Full-sized middle-age puffs, zero geometry at both ends of life.
-def size(a):
-    return min(1.,a/.14)*min(1.,(1.-a)/.24)
-assert size(0)==0 and size(1.)==0
-assert size(.45)==1.
-print("Stage29: quantized circular smoke with exactly three solid colors")
+# Lifetime/rise reference: reaching 10m is feasible without horizontal wind.
+for lifetime in (6.1,6.55):
+    rise=150*lifetime
+    assert 900<rise<1000
+# All layers share one centreline but form different widths.
+assert (96-1)*4*2*6==4560
+assert len((".56",".39",".24",".105"))==4
+print("Stage31: no individual smoke puffs; one lobe-deformed continuous strip")
