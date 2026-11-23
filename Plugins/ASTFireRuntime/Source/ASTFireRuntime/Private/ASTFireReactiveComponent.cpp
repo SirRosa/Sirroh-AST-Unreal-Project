@@ -99,9 +99,10 @@ void UASTFireReactiveComponent::OnRep_Burning()
 {
     // Replicated terminal burn state should also ignite a short ember
     // afterglow on clients without replicating frame-by-frame particles.
-    if (bPlaying && !bStartLit && CharProgress > .02f &&
-        PreviousReplicatedCharProgress < CharProgress + .001f)
+    if (bPlaying && bPreviousReplicatedLit && !bStartLit &&
+        CharProgress > .02f)
         CharSmolderRemaining = FMath::Max(CharSmolderRemaining, 5.f);
+    bPreviousReplicatedLit = bStartLit;
     PreviousReplicatedCharProgress = CharProgress;
     if (!bInitialized) InitializeFire();
     UpdateVisibility();
@@ -142,6 +143,9 @@ void UASTFireReactiveComponent::BeginPlay()
     InitialBurnIntensity = Intensity;
     CharSmolderRemaining = 0.f;
     PreviousReplicatedCharProgress = CharProgress;
+    bPreviousReplicatedLit = bStartLit;
+    PlayerCharFadeElapsedSeconds = 0.f;
+    PlayerCharFadeStartProgress = 0.f;
     // Map-authored BP_AST_FireSource and its Igniter derivative are
     // inexhaustible emitters. Only their ignited TARGET actors consume fuel.
     if (ASTFire::IsDedicatedFireActor(GetOwner()))
@@ -1345,13 +1349,36 @@ void UASTFireReactiveComponent::TickComponent(
     }
 
     CharSmolderRemaining = FMath::Max(0.f,CharSmolderRemaining-DeltaTime);
-    // Char accumulates on the server and survives extinguishing.
-    // Replication makes the amount deterministic for late-joining clients.
-    if (GetOwner()->HasAuthority() && bEnableCharring && bStartLit)
-        CharProgress=FMath::Clamp(CharProgress+
-            DeltaTime*FMath::Max(0.f,Intensity)*
-            FMath::Max(.1f,CharringRate)/FMath::Max(.25f,BurnDurationSeconds),
-            0.f,1.f);
+    // Charring remains authoritative and replicates to every viewer.
+    // Only a player-controlled Pawn recovers; NPCs and burning props retain soot.
+    if (GetOwner()->HasAuthority() && bEnableCharring)
+    {
+        if (bStartLit)
+        {
+            PlayerCharFadeElapsedSeconds = 0.f;
+            PlayerCharFadeStartProgress = 0.f;
+            CharProgress = FMath::Clamp(CharProgress +
+                DeltaTime * FMath::Max(0.f,Intensity) *
+                FMath::Max(.1f,CharringRate) /
+                    FMath::Max(.25f,BurnDurationSeconds),0.f,1.f);
+        }
+        else if (CharProgress > 0.f)
+        {
+            const APawn* Pawn = Cast<APawn>(GetOwner());
+            if (Pawn && Pawn->IsPlayerControlled())
+            {
+                if (PlayerCharFadeElapsedSeconds <= 0.f)
+                    PlayerCharFadeStartProgress = CharProgress;
+                PlayerCharFadeElapsedSeconds = FMath::Min(
+                    PlayerCharFadeElapsedSeconds + DeltaTime,
+                    FMath::Max(.1f,PlayerCharRecoverySeconds));
+                CharProgress = FMath::Max(0.f,
+                    PlayerCharFadeStartProgress * (1.f -
+                    PlayerCharFadeElapsedSeconds /
+                    FMath::Max(.1f,PlayerCharRecoverySeconds)));
+            }
+        }
+    }
 
     const FVector Position = GetOwner()->GetActorLocation();
     const FVector Velocity = (Position - LastOwnerPosition) / DeltaTime;

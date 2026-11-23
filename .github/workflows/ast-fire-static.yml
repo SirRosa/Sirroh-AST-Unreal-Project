@@ -74,6 +74,8 @@ jobs:
           python Automation/ASTFire/test_stage26_char_visibility.py
           python -m py_compile Automation/ASTFire/test_stage27_smoke_material.py
           python Automation/ASTFire/test_stage27_smoke_material.py
+          python -m py_compile Automation/ASTFire/test_stage28_player_recovery.py
+          python Automation/ASTFire/test_stage28_player_recovery.py
           python -m py_compile Automation/ASTFire/verify_stage24_materials_gpu.py
           python Automation/ASTFire/test_stage4_source.py
       - name: Parse PowerShell deployment script

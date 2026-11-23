@@ -114,7 +114,7 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="AST Fire|Charring")
     TSoftObjectPtr<UMaterialInterface> CharMaterial;
 
-    /** Persistent burn marks (also replicated to late-joining clients). */
+    /** Persistent burn marks on objects/NPCs. Player soot recovers after extinguishing. */
     UPROPERTY(ReplicatedUsing=OnRep_Burning, VisibleAnywhere, BlueprintReadOnly,
         Category="AST Fire|Charring")
     float CharProgress = 0.0f;
@@ -122,6 +122,12 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="AST Fire|Charring",
         meta=(ClampMin="0.1", ClampMax="5"))
     float CharringRate = 1.5f;
+
+    /** Only player-controlled Pawns recover their original appearance.
+        Recovery begins after extinguishing, and lasts 10 seconds. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="AST Fire|Charring",
+        meta=(ClampMin="0.1", ClampMax="60"))
+    float PlayerCharRecoverySeconds = 10.0f;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="AST Fire|Response")
     FVector AmbientWind = FVector::ZeroVector;
@@ -174,12 +180,12 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="AST Fire|Response", meta=(ClampMin="0", ClampMax="45"))
     float MaxLeanDegrees = 16.0f;
 
-    /** Server-authoritative fire lifetime. Standard 180 cm object lasts ~3 s. */
+    /** Server-authoritative fire lifetime. Standard 180 cm ignited object lasts ~6 s. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="AST Fire|Burn", meta=(ClampMin="0"))
     bool bAutoExtinguish = true;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="AST Fire|Burn", meta=(ClampMin="0.1", ClampMax="30"))
-    float BaseBurnSeconds = 3.0f;
+    float BaseBurnSeconds = 6.0f;
 
     /** Terminal temperature ramp; the mesh remains visible during afterglow. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="AST Fire|Burn", meta=(ClampMin="0.1", ClampMax="5"))
@@ -310,6 +316,9 @@ private:
     float InitialBurnIntensity = 1.0f;
     float CharSmolderRemaining = 0.f;
     float PreviousReplicatedCharProgress = 0.f;
+    float PlayerCharFadeElapsedSeconds = 0.f;
+    float PlayerCharFadeStartProgress = 0.f;
+    bool bPreviousReplicatedLit = false;
     bool bInitialized = false;
     bool bPlaying = false;
 };

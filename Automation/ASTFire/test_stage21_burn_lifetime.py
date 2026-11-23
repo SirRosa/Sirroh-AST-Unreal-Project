@@ -1,4 +1,4 @@
-"""Stage21: bounded fuel lifetime, 3 second reference, re-ignition and server authority.
+"""Stage21: bounded fuel lifetime, 6 second reference, re-ignition and server authority.
 
 Numerical and source guards; CI does not claim a runtime PIE result.
 """
@@ -10,7 +10,7 @@ c=(root/"Private/ASTFireReactiveComponent.cpp").read_text()
 flame=(root/"Private/ASTFireFreeFlameComponent.cpp").read_text()
 for token in (
     "bool bAutoExtinguish = true;",
-    "float BaseBurnSeconds = 3.0f;",
+    "float BaseBurnSeconds = 6.0f;",
     "float BurnFadeSeconds = 0.8f;",
     "float ReferenceSizeCm = 180.0f;",
     "float MaxBurnSizeMultiplier = 3.5f;",
@@ -32,15 +32,15 @@ for token in (
 assert "D.Position+=D.Velocity*Dt;" in flame
 assert "T.Life = EFlameLife::Retracting;" in flame
 assert "T.Life = EFlameLife::Bridging;" in flame
-def duration(size,base=3.,ref=180.,cap=3.5):
+def duration(size,base=6.,ref=180.,cap=3.5):
     factor=max(.7,min(cap,(max(10.,size)/max(10.,ref))**.42))
     return max(.1,base)*factor
-assert abs(duration(180.)-3.)<1.e-10
-assert 1.9<duration(60.)<2.2
-assert duration(1200.)>3.
-assert duration(1e9)<=10.5
-assert abs(duration(1.)-2.1)<1.e-9
-for seconds in (2.1,3.,10.5):
+assert abs(duration(180.)-6.)<1.e-10
+assert 3.8<duration(60.)<4.4
+assert duration(1200.)>6.
+assert duration(1e9)<=21.
+assert abs(duration(1.)-4.2)<1.e-9
+for seconds in (4.2,6.,21.):
     fade_start=max(0.,seconds-.8)
     levels=[max(0.,min(1.,(seconds-i*.01)/max(.01,seconds-fade_start)))**1.2
             for i in range(int(seconds/.01)+2) if i*.01>=fade_start]
