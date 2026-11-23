@@ -7,7 +7,7 @@ for v in ("#include \"Components/PointLightComponent.h\"",
           "TActorIterator<APointLight> It(World)",
           "Light->Intensity/1700.f",
           "Light->AttenuationRadius",
-          "Live.Sort([](const FSmoke* A,const FSmoke* B)",
+          "Live.Sort([](const FSmoke& A,const FSmoke& B)",
           "S.Position.Z-S.BaseZ>=1050.f",
           "FMath::VInterpTo(S.Velocity,Target,Dt,1.85f)",
           "S.Lifetime=6.1f+.45f*R;"):

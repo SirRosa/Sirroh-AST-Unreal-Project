@@ -6,8 +6,8 @@ a=p.index("// Stage31: a SINGLE continuous silhouette")
 b=p.index("// Section 1 was authored",a)
 geo=p[a:b]
 for token in (
-    "Live.Sort([](const FSmoke* A,const FSmoke* B)",
-    "A->Age<B->Age",
+    "Live.Sort([](const FSmoke& A,const FSmoke& B)",
+    "A.Age<B.Age",
     "for (int32 Row=0;Row<BandCount;++Row)",
     "for (int32 Half=0;Half<Sides;++Half)",
     "const FVector WorldQuad[4]",

@@ -1272,8 +1272,8 @@ void UASTFireFreeFlameComponent::UpdateGeometry(bool bCreate)
         Live.Reserve(MaxSmoke);
         for (const FSmoke& Sample:Smoke)
             if (Sample.bAlive) Live.Add(&Sample);
-        Live.Sort([](const FSmoke* A,const FSmoke* B)
-            { return A->Age<B->Age; }); // youngest bottom, oldest top
+        Live.Sort([](const FSmoke& A,const FSmoke& B)
+            { return A.Age<B.Age; }); // youngest bottom, oldest top
         constexpr int32 Sides=2;
         constexpr int32 VerticesPerQuad=4;
         constexpr float PixelStep=3.f;
