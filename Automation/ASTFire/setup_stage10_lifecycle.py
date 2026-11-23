@@ -107,6 +107,7 @@ try:
             visited.add(ident)
             if component.get_class().get_name()!="ASTFireReactiveComponent":
                 continue
+            component.set_editor_property("auto_extinguish",False)
             component.set_editor_property("enable_procedural_flames",True)
             component.set_editor_property("enable_surface_fire",False)
             component.set_editor_property("use_legacy_heat_grid",False)

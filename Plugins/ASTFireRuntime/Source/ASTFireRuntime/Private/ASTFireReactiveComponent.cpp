@@ -134,6 +134,10 @@ void UASTFireReactiveComponent::BeginPlay()
     BurnElapsedSeconds = 0.0f;
     BurnDurationSeconds = ComputeBurnDuration();
     InitialBurnIntensity = Intensity;
+    // Map-authored BP_AST_FireSource and its Igniter derivative are
+    // inexhaustible emitters. Only their ignited TARGET actors consume fuel.
+    if (ASTFire::IsDedicatedFireActor(GetOwner()))
+        bAutoExtinguish = false;
     InitializeFire();
 
     if (Light) Light->SetIntensity(LightPower * SmoothIntensity);
@@ -1291,7 +1295,8 @@ void UASTFireReactiveComponent::TickComponent(
 
     // Only the authoritative instance consumes fuel and changes replicated
     // burning state; clients use the replicated Intensity and local smoothing.
-    if (GetOwner()->HasAuthority() && bAutoExtinguish && bStartLit)
+    if (GetOwner()->HasAuthority() && bAutoExtinguish &&
+        !ASTFire::IsDedicatedFireActor(GetOwner()) && bStartLit)
     {
         if (BurnDurationSeconds <= 0.f)
         {
