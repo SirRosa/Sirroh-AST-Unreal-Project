@@ -21,7 +21,7 @@ for t in ("BLEND_TRANSLUCENT","MP_OPACITY","MP_EMISSIVE_COLOR",
           "MaterialExpressionVertexColor",
           "MaterialExpressionConstant3Vector",
           'grey.set_editor_property("constant",u.LinearColor(.14,.145,.136,1.))',
-          'EDIT.connect_material_property(vertex,"Alpha",'):
+          'EDIT.connect_material_property(vertex,"A",'):
     assert t in m,t
 assert "MaterialExpressionCustom" not in m.split("    EDIT.delete_all_material_expressions(m)")[1]
 assert "const float Bands=FMath::FloorToFloat(" in c

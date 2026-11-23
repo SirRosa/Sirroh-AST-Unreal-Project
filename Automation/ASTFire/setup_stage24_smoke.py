@@ -37,9 +37,9 @@ try:
     grey.set_editor_property("constant",u.LinearColor(.14,.145,.136,1.))
     need(EDIT.connect_material_property(grey,"",
         u.MaterialProperty.MP_EMISSIVE_COLOR),"No smoke color output")
-    # VertexColor exposes a dedicated Alpha output. Connecting to MP_OPACITY
-    # directly avoids an editor-dependent ComponentMask.Input connection.
-    need(EDIT.connect_material_property(vertex,"Alpha",
+    # UE 5.8 MaterialEditingLibrary reports VertexColor outputs
+    # ["", "R", "G", "B", "A"]. The alpha pin is "A", not "Alpha".
+    need(EDIT.connect_material_property(vertex,"A",
         u.MaterialProperty.MP_OPACITY),"No smoke vertex-alpha output")
 
     # Require a completely authored material and save the graph once.
