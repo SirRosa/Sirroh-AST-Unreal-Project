@@ -31,29 +31,23 @@ try:
 
     vertex=EDIT.create_material_expression(
         m,u.MaterialExpressionVertexColor,-430,-150)
-    alpha=EDIT.create_material_expression(
-        m,u.MaterialExpressionComponentMask,-190,60)
     grey=EDIT.create_material_expression(
         m,u.MaterialExpressionConstant3Vector,-190,-180)
-    need(vertex and alpha and grey,"Native smoke material expressions missing")
-    alpha.set_editor_property("r",False)
-    alpha.set_editor_property("g",False)
-    alpha.set_editor_property("b",False)
-    alpha.set_editor_property("a",True)
+    need(vertex and grey,"Native smoke material expressions missing")
     grey.set_editor_property("constant",u.LinearColor(.14,.145,.136,1.))
-    need(EDIT.connect_material_expressions(vertex,"",alpha,"Input"),
-         "Failed to route smoke vertex opacity")
     need(EDIT.connect_material_property(grey,"",
         u.MaterialProperty.MP_EMISSIVE_COLOR),"No smoke color output")
-    need(EDIT.connect_material_property(alpha,"",
-        u.MaterialProperty.MP_OPACITY),"No smoke opacity output")
+    # VertexColor exposes a dedicated Alpha output. Connecting to MP_OPACITY
+    # directly avoids an editor-dependent ComponentMask.Input connection.
+    need(EDIT.connect_material_property(vertex,"Alpha",
+        u.MaterialProperty.MP_OPACITY),"No smoke vertex-alpha output")
 
     # Require a completely authored material and save the graph once.
     EDIT.recompile_material(m)
     need(LIB.save_loaded_asset(m,only_if_is_dirty=False),
          "Smoke material save failed")
     OUT["status"]="STAGE24_SMOKE_MATERIAL_READY_VISUAL_TEST_PENDING"
-    OUT["native_expressions"]=3
+    OUT["native_expressions"]=2
 except Exception as exc:
     OUT["status"]="FAILED"
     OUT["errors"].append({"error":str(exc),"trace":traceback.format_exc()[-4000:]})

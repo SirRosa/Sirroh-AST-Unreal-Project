@@ -3,9 +3,9 @@ from pathlib import Path
 c=Path("Plugins/ASTFireRuntime/Source/ASTFireRuntime/Private/ASTFireFreeFlameComponent.cpp").read_text()
 m=Path("Automation/ASTFire/setup_stage24_smoke.py").read_text()
 assert "u.MaterialExpressionCustom" not in m
-assert 'u.MaterialExpressionComponentMask' in m
+assert 'u.MaterialExpressionComponentMask' not in m
 assert 'u.MaterialExpressionConstant3Vector' in m
-assert 'alpha.set_editor_property("a",True)' in m
+assert 'EDIT.connect_material_property(vertex,"Alpha",' in m
 assert "MP_OPACITY" in m and "MP_EMISSIVE_COLOR" in m
 assert "const float Density=FMath::Clamp(" in c
 assert "const float Bands=FMath::FloorToFloat(" in c

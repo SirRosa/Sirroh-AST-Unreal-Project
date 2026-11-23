@@ -19,10 +19,9 @@ for t in ("M_AST_FireSmoke.M_AST_FireSmoke","Render->SetMaterial(3, SmokeMateria
     assert t in c,t
 for t in ("BLEND_TRANSLUCENT","MP_OPACITY","MP_EMISSIVE_COLOR",
           "MaterialExpressionVertexColor",
-          "MaterialExpressionComponentMask",
           "MaterialExpressionConstant3Vector",
           'grey.set_editor_property("constant",u.LinearColor(.14,.145,.136,1.))',
-          'EDIT.connect_material_expressions(vertex,"",alpha,"Input")'):
+          'EDIT.connect_material_property(vertex,"Alpha",'):
     assert t in m,t
 assert "MaterialExpressionCustom" not in m.split("    EDIT.delete_all_material_expressions(m)")[1]
 assert "const float Bands=FMath::FloorToFloat(" in c
