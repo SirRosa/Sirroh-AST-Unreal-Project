@@ -790,7 +790,8 @@ void UASTFireReactiveComponent::SetupSurfaceFire(USceneComponent* Parent)
     // The old Stage11 WPO cloak remains disabled for procedural fire.
     const bool bCharOverlay = bEnableProceduralFlames && bEnableCharring &&
         !ASTFire::IsDedicatedFireActor(GetOwner());
-    if ((!bCharOverlay && !bEnableSurfaceFire) || !GetOwner()) return;
+    if (!GetOwner() || (bEnableProceduralFlames && !bCharOverlay) ||
+        (!bEnableProceduralFlames && !bEnableSurfaceFire)) return;
     UMeshComponent* Mesh = Cast<UMeshComponent>(Parent);
     if (!IsValid(Mesh) || !Mesh->IsVisible()) return;
     UMaterialInterface* Surface = bCharOverlay

@@ -53,7 +53,7 @@ check_tokens(h,(
 check_tokens(reactive,(
     "FreeFlames->SetThermal", "FreeFlames->GetVisualEnergy()",
     "FreeFlames->SetIgnitionPoints(ExtraLocalPoints)",
-    "const bool bCharOverlay = bEnableProceduralFlames && bEnableCharring;",
+    "const bool bCharOverlay = bEnableProceduralFlames && bEnableCharring &&",
     "SetOverlayMaterial(PreviousFireSurfaceOverlay)",
     "0.91f * VisualEnergy",
 ))
