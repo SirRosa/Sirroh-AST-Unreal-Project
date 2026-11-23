@@ -64,20 +64,21 @@ try:
         "p+=float2(sin(p.y*.74+Seed*.02),sin(p.x*.67-Seed*.02))*.47;"
         "float n=saturate(.5+.24*sin(p.x*.69+sin(p.y*.21)*2.1)"
         "+.24*sin(p.y*.83-sin(p.x*.26)*1.7));"
-        "float coverage=smoothstep(1.-saturate(Progress)*.96,"
-        "1.05-saturate(Progress)*.96,n);"
+        "float coverage=saturate((n-(.68-saturate(Progress)*.78))*4.);"
+
         "float crackA=abs(sin(p.x*1.31+sin(p.y*.78)*2.4));"
         "float crackB=abs(sin(p.y*1.57-sin(p.x*.93)*1.8));"
-        "float crack=1.-smoothstep(.027,.085,min(crackA,crackB));"
+        "float crack=1.-smoothstep(.035,.15,min(crackA,crackB));"
         "crack*=coverage;"
         "float hot=saturate(Glow)*crack;"
     )
     emissive.set_editor_property("code",field+
-        "float3 soot=float3(.027,.030,.023);"
-        "float3 core=float3(1.7,.11,.012)*hot;"
+        "float3 soot=float3(.013,.016,.012);"
+        "float3 core=float3(3.5,.12,.012)*hot;"
         "return soot+core;")
     opacity.set_editor_property("code",field+
-        "return saturate(saturate(Progress)*(.26+.61*coverage)+hot*.22);")
+        "float dark=saturate(Progress)*(.70+.28*coverage);"
+        "return saturate(dark+hot*.015);")
     for node in (emissive,opacity):
         for key,source in (("UV",uv),("Progress",values["CharProgress"]),
             ("Glow",values["CharGlow"]),("Seed",values["CharSeed"]),

@@ -29,8 +29,10 @@ for s in (
     'set_editor_property("used_with_skeletal_mesh",True)',
     "MaterialExpressionTextureCoordinate","CharProgress","CharGlow",
     "CharSeed","CharTiling","crack*=coverage;",
-    "float3 soot=float3(.027,.030,.023)",
-    "return saturate(saturate(Progress)*",
+    "float3 soot=float3(.013,.016,.012)",
+    "float3 core=float3(3.5,.12,.012)*hot;",
+    "float dark=saturate(Progress)*(.70+.28*coverage);",
+    "return saturate(dark+hot*.015);",
 ):
     assert s in mat,s
 assert "PreSkinnedPosition" not in mat.split("    field=(")[1]

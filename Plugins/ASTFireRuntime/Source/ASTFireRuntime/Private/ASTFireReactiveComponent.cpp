@@ -97,6 +97,12 @@ void UASTFireReactiveComponent::GetLifetimeReplicatedProps(
 
 void UASTFireReactiveComponent::OnRep_Burning()
 {
+    // Replicated terminal burn state should also ignite a short ember
+    // afterglow on clients without replicating frame-by-frame particles.
+    if (bPlaying && !bStartLit && CharProgress > .02f &&
+        PreviousReplicatedCharProgress < CharProgress + .001f)
+        CharSmolderRemaining = FMath::Max(CharSmolderRemaining, 5.f);
+    PreviousReplicatedCharProgress = CharProgress;
     if (!bInitialized) InitializeFire();
     UpdateVisibility();
 }
@@ -134,6 +140,8 @@ void UASTFireReactiveComponent::BeginPlay()
     BurnElapsedSeconds = 0.0f;
     BurnDurationSeconds = ComputeBurnDuration();
     InitialBurnIntensity = Intensity;
+    CharSmolderRemaining = 0.f;
+    PreviousReplicatedCharProgress = CharProgress;
     // Map-authored BP_AST_FireSource and its Igniter derivative are
     // inexhaustible emitters. Only their ignited TARGET actors consume fuel.
     if (ASTFire::IsDedicatedFireActor(GetOwner()))
@@ -780,7 +788,8 @@ void UASTFireReactiveComponent::SetupSurfaceFire(USceneComponent* Parent)
     // Stage22 uses a translucent UV-anchored soot/cracks layer over the
     // EXISTING mesh material: no WPO or changes to authored material slots.
     // The old Stage11 WPO cloak remains disabled for procedural fire.
-    const bool bCharOverlay = bEnableProceduralFlames && bEnableCharring;
+    const bool bCharOverlay = bEnableProceduralFlames && bEnableCharring &&
+        !ASTFire::IsDedicatedFireActor(GetOwner());
     if ((!bCharOverlay && !bEnableSurfaceFire) || !GetOwner()) return;
     UMeshComponent* Mesh = Cast<UMeshComponent>(Parent);
     if (!IsValid(Mesh) || !Mesh->IsVisible()) return;
@@ -794,9 +803,14 @@ void UASTFireReactiveComponent::SetupSurfaceFire(USceneComponent* Parent)
     }
     UMaterialInterface* Existing = Mesh->GetOverlayMaterial(false, 0);
     // Never steal another actor's overlay: damage, highlighting, stealth etc.
-    if (Existing)
+    // The mesh can already have a material overlay (hit highlight, etc.).
+    // Preserve the pointer and temporarily take the overlay channel when
+    // charring is active. Restore it when OUR component is removed; do not
+    // touch the actor's original material slots or modify the mesh asset.
+    if (Existing && !bCharOverlay)
     {
-        UE_LOG(LogTemp, Warning, TEXT("AST Fire: existing overlay on %s, left untouched."),
+        UE_LOG(LogTemp, Warning,
+            TEXT("AST Fire: existing legacy overlay on %s left untouched."),
             *GetOwner()->GetName());
         return;
     }
@@ -815,6 +829,9 @@ void UASTFireReactiveComponent::SetupSurfaceFire(USceneComponent* Parent)
         FireSurfaceMID->SetScalarParameterValue(FName(TEXT("CharGlow")), 0.f);
         FireSurfaceMID->SetScalarParameterValue(FName(TEXT("CharTiling")),
             FMath::Clamp(34.f*MeshSize/180.f,18.f,85.f));
+        UE_LOG(LogTemp,Log,
+            TEXT("AST Fire: char overlay ready for %s, previous=%s"),
+            *GetOwner()->GetName(), Existing ? *Existing->GetName() : TEXT("none"));
         UpdateSurfaceVisibility();
         return;
     }
@@ -849,7 +866,8 @@ void UASTFireReactiveComponent::UpdateSurfaceVisibility()
             || SmoothIntensity > .02f);
     if (bShowChar || (bStartLit && Intensity > 0.005f))
     {
-        // Do not steal overlays installed by unrelated gameplay systems.
+        // Take the preserved existing overlay only while the mesh is burning
+        // or visibly charred. A later third-party override remains untouched.
         if (!Current || Current == PreviousFireSurfaceOverlay)
             FireSurfaceMesh->SetOverlayMaterial(FireSurfaceMID);
     }
@@ -1191,6 +1209,8 @@ void UASTFireReactiveComponent::SetFireIntensity(float NewIntensity)
         // An external intensity adjustment changes fuel heat, not elapsed age.
         InitialBurnIntensity = FMath::Max(InitialBurnIntensity, Intensity);
     }
+    if (bWasLit && !bStartLit && CharProgress > .02f)
+        CharSmolderRemaining = FMath::Max(CharSmolderRemaining, 5.f);
     UpdateVisibility();
 }
 
@@ -1316,11 +1336,14 @@ void UASTFireReactiveComponent::TickComponent(
             {
                 Intensity = 0.f;
                 bStartLit = false;
+                if (CharProgress > .02f)
+                    CharSmolderRemaining = FMath::Max(CharSmolderRemaining, 5.f);
                 UpdateVisibility();
             }
         }
     }
 
+    CharSmolderRemaining = FMath::Max(0.f,CharSmolderRemaining-DeltaTime);
     // Char accumulates on the server and survives extinguishing.
     // Replication makes the amount deterministic for late-joining clients.
     if (GetOwner()->HasAuthority() && bEnableCharring && bStartLit)
@@ -1425,7 +1448,9 @@ void UASTFireReactiveComponent::TickComponent(
                 FName(TEXT("CharProgress")),CharProgress);
             FireSurfaceMID->SetScalarParameterValue(
                 FName(TEXT("CharGlow")),
-                FMath::Clamp(SmoothIntensity*LightEnvelope,0.f,1.2f));
+                FMath::Clamp(SmoothIntensity*LightEnvelope+
+                    .60f*CharProgress*FMath::Clamp(
+                        CharSmolderRemaining/2.5f,0.f,1.f),0.f,1.2f));
             UpdateSurfaceVisibility(); // Keep cooled soot visible on the mesh.
         }
         // Root texture, extending tongues and light share the same heat energy.

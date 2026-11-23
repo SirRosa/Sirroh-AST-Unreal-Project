@@ -17,7 +17,8 @@ for token in (
     "float BurnDurationSeconds = 0.0f;",
 ): assert token in h, token
 for token in (
-    "GetOwner()->HasAuthority() && bAutoExtinguish && bStartLit",
+    "GetOwner()->HasAuthority() && bAutoExtinguish &&",
+    "!ASTFire::IsDedicatedFireActor(GetOwner()) && bStartLit",
     "BurnElapsedSeconds += DeltaTime;",
     "BurnDurationSeconds = ComputeBurnDuration();",
     "InitialBurnIntensity * FMath::Pow(Fade, 1.2f)",

@@ -308,6 +308,8 @@ private:
     float BurnElapsedSeconds = 0.0f;
     float BurnDurationSeconds = 0.0f;
     float InitialBurnIntensity = 1.0f;
+    float CharSmolderRemaining = 0.f;
+    float PreviousReplicatedCharProgress = 0.f;
     bool bInitialized = false;
     bool bPlaying = false;
 };
