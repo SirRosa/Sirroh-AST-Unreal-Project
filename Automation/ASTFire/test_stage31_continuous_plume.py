@@ -5,7 +5,7 @@ h=Path("Plugins/ASTFireRuntime/Source/ASTFireRuntime/Public/ASTFireFreeFlameComp
 for v in ("#include \"Components/PointLightComponent.h\"",
           "#include \"Engine/PointLight.h\"","#include \"EngineUtils.h\"",
           "TActorIterator<APointLight> It(World)",
-          "Light->GetIntensity()/1700.f",
+          "Light->Intensity/1700.f",
           "Light->AttenuationRadius",
           "Live.Sort([](const FSmoke* A,const FSmoke* B)",
           "S.Position.Z-S.BaseZ>=1050.f",

@@ -1375,7 +1375,7 @@ void UASTFireFreeFlameComponent::UpdateGeometry(bool bCreate)
                         Light->GetComponentLocation(),AverageCenter);
                     const float Reach=FMath::Clamp(1.f-Distance/R,0.f,1.f);
                     const float Strength=FMath::Clamp(
-                        Light->GetIntensity()/1700.f,0.f,1.5f);
+                        Light->Intensity/1700.f,0.f,1.5f);
                     NearbyLight=FMath::Max(NearbyLight,
                         Reach*Reach*Strength);
                 }
