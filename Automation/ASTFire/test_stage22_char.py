@@ -14,7 +14,7 @@ for s in (
     "if (GetOwner()->HasAuthority() && bEnableCharring)",
     "if (bStartLit)",
 
-    "DeltaTime*FMath::Max(0.f,Intensity)",
+    "DeltaTime * FMath::Max(0.f,Intensity)",
     "FName(TEXT(\"CharProgress\")),CharProgress",
     "FName(TEXT(\"CharGlow\"))",
     "if (bCharOverlay)",

@@ -15,7 +15,7 @@ for t in ("!ASTFire::IsDedicatedFireActor(GetOwner())",
           "CharSmolderRemaining = FMath::Max(0.f,CharSmolderRemaining-DeltaTime);",
           "CharSmolderRemaining/2.5f",
           "FName(TEXT(\"CharProgress\")),CharProgress",
-          "GetOwner()->HasAuthority() && bEnableCharring && bStartLit"):
+          "if (GetOwner()->HasAuthority() && bEnableCharring)"):
     assert t in c,t
 assert "float CharSmolderRemaining = 0.f;" in h
 for t in ('used_with_skeletal_mesh', 'float3 soot=float3(.013,.016,.012)',
