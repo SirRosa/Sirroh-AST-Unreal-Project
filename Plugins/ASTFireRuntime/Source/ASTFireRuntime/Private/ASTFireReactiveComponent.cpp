@@ -1,5 +1,6 @@
 #include "ASTFireReactiveComponent.h"
 #include "ASTFireFreeFlameComponent.h"
+#include "ASTFireIgnitionZoneComponent.h"
 
 #include "NiagaraComponent.h"
 #include "NiagaraSystem.h"
@@ -210,7 +211,11 @@ void UASTFireReactiveComponent::EndPlay(const EEndPlayReason::Type EndPlayReason
 
 USceneComponent* UASTFireReactiveComponent::FindTargetComponent() const
 {
-    AActor* Owner = GetOwner();
+    return ResolveTargetComponent(GetOwner(),PreferredMeshComponentName);
+}
+
+USceneComponent* UASTFireReactiveComponent::ResolveTargetComponent(AActor* Owner,FName PreferredMeshComponentName)
+{
     if (!Owner) return nullptr;
 
     TArray<UMeshComponent*> Meshes;
@@ -1523,11 +1528,10 @@ void UASTFireReactiveComponent::RefreshFireVisuals()
     InitializeFire();
 }
 
-float UASTFireReactiveComponent::ComputeBurnDuration() const
+float UASTFireReactiveComponent::MeasureFuelSize(const USceneComponent* Target,float FallbackCm)
 {
-    const float Reference=FMath::Max(10.f,ReferenceSizeCm);
-    float SizeCm=Reference;
-    if (const UPrimitiveComponent* Primitive=Cast<UPrimitiveComponent>(FindTargetComponent()))
+    float SizeCm=FallbackCm;
+    if (const UPrimitiveComponent* Primitive=Cast<UPrimitiveComponent>(Target))
     {
         // Measure the selected burnable mesh in its rest/local space, then
         // apply actual component scale. World AABBs change with rotation,
@@ -1545,12 +1549,19 @@ float UASTFireReactiveComponent::ComputeBurnDuration() const
         if(!Dimensions.ContainsNaN() && Dimensions.GetMax()>KINDA_SMALL_NUMBER)
             SizeCm=FMath::Max(10.f,float(Dimensions.GetMax()));
     }
-    // Continuous power curve: 50 cm ~3.0 s, 180 cm ~7 s at defaults.
+    return SizeCm;
+}
+
+float UASTFireReactiveComponent::ComputeBurnDuration() const
+{
+    const float Reference=FMath::Max(10.f,ReferenceSizeCm);
+    const float SizeCm=MeasureFuelSize(FindTargetComponent(),Reference);
+    // Continuous power curve: 50 cm ~12 s, 180 cm ~28 s at defaults.
     // Keep sub-50 cm props playable; bound very large scenery for safety.
     // Authored BaseBurnSeconds remains a reference-duration multiplier.
     const float Factor=FMath::Clamp(FMath::Pow(SizeCm/Reference,.66f),
         3.f/7.f,FMath::Max(1.f,MaxBurnSizeMultiplier));
-    return 2.f*FMath::Max(.1f,BaseBurnSeconds)*Factor;
+    return 4.f*FMath::Max(.1f,BaseBurnSeconds)*Factor;
 }
 
 FString UASTFireReactiveComponent::RunPropCharAudit(UClass* BoxClass,UClass* BarrelClass)
@@ -1678,13 +1689,13 @@ FString UASTFireReactiveComponent::RunBurnDurationAudit(USkeletalMesh* Character
         bPass&=Fire->FindTargetComponent()==Rendered;
         CharacterSize=float(CharacterMesh->GetBounds().BoxExtent.GetMax()*2.f);
         CharacterDuration=Fire->ComputeBurnDuration();
-        bPass&=CharacterDuration>11.f && CharacterDuration<17.f && Measure(Fire,CharacterActual);
+        bPass&=CharacterDuration>22.f && CharacterDuration<34.f && Measure(Fire,CharacterActual);
         bPass&=Fire->CharProgress>.8f; // unchanged normalized char accumulation
         Fire->DestroyComponent();Owner->Destroy();
     }
     else bPass=false;
-    bPass&=FMath::Abs(Durations[0]-6.f)<.05f && FMath::Abs(Durations[1]-6.f)<.24f &&
-        FMath::Abs(Durations[3]-14.f)<.01f && Durations[5]>24.f;
+    bPass&=FMath::Abs(Durations[0]-12.f)<.05f && FMath::Abs(Durations[1]-12.f)<.48f &&
+        FMath::Abs(Durations[3]-28.f)<.01f && Durations[5]>48.f;
     World->DestroyWorld(false);
     return FString::Printf(TEXT("%s:30cm=%.2f/%.2f;50cm=%.2f/%.2f;100cm=%.2f/%.2f;180cm=%.2f/%.2f;300cm=%.2f/%.2f;600cm=%.2f/%.2f;characterCm=%.1f;character=%.2f/%.2f;rotation_reignite_permanent=%d"),
         bPass?TEXT("PASS"):TEXT("FAIL"),Durations[0],Actual[0],Durations[1],Actual[1],Durations[2],Actual[2],
@@ -1694,10 +1705,36 @@ FString UASTFireReactiveComponent::RunBurnDurationAudit(USkeletalMesh* Character
 #endif
 }
 
+bool UASTFireReactiveComponent::HasActiveIgniter()
+{
+    for(auto It=ActiveIgniters.CreateIterator();It;++It)
+    {
+        const auto* Zone=It->Get();
+        if(!IsValid(Zone)||!Zone->IsSustaining(GetOwner()))It.RemoveCurrent();
+    }
+    return !ActiveIgniters.IsEmpty();
+}
+
+void UASTFireReactiveComponent::SetIgniterContact(UASTFireIgnitionZoneComponent* Zone,bool bTouching)
+{
+    if(!GetOwner()||!GetOwner()->HasAuthority()||!IsValid(Zone))return;
+    if(bTouching)
+    {
+        ActiveIgniters.Add(Zone);
+        if(bStartLit && bAutoExtinguish && !ASTFire::IsDedicatedFireActor(GetOwner()))
+        {
+            BurnElapsedSeconds=0.f;
+            Intensity=FMath::Max(Intensity,InitialBurnIntensity);
+        }
+    }
+    else ActiveIgniters.Remove(Zone);
+}
+
 void UASTFireReactiveComponent::SetFireIntensity(float NewIntensity)
 {
     if (bPlaying && GetOwner() && GetOwner()->GetNetMode() == NM_Client)
         return; // Fire gameplay state is server authoritative.
+    if(bStartLit && NewIntensity<=.005f && HasActiveIgniter())return;
     const bool bWasLit = bStartLit && Intensity > 0.005f;
     Intensity = FMath::Clamp(NewIntensity, 0.0f, 1.0f);
     bStartLit = Intensity > 0.005f;
@@ -1829,7 +1866,14 @@ void UASTFireReactiveComponent::TickComponent(
             BurnDurationSeconds = ComputeBurnDuration();
             InitialBurnIntensity = Intensity;
         }
-        BurnElapsedSeconds += DeltaTime;
+        // Fuel is replenished continuously in any active igniter. The full
+        // finite lifetime starts only after leaving the last one.
+        if(HasActiveIgniter())
+        {
+            BurnElapsedSeconds=0.f;
+            Intensity=FMath::Max(Intensity,InitialBurnIntensity);
+        }
+        else BurnElapsedSeconds += DeltaTime;
         const float FadeStart = FMath::Max(0.f,
             BurnDurationSeconds - FMath::Clamp(BurnFadeSeconds*3.f,1.5f,3.5f));
         if (BurnElapsedSeconds >= FadeStart)
