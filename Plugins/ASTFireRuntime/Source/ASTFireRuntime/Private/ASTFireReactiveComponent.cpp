@@ -1,6 +1,7 @@
 #include "ASTFireReactiveComponent.h"
 #include "ASTFireFreeFlameComponent.h"
 #include "ASTFireIgnitionZoneComponent.h"
+#include "ASTFireWoodEnvironment.h"
 
 #include "NiagaraComponent.h"
 #include "NiagaraSystem.h"
@@ -828,7 +829,9 @@ void UASTFireReactiveComponent::SetupSurfaceFire(USceneComponent* Parent)
     // Only verified carry-prop materials use this route. Other meshes,
     // including the player's poseable mesh, retain their existing overlay.
     const UClass* CarryClass=FindObject<UClass>(nullptr,TEXT("/Script/Sirroh_Reimagineg_v3.SirrohCarryProp"));
-    if(bCharOverlay && CarryClass && GetOwner()->IsA(CarryClass) && Cast<UStaticMeshComponent>(Mesh) && Mesh->GetNumMaterials()>=1)
+    const bool bWood=ASTFireWood::IsWoodTarget(GetOwner(),Cast<UStaticMeshComponent>(Mesh));
+    const bool bCarry=CarryClass && GetOwner()->IsA(CarryClass);
+    if(bCharOverlay && (bCarry||bWood) && Cast<UStaticMeshComponent>(Mesh) && Mesh->GetNumMaterials()>=1)
     {
         UMaterialInterface* Original=Mesh->GetMaterial(0);
         const UMaterial* Base=Original?Original->GetMaterial():nullptr;
