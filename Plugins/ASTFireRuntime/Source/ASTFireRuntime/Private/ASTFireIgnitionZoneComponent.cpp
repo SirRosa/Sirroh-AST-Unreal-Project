@@ -2,6 +2,7 @@
 
 #include "ASTFireBlueprintLibrary.h"
 #include "ASTFireReactiveComponent.h"
+#include "ASTFireWoodEnvironment.h"
 #include "Engine/StaticMesh.h"
 #include "GameFramework/Actor.h"
 #include "Components/PrimitiveComponent.h"
@@ -106,6 +107,7 @@ void UASTFireIgnitionZoneComponent::ClearContacts()
     IgnitedDuringOverlap.Reset();
     ContactStartedAt.Reset();
     SuppressedInitialContacts.Reset();
+    NearbyWood.Reset();WoodScanAt=-1.;
 }
 
 float UASTFireIgnitionZoneComponent::ContactDelay(float SizeCm)
@@ -160,8 +162,64 @@ void UASTFireIgnitionZoneComponent::PollContactOverlapsAt(double Now)
         const bool bMesh=Body->IsA<UStaticMeshComponent>()||Body->IsA<USkinnedMeshComponent>();
         const bool bPhysical=Body->IsSimulatingPhysics()||
             (bMesh&&Body->GetMobility()==EComponentMobility::Movable&&Body->IsVisible()&&!Body->bHiddenInGame);
-        if(!bPawn&&!bPhysical)continue;
+        const bool bWood=ASTFireWood::IsWoodTarget(Actor,Cast<UStaticMeshComponent>(Body));
+        if(!bPawn&&!bPhysical&&!bWood)continue;
         RecordContact(Actor,Body);
+    }
+
+    auto TouchesMeshBounds=[&](UStaticMeshComponent* Body)
+    {
+        const FBox Local=Body->GetStaticMesh()->GetBoundingBox();
+        const FTransform& Transform=Body->GetComponentTransform();
+        const FVector Center=Transform.TransformPosition(Local.GetCenter());
+        const FVector Extent=Local.GetExtent()*Transform.GetScale3D().GetAbs();
+        // Cheap broad phase before the 15 separating-axis tests.
+        if(FVector::DistSquared(Center,ZoneCenter)>FMath::Square(Extent.Size()+ZoneExtent.Size()))return false;
+        const FQuat Rotation=Transform.GetRotation();
+        const FVector A[3]={ZoneRotation.GetAxisX(),ZoneRotation.GetAxisY(),ZoneRotation.GetAxisZ()};
+        const FVector B[3]={Rotation.GetAxisX(),Rotation.GetAxisY(),Rotation.GetAxisZ()};
+        const FVector Delta=Center-ZoneCenter;
+        auto Separated=[&](const FVector& Axis)
+        {
+            if(Axis.SizeSquared()<1.e-10)return false;
+            double RA=0.,RB=0.;
+            for(int32 I=0;I<3;++I)
+            {
+                RA+=ZoneExtent[I]*FMath::Abs(FVector::DotProduct(A[I],Axis));
+                RB+=Extent[I]*FMath::Abs(FVector::DotProduct(B[I],Axis));
+            }
+            return FMath::Abs(FVector::DotProduct(Delta,Axis))>RA+RB+.001;
+        };
+        bool bSeparated=false;
+        for(int32 I=0;I<3&&!bSeparated;++I)
+            bSeparated=Separated(A[I])||Separated(B[I]);
+        for(int32 I=0;I<3&&!bSeparated;++I)
+            for(int32 J=0;J<3&&!bSeparated;++J)
+                bSeparated=Separated(FVector::CrossProduct(A[I],B[J]));
+        return !bSeparated;
+    };
+
+    // Only local wood candidates are checked each poll. Refresh after source
+    // motion or streamed actors arriving, rather than scanning every 50 ms.
+    if(WoodScanAt<0. || Now<WoodScanAt || Now-WoodScanAt>=.5 ||
+        FVector::DistSquared(ZoneCenter,WoodScanCenter)>FMath::Square(150.f))
+    {
+        WoodScanAt=Now;WoodScanCenter=ZoneCenter;NearbyWood.Reset();
+        const FBox Search=FBox::BuildAABB(ZoneCenter,FVector(ZoneExtent.Size()+350.));
+        for(TActorIterator<AStaticMeshActor> It(World);It;++It)
+        {
+            auto* Actor=*It;
+            auto* Body=Actor->GetStaticMeshComponent();
+            if(Actor!=Owner&&ASTFireWood::IsWoodTarget(Actor,Body)&&
+                Search.Intersect(Body->Bounds.GetBox()))NearbyWood.Add(Actor);
+        }
+    }
+    for(const auto& Weak:NearbyWood)
+    {
+        auto* Actor=Weak.Get();
+        auto* Body=Actor?Actor->GetStaticMeshComponent():nullptr;
+        if(Actor==Owner||!ASTFireWood::IsWoodTarget(Actor,Body)||Touching.Contains(Actor))continue;
+        if(TouchesMeshBounds(Body))RecordContact(Actor,Body);
     }
 
     // AST carry props deliberately disable overlap notifications, and while
@@ -176,34 +234,7 @@ void UASTFireIgnitionZoneComponent::PollContactOverlapsAt(double Now)
             if(!IsValid(Actor)||Actor==Owner||Actor->IsHidden()||Touching.Contains(Actor))continue;
             auto* Body=Cast<UStaticMeshComponent>(Actor->GetRootComponent());
             if(!IsValid(Body)||!Body->IsRegistered()||!Body->IsVisible()||Body->bHiddenInGame||!Body->GetStaticMesh())continue;
-            const FBox Local=Body->GetStaticMesh()->GetBoundingBox();
-            const FTransform& Transform=Body->GetComponentTransform();
-            const FVector Center=Transform.TransformPosition(Local.GetCenter());
-            const FVector Extent=Local.GetExtent()*Transform.GetScale3D().GetAbs();
-            // Cheap broad phase before the 15 separating-axis tests.
-            if(FVector::DistSquared(Center,ZoneCenter)>FMath::Square(Extent.Size()+ZoneExtent.Size()))continue;
-            const FQuat Rotation=Transform.GetRotation();
-            const FVector A[3]={ZoneRotation.GetAxisX(),ZoneRotation.GetAxisY(),ZoneRotation.GetAxisZ()};
-            const FVector B[3]={Rotation.GetAxisX(),Rotation.GetAxisY(),Rotation.GetAxisZ()};
-            const FVector Delta=Center-ZoneCenter;
-            auto Separated=[&](const FVector& Axis)
-            {
-                if(Axis.SizeSquared()<1.e-10)return false;
-                double RA=0.,RB=0.;
-                for(int32 I=0;I<3;++I)
-                {
-                    RA+=ZoneExtent[I]*FMath::Abs(FVector::DotProduct(A[I],Axis));
-                    RB+=Extent[I]*FMath::Abs(FVector::DotProduct(B[I],Axis));
-                }
-                return FMath::Abs(FVector::DotProduct(Delta,Axis))>RA+RB+.001;
-            };
-            bool bSeparated=false;
-            for(int32 I=0;I<3&&!bSeparated;++I)
-                bSeparated=Separated(A[I])||Separated(B[I]);
-            for(int32 I=0;I<3&&!bSeparated;++I)
-                for(int32 J=0;J<3&&!bSeparated;++J)
-                    bSeparated=Separated(FVector::CrossProduct(A[I],B[J]));
-            if(!bSeparated)RecordContact(Actor,Body);
+            if(TouchesMeshBounds(Body))RecordContact(Actor,Body);
         }
     }
     // Native-only initial scenery remains opt-in; actual physical contacts
@@ -213,6 +244,9 @@ void UASTFireIgnitionZoneComponent::PollContactOverlapsAt(double Now)
         if(!IsValid(Actor)||Actor==Owner)continue;
         const TWeakObjectPtr<AActor> Key(Actor);
         if(Touching.Contains(Key))continue;
+        if(const auto* Static=Cast<UStaticMeshComponent>(Actor->GetRootComponent());
+            Static && Static->GetMobility()==EComponentMobility::Static &&
+            !ASTFireWood::IsWoodTarget(Actor,Static) && !bIgniteInitialOverlaps)continue;
         Touching.Add(Key);
         if(bPrimingContacts)SuppressedInitialContacts.Add(Key);
         Points.Add(Key,Actor->GetActorLocation());
