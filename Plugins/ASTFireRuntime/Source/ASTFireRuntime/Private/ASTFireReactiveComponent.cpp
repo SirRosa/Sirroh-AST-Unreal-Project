@@ -819,6 +819,37 @@ void UASTFireReactiveComponent::SetupSurfaceFire(USceneComponent* Parent)
         (!bEnableProceduralFlames && !bEnableSurfaceFire)) return;
     UMeshComponent* Mesh = Cast<UMeshComponent>(Parent);
     if (!IsValid(Mesh) || !Mesh->IsVisible()) return;
+    // Only the verified GASPALS prop material uses this route. Keep character
+    // materials and every other mesh's accepted overlay path unchanged.
+    if(bCharOverlay && Cast<UStaticMeshComponent>(Mesh) && Mesh->GetNumMaterials()==1)
+    {
+        UMaterialInterface* Original=Mesh->GetMaterial(0);
+        if(Original && Original->GetPathName()==TEXT("/GASPALS/Systems/EquipmentSystem/Assets/Materials/M_Prop.M_Prop"))
+        {
+            UMaterialInterface* PropChar=LoadObject<UMaterialInterface>(nullptr,
+                TEXT("/Game/VFX/Fire/Materials/M_AST_FireCharProp.M_AST_FireCharProp"));
+            if(PropChar)
+            {
+                FireSurfaceMID=UMaterialInstanceDynamic::Create(PropChar,this);
+                if(FireSurfaceMID)
+                {
+                    FireSurfaceMesh=Mesh;
+                    PreviousCharPropMaterial=Original;
+                    bCharUsesPropSlot=true;
+                    FireSurfaceMID->SetScalarParameterValue(TEXT("ASTPropCharSeed"),
+                        float((SimulationSeed+GetOwner()->GetUniqueID())%10007));
+                    FireSurfaceMID->SetScalarParameterValue(TEXT("ASTPropCharProgress"),CharProgress);
+                    FireSurfaceMID->SetScalarParameterValue(TEXT("ASTPropCharGlow"),0.f);
+                    UpdateSurfaceVisibility();
+                    return;
+                }
+            }
+            // Fail closed: retain the original material instead of the
+            // problematic overlay when the derivative is unavailable.
+            UE_LOG(LogTemp,Warning,TEXT("AST Fire: carry char material unavailable: %s"),*GetNameSafe(GetOwner()));
+            return;
+        }
+    }
     UMaterialInterface* Surface = bCharOverlay
         ? CharMaterial.LoadSynchronous() : SurfaceMaterial.LoadSynchronous();
     if (!Surface)
@@ -886,6 +917,14 @@ void UASTFireReactiveComponent::SetupSurfaceFire(USceneComponent* Parent)
 void UASTFireReactiveComponent::UpdateSurfaceVisibility()
 {
     if (!IsValid(FireSurfaceMesh) || !IsValid(FireSurfaceMID)) return;
+    if(bCharUsesPropSlot)
+    {
+        UMaterialInterface* Current=FireSurfaceMesh->GetMaterial(0);
+        const bool bShow=CharProgress>.001f || (bStartLit&&Intensity>.005f)||SmoothIntensity>.02f;
+        if(bShow && Current==PreviousCharPropMaterial)FireSurfaceMesh->SetMaterial(0,FireSurfaceMID);
+        else if(!bShow && Current==FireSurfaceMID)FireSurfaceMesh->SetMaterial(0,PreviousCharPropMaterial);
+        return;
+    }
     UMaterialInterface* Current = FireSurfaceMesh->GetOverlayMaterial(false, 0);
     const bool bShowChar = bEnableProceduralFlames && bEnableCharring &&
         (CharProgress > .001f || (bStartLit && Intensity > .005f)
@@ -903,6 +942,11 @@ void UASTFireReactiveComponent::UpdateSurfaceVisibility()
 
 void UASTFireReactiveComponent::ReleaseSurfaceFire()
 {
+    if(bCharUsesPropSlot && IsValid(FireSurfaceMesh) && IsValid(FireSurfaceMID) &&
+        FireSurfaceMesh->GetMaterial(0)==FireSurfaceMID)
+        FireSurfaceMesh->SetMaterial(0,PreviousCharPropMaterial);
+    bCharUsesPropSlot=false;
+    PreviousCharPropMaterial=nullptr;
     if (IsValid(FireSurfaceMesh) && IsValid(FireSurfaceMID) &&
         FireSurfaceMesh->GetOverlayMaterial(false, 0) == FireSurfaceMID)
         FireSurfaceMesh->SetOverlayMaterial(PreviousFireSurfaceOverlay);
@@ -1875,13 +1919,12 @@ void UASTFireReactiveComponent::TickComponent(
     {
         if (bEnableProceduralFlames && bEnableCharring)
         {
+            const float Glow=FMath::Clamp(SmoothIntensity*LightEnvelope+
+                .60f*CharProgress*FMath::Clamp(CharSmolderRemaining/2.5f,0.f,1.f),0.f,1.2f);
             FireSurfaceMID->SetScalarParameterValue(
-                FName(TEXT("CharProgress")),CharProgress);
+                bCharUsesPropSlot?FName(TEXT("ASTPropCharProgress")):FName(TEXT("CharProgress")),CharProgress);
             FireSurfaceMID->SetScalarParameterValue(
-                FName(TEXT("CharGlow")),
-                FMath::Clamp(SmoothIntensity*LightEnvelope+
-                    .60f*CharProgress*FMath::Clamp(
-                        CharSmolderRemaining/2.5f,0.f,1.f),0.f,1.2f));
+                bCharUsesPropSlot?FName(TEXT("ASTPropCharGlow")):FName(TEXT("CharGlow")),Glow);
             UpdateSurfaceVisibility(); // Keep cooled soot visible on the mesh.
         }
         // Root texture, extending tongues and light share the same heat energy.
