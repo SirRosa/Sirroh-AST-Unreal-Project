@@ -165,4 +165,6 @@ assert 'Sirroh3DVisualMesh' in r and 'FindTargetComponent()==Rendered' in r
 assert 'Cast<USkinnedMeshComponent>(Source)' in c
 zone=(root/"Private/ASTFireIgnitionZoneComponent.cpp").read_text()
 assert "OverlapMultiByObjectType" in zone and "AllObjects" in zone
-assert "bNoDuplicate" in zone and "bReentry" in zone
+assert "bNoDuplicate" in zone and "bCarriedReentry" in zone
+
+assert "SirrohCarryProp" in zone and "Separated(FVector::CrossProduct" in zone
