@@ -84,6 +84,7 @@ jobs:
           python Automation/ASTFire/test_stage4_source.py
           # V3 visual snapshot tests above are syntax-checked for rollback history.
           # V4 replaces their raster-specific assertions with a current contract.
+          python -m py_compile Automation/ASTFire/audit_burn_duration.py
           python -m py_compile Automation/ASTFire/setup_fire_v4.py
           python -m py_compile Automation/ASTFire/test_fire_v4.py
           python -m py_compile Automation/ASTFire/verify_fire_v4_gpu.py
@@ -101,7 +102,8 @@ jobs:
             "Automation/ASTFire/deploy_stage9_windows.ps1",
             "Automation/ASTFire/deploy_stage10_windows.ps1",
             "Automation/ASTFire/deploy_stage33_smoke_windows.ps1",
-            "Automation/ASTFire/deploy_fire_v4_windows.ps1"
+            "Automation/ASTFire/deploy_fire_v4_windows.ps1",
+            "Automation/ASTFire/deploy_burn_duration_windows.ps1"
           )) {
             $tokens = $null
             $errors = $null

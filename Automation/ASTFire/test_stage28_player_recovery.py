@@ -1,9 +1,9 @@
-"""Stage28: exactly six seconds reference burn and player-only 10s soot recovery."""
+"""Stage28: seven seconds reference burn and player-only 10s soot recovery."""
 from pathlib import Path
 p=Path("Plugins/ASTFireRuntime/Source/ASTFireRuntime")
 h=(p/"Public/ASTFireReactiveComponent.h").read_text()
 c=(p/"Private/ASTFireReactiveComponent.cpp").read_text()
-for key in ('float BaseBurnSeconds = 6.0f;',
+for key in ('float BaseBurnSeconds = 7.0f;',
             'float PlayerCharRecoverySeconds = 10.0f;',
             'float PlayerCharFadeElapsedSeconds = 0.f;',
             'float PlayerCharFadeStartProgress = 0.f;'):
@@ -28,4 +28,4 @@ for start in (.15,.55,1.):
     assert char_recovery(start,10.,True)==0
     assert char_recovery(start,20.,True)==0
     assert char_recovery(start,20.,False)==start
-print("Stage28: 6s reference burn; only server-owned player pawn recovers in 10s")
+print("Stage28: 7s reference burn; only server-owned player pawn recovers in 10s")

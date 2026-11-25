@@ -16,6 +16,7 @@ class UPrimitiveComponent;
 class USceneComponent;
 class UMeshComponent;
 class UStaticMesh;
+class USkeletalMesh;
 class UStaticMeshComponent;
 class UMaterialInterface;
 class UMaterialInstanceDynamic;
@@ -180,12 +181,12 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="AST Fire|Response", meta=(ClampMin="0", ClampMax="45"))
     float MaxLeanDegrees = 16.0f;
 
-    /** Server-authoritative fire lifetime. Standard 180 cm ignited object lasts ~6 s. */
+    /** Server-authoritative fire lifetime. Standard 180 cm ignited object lasts ~7 s. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="AST Fire|Burn", meta=(ClampMin="0"))
     bool bAutoExtinguish = true;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="AST Fire|Burn", meta=(ClampMin="0.1", ClampMax="30"))
-    float BaseBurnSeconds = 6.0f;
+    float BaseBurnSeconds = 7.0f;
 
     /** Terminal temperature ramp; the mesh remains visible during afterglow. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="AST Fire|Burn", meta=(ClampMin="0.1", ClampMax="5"))
@@ -217,6 +218,9 @@ public:
     /** Rebuild generated visuals (useful after changing coverage settings). */
     UFUNCTION(BlueprintCallable, Category="AST Fire")
     void RefreshFireVisuals();
+
+    UFUNCTION(BlueprintCallable, Category="AST Fire|Diagnostics")
+    static FString RunBurnDurationAudit(USkeletalMesh* CharacterMesh);
 
 protected:
     virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;

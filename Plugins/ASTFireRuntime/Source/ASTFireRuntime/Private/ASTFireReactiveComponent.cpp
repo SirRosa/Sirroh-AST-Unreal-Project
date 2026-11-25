@@ -15,6 +15,7 @@
 #include "Components/StaticMeshComponent.h"
 #include "Components/SphereComponent.h"
 #include "Engine/StaticMesh.h"
+#include "Engine/SkeletalMesh.h"
 #include "Materials/MaterialInterface.h"
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"
@@ -1186,19 +1187,120 @@ void UASTFireReactiveComponent::RefreshFireVisuals()
 
 float UASTFireReactiveComponent::ComputeBurnDuration() const
 {
-    float SizeCm = FMath::Max(10.f, ReferenceSizeCm);
-    if (const UPrimitiveComponent* Primitive =
-        Cast<UPrimitiveComponent>(FindTargetComponent()))
+    const float Reference=FMath::Max(10.f,ReferenceSizeCm);
+    float SizeCm=Reference;
+    if (const UPrimitiveComponent* Primitive=Cast<UPrimitiveComponent>(FindTargetComponent()))
     {
-        // World-space mesh bounds work for StaticMesh and animated SkeletalMesh;
-        // use the largest dimension, not unbounded cubic volume scaling.
-        SizeCm = FMath::Max(10.f, float(
-            Primitive->Bounds.BoxExtent.GetMax()) * 2.f);
+        // Measure the selected burnable mesh in its rest/local space, then
+        // apply actual component scale. World AABBs change with rotation,
+        // crouching and ragdoll poses, and may include unrelated equipment.
+        FVector Extent=Primitive->CalcBounds(FTransform::Identity).BoxExtent;
+        if(const UStaticMeshComponent* Static=Cast<UStaticMeshComponent>(Primitive))
+        {
+            if(const UStaticMesh* Asset=Static->GetStaticMesh())Extent=Asset->GetBounds().BoxExtent;
+        }
+        else if(const USkeletalMeshComponent* Skin=Cast<USkeletalMeshComponent>(Primitive))
+        {
+            if(const USkeletalMesh* Asset=Skin->GetSkeletalMeshAsset())Extent=Asset->GetBounds().BoxExtent;
+        }
+        const FVector Dimensions=Extent.GetAbs()*Primitive->GetComponentScale().GetAbs()*2.f;
+        if(!Dimensions.ContainsNaN() && Dimensions.GetMax()>KINDA_SMALL_NUMBER)
+            SizeCm=FMath::Max(10.f,float(Dimensions.GetMax()));
     }
-    const float RelativeSize = SizeCm / FMath::Max(10.f, ReferenceSizeCm);
-    const float Factor = FMath::Clamp(FMath::Pow(RelativeSize, .42f),
-        .7f, FMath::Max(1.f, MaxBurnSizeMultiplier));
-    return FMath::Max(.1f, BaseBurnSeconds) * Factor;
+    // Continuous power curve: 50 cm ~3.0 s, 180 cm ~7 s at defaults.
+    // Keep sub-50 cm props playable; bound very large scenery for safety.
+    // Authored BaseBurnSeconds remains a reference-duration multiplier.
+    const float Factor=FMath::Clamp(FMath::Pow(SizeCm/Reference,.66f),
+        3.f/7.f,FMath::Max(1.f,MaxBurnSizeMultiplier));
+    return FMath::Max(.1f,BaseBurnSeconds)*Factor;
+}
+
+FString UASTFireReactiveComponent::RunBurnDurationAudit(USkeletalMesh* CharacterMesh)
+{
+#if WITH_EDITOR
+    UStaticMesh* Cube=LoadObject<UStaticMesh>(nullptr,TEXT("/Engine/BasicShapes/Cube.Cube"));
+    if(!IsValid(Cube)||!IsValid(CharacterMesh))return TEXT("FAIL:NO_TEST_ASSETS");
+    UWorld* World=UWorld::CreateWorld(EWorldType::Game,false);
+    if(!World)return TEXT("FAIL:NO_WORLD");
+    const float Sizes[]={30.f,50.f,100.f,180.f,300.f,600.f};
+    float Durations[6]={},Actual[6]={};
+    bool bPass=true;
+    auto Create=[&](AActor* Owner)
+    {
+        auto* Fire=NewObject<UASTFireReactiveComponent>(Owner);
+        Fire->bStartLit=false;Fire->Intensity=0.f;
+        Fire->bEnableProceduralFlames=false;Fire->bEnableSurfaceFire=false;
+        Fire->RegisterComponent();
+        // Exercise the real authority tick and ignition path without
+        // creating unrelated render components in this isolated fixture.
+        Fire->bInitialized=true;Fire->bPlaying=true;
+        return Fire;
+    };
+    auto Measure=[&](UASTFireReactiveComponent* Fire,float& ActualSeconds)
+    {
+        Fire->Ignite(1.f);
+        const float Expected=Fire->BurnDurationSeconds;
+        float Time=0.f;
+        while(Fire->bStartLit && Time<Expected+1.f)
+        {
+            Fire->TickComponent(.02f,LEVELTICK_All,&Fire->PrimaryComponentTick);
+            Time+=.02f;
+        }
+        ActualSeconds=Time;
+        return !Fire->bStartLit && Fire->Intensity==0.f &&
+            FMath::Abs(Time-Expected)<.041f;
+    };
+    for(int32 I=0;I<6;++I)
+    {
+        AActor* Owner=World->SpawnActor<AActor>();
+        if(!Owner){bPass=false;continue;}
+        auto* Mesh=NewObject<UStaticMeshComponent>(Owner);
+        Mesh->SetStaticMesh(Cube);Owner->SetRootComponent(Mesh);Mesh->RegisterComponent();
+        Mesh->SetWorldScale3D(FVector(Sizes[I]/float(Cube->GetBounds().BoxExtent.GetMax()*2.f)));
+        auto* Fire=Create(Owner);
+        Durations[I]=Fire->ComputeBurnDuration();
+        Owner->SetActorRotation(FRotator(27,45,33));
+        bPass&=FMath::IsNearlyEqual(Durations[I],Fire->ComputeBurnDuration(),.001f);
+        bPass&=Measure(Fire,Actual[I]);
+        if(I>0)bPass&=Durations[I]>=Durations[I-1];
+        if(I>=2)bPass&=Durations[I]>Durations[I-1];
+        if(I==2)
+        {
+            Fire->Ignite(1.f);
+            bPass&=Fire->BurnElapsedSeconds==0.f && FMath::IsNearlyEqual(Fire->BurnDurationSeconds,Durations[I],.001f);
+            Fire->TickComponent(.25f,LEVELTICK_All,&Fire->PrimaryComponentTick);
+            const float Age=Fire->BurnElapsedSeconds;
+            Fire->Ignite(.8f);
+            bPass&=FMath::IsNearlyEqual(Age,Fire->BurnElapsedSeconds,.001f);
+            Fire->Extinguish();Fire->bAutoExtinguish=false;Fire->Ignite(1.f);
+            for(int32 J=0;J<500;++J)Fire->TickComponent(.04f,LEVELTICK_All,&Fire->PrimaryComponentTick);
+            bPass&=Fire->bStartLit && FMath::IsNearlyEqual(Fire->Intensity,1.f);
+        }
+        Fire->DestroyComponent();Owner->Destroy();
+    }
+    float CharacterDuration=0.f,CharacterActual=0.f,CharacterSize=0.f;
+    if(AActor* Owner=World->SpawnActor<AActor>())
+    {
+        auto* Mesh=NewObject<USkeletalMeshComponent>(Owner);
+        Mesh->SetSkeletalMesh(CharacterMesh);Owner->SetRootComponent(Mesh);Mesh->RegisterComponent();
+        Mesh->RefreshBoneTransforms();
+        auto* Fire=Create(Owner);
+        CharacterSize=float(CharacterMesh->GetBounds().BoxExtent.GetMax()*2.f);
+        CharacterDuration=Fire->ComputeBurnDuration();
+        bPass&=CharacterDuration>5.5f && CharacterDuration<8.5f && Measure(Fire,CharacterActual);
+        bPass&=Fire->CharProgress>.8f; // unchanged normalized char accumulation
+        Fire->DestroyComponent();Owner->Destroy();
+    }
+    else bPass=false;
+    bPass&=FMath::Abs(Durations[0]-3.f)<.05f && FMath::Abs(Durations[1]-3.f)<.12f &&
+        FMath::Abs(Durations[3]-7.f)<.01f && Durations[5]>12.f;
+    World->DestroyWorld(false);
+    return FString::Printf(TEXT("%s:30cm=%.2f/%.2f;50cm=%.2f/%.2f;100cm=%.2f/%.2f;180cm=%.2f/%.2f;300cm=%.2f/%.2f;600cm=%.2f/%.2f;characterCm=%.1f;character=%.2f/%.2f;rotation_reignite_permanent=%d"),
+        bPass?TEXT("PASS"):TEXT("FAIL"),Durations[0],Actual[0],Durations[1],Actual[1],Durations[2],Actual[2],
+        Durations[3],Actual[3],Durations[4],Actual[4],Durations[5],Actual[5],CharacterSize,CharacterDuration,CharacterActual,int32(bPass));
+#else
+    return TEXT("EDITOR_ONLY");
+#endif
 }
 
 void UASTFireReactiveComponent::SetFireIntensity(float NewIntensity)
@@ -1214,6 +1316,8 @@ void UASTFireReactiveComponent::SetFireIntensity(float NewIntensity)
         BurnElapsedSeconds = 0.f;
         BurnDurationSeconds = ComputeBurnDuration();
         InitialBurnIntensity = Intensity;
+        UE_LOG(LogTemp,Log,TEXT("AST Fire: fuel lifetime %s = %.2f s (reference %.2f s)"),
+            *GetNameSafe(GetOwner()),BurnDurationSeconds,BaseBurnSeconds);
     }
     else if (bStartLit && bAutoExtinguish)
     {
