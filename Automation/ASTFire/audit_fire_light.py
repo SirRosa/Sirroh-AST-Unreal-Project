@@ -16,11 +16,12 @@ try:
         out["capture"]=u.ASTFireReactiveComponent.run_fire_light_capture(torch)
         if not out["capture"].startswith("PASS:"):
             raise RuntimeError("Manual exposure capture failed: "+out["capture"])
+    out["contact"]=u.ASTFireIgnitionZoneComponent.run_contact_audit()
     out["burn"]=u.ASTFireReactiveComponent.run_burn_duration_audit(skin)
     out["fire"]=u.ASTFireFreeFlameComponent.run_fire_v4_audit(mat)
     out["smoke"]=u.ASTFireFreeFlameComponent.run_smoke_audit(smoke)
     out["surface"]=u.ASTFireFreeFlameComponent.run_fire_surface_audit(mat,skin,False)
-    if not all(out[k].startswith("PASS:") for k in ("light","burn","fire","smoke","surface")):
+    if not all(out[k].startswith("PASS:") for k in ("light","contact","burn","fire","smoke","surface")):
         raise RuntimeError("Native audit failed")
     out["status"]="PASS"
 except Exception as exc:
