@@ -12,6 +12,7 @@
 #include "Components/PrimitiveComponent.h"
 #include "Components/MeshComponent.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Components/PoseableMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Components/SphereComponent.h"
 #include "Engine/StaticMesh.h"
@@ -215,35 +216,43 @@ USceneComponent* UASTFireReactiveComponent::FindTargetComponent() const
     Owner->GetComponents<UMeshComponent>(Meshes);
     UMeshComponent* Best = nullptr;
     float BestRadius = -1.0f;
-    USkeletalMeshComponent* BestSkeleton = nullptr;
+    USkinnedMeshComponent* BestSkeleton = nullptr;
     float SkeletonRadius = -1.f;
+    USkinnedMeshComponent* HiddenSkeleton = nullptr;
+    float HiddenRadius = -1.f;
 
+    if(!PreferredMeshComponentName.IsNone())
+        for(UMeshComponent* Mesh:Meshes)
+            if(IsValid(Mesh)&&!Mesh->IsEditorOnly()&&Mesh->GetFName()==PreferredMeshComponentName)return Mesh;
     for (UMeshComponent* Mesh : Meshes)
     {
         if (!IsValid(Mesh) || Mesh->IsEditorOnly()) continue;
-        if (!PreferredMeshComponentName.IsNone() &&
-            Mesh->GetFName() == PreferredMeshComponentName)
-            return Mesh;
-        if (!Mesh->IsVisible()) continue;
-        const float Radius = Mesh->Bounds.SphereRadius;
-        // The torso's skinned mesh is the correct burnable surface. A backpack
-        // or attached static weapon may have larger bounds than the character.
-        if (USkeletalMeshComponent* Skeleton=Cast<USkeletalMeshComponent>(Mesh))
+        // The actual Sirroh character is a UPoseableMeshComponent, not the
+        // hidden animation-driving USkeletalMeshComponent. Both derive from
+        // USkinnedMeshComponent and expose the same skinning data.
+        if (USkinnedMeshComponent* Skin=Cast<USkinnedMeshComponent>(Mesh))
         {
-            if (Radius > SkeletonRadius)
+            if (!Cast<USkeletalMesh>(Skin->GetSkinnedAsset())) continue;
+            const float Radius=Skin->Bounds.SphereRadius;
+            if (Skin->IsVisible() && !Skin->bHiddenInGame)
             {
-                BestSkeleton=Skeleton;
-                SkeletonRadius=Radius;
+                if (Skin->GetFName()==FName(TEXT("Sirroh3DVisualMesh"))) return Skin;
+                if (Radius>SkeletonRadius){BestSkeleton=Skin;SkeletonRadius=Radius;}
             }
+            else if (Radius>HiddenRadius){HiddenSkeleton=Skin;HiddenRadius=Radius;}
+            continue;
         }
-        if (Radius > BestRadius)
-        {
-            BestRadius = Radius;
-            Best = Mesh;
-        }
+        if (!Mesh->IsVisible() || Mesh->bHiddenInGame) continue;
+        if (UStaticMeshComponent* Static=Cast<UStaticMeshComponent>(Mesh))
+            if (!Static->GetStaticMesh()) continue;
+        // Never select our own transient flame raster as the next fuel mesh.
+        if (Mesh->IsA<UProceduralMeshComponent>() && Mesh->HasAnyFlags(RF_Transient)) continue;
+        const float Radius = Mesh->Bounds.SphereRadius;
+        if (Radius > BestRadius){BestRadius=Radius;Best=Mesh;}
     }
-    return BestSkeleton ? static_cast<USceneComponent*>(BestSkeleton)
-        : (Best ? static_cast<USceneComponent*>(Best) : Owner->GetRootComponent());
+    if(BestSkeleton)return BestSkeleton;
+    if(Owner->IsA<APawn>() && HiddenSkeleton)return HiddenSkeleton;
+    return Best ? static_cast<USceneComponent*>(Best) : Owner->GetRootComponent();
 }
 
 UPointLightComponent* UASTFireReactiveComponent::FindOwnedLight() const
@@ -1005,7 +1014,7 @@ void UASTFireReactiveComponent::InitializeFire()
     // only as an explicit fallback, never as our preferred placement.
     if (Coverage == EASTFireCoverage::Bounds && Points.IsEmpty())
     {
-        if (USkeletalMeshComponent* Skeletal = Cast<USkeletalMeshComponent>(Parent))
+        if (USkinnedMeshComponent* Skeletal = Cast<USkinnedMeshComponent>(Parent))
         {
             struct FBoneCandidate { FName Name; FVector World; float Scale; };
             TArray<FBoneCandidate> Candidates;
@@ -1121,7 +1130,7 @@ void UASTFireReactiveComponent::InitializeFire()
     {
         if (Points.Num() >= 16) break;
         const FVector LocalHit(HitOffset.X, HitOffset.Y, HitOffset.Z);
-        if (USkeletalMeshComponent* Skeletal = Cast<USkeletalMeshComponent>(Parent))
+        if (USkinnedMeshComponent* Skeletal = Cast<USkinnedMeshComponent>(Parent))
         {
             const FVector WorldHit = Skeletal->GetComponentTransform().TransformPosition(LocalHit);
             FName NearestBone = NAME_None;
@@ -1474,9 +1483,9 @@ float UASTFireReactiveComponent::ComputeBurnDuration() const
         {
             if(const UStaticMesh* Asset=Static->GetStaticMesh())Extent=Asset->GetBounds().BoxExtent;
         }
-        else if(const USkeletalMeshComponent* Skin=Cast<USkeletalMeshComponent>(Primitive))
+        else if(const USkinnedMeshComponent* Skin=Cast<USkinnedMeshComponent>(Primitive))
         {
-            if(const USkeletalMesh* Asset=Skin->GetSkeletalMeshAsset())Extent=Asset->GetBounds().BoxExtent;
+            if(const USkeletalMesh* Asset=Cast<USkeletalMesh>(Skin->GetSkinnedAsset()))Extent=Asset->GetBounds().BoxExtent;
         }
         const FVector Dimensions=Extent.GetAbs()*Primitive->GetComponentScale().GetAbs()*2.f;
         if(!Dimensions.ContainsNaN() && Dimensions.GetMax()>KINDA_SMALL_NUMBER)
@@ -1559,7 +1568,16 @@ FString UASTFireReactiveComponent::RunBurnDurationAudit(USkeletalMesh* Character
         auto* Mesh=NewObject<USkeletalMeshComponent>(Owner);
         Mesh->SetSkeletalMesh(CharacterMesh);Owner->SetRootComponent(Mesh);Mesh->RegisterComponent();
         Mesh->RefreshBoneTransforms();
+        auto* Rendered=NewObject<UPoseableMeshComponent>(Owner,TEXT("Sirroh3DVisualMesh"));
+        Rendered->SetSkinnedAssetAndUpdate(CharacterMesh,true);
+        Rendered->SetupAttachment(Mesh);Rendered->RegisterComponent();
+        Rendered->CopyPoseFromSkeletalComponent(Mesh);Rendered->RefreshBoneTransforms();
+        Mesh->SetVisibility(false,false);Mesh->SetHiddenInGame(true,false);
+        auto* Backpack=NewObject<UStaticMeshComponent>(Owner);
+        Backpack->SetStaticMesh(Cube);Backpack->SetupAttachment(Mesh);Backpack->RegisterComponent();
+        Backpack->SetWorldScale3D(FVector(.4f));
         auto* Fire=Create(Owner);
+        bPass&=Fire->FindTargetComponent()==Rendered;
         CharacterSize=float(CharacterMesh->GetBounds().BoxExtent.GetMax()*2.f);
         CharacterDuration=Fire->ComputeBurnDuration();
         bPass&=CharacterDuration>5.5f && CharacterDuration<8.5f && Measure(Fire,CharacterActual);
