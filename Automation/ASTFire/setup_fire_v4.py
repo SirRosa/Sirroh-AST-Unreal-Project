@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Fire v4: update ONLY the shared flame material, never smoke or blueprints."""
+"""Fire v4: update flame and spark materials only; never smoke or blueprints."""
 import json, os, traceback
 import unreal as u
 LIB=u.EditorAssetLibrary
@@ -43,6 +43,25 @@ try:
     EDIT.recompile_material(mat)
     require(LIB.save_loaded_asset(mat,only_if_is_dirty=False),"Save failed")
     OUT["assets"].append(path)
+    spark_path="/Game/VFX/Fire/Materials/M_AST_FireSpark"
+    spark=LIB.load_asset(spark_path)
+    require(spark,"Existing spark material missing")
+    spark.set_editor_property("blend_mode",u.BlendMode.BLEND_TRANSLUCENT)
+    spark.set_editor_property("shading_model",u.MaterialShadingModel.MSM_UNLIT)
+    spark.set_editor_property("two_sided",True)
+    EDIT.delete_all_material_expressions(spark)
+    sv=EDIT.create_material_expression(spark,u.MaterialExpressionVertexColor,-400,0)
+    gain=EDIT.create_material_expression(spark,u.MaterialExpressionMultiply,-120,-100)
+    boost=EDIT.create_material_expression(spark,u.MaterialExpressionConstant,-400,150)
+    require(sv and gain and boost,"Spark nodes missing")
+    boost.set_editor_property("r",2.8)
+    require(EDIT.connect_material_expressions(sv,"",gain,"A"),"Spark RGB")
+    require(EDIT.connect_material_expressions(boost,"",gain,"B"),"Spark gain")
+    require(EDIT.connect_material_property(gain,"",u.MaterialProperty.MP_EMISSIVE_COLOR),"Spark emissive")
+    require(EDIT.connect_material_property(sv,"A",u.MaterialProperty.MP_OPACITY),"Spark continuous opacity")
+    EDIT.recompile_material(spark)
+    require(LIB.save_loaded_asset(spark,only_if_is_dirty=False),"Spark save failed")
+    OUT["assets"].append(spark_path)
     OUT["fire_audit"]=u.ASTFireFreeFlameComponent.run_fire_v4_audit(mat)
     smoke=LIB.load_asset("/Game/VFX/Fire/Materials/M_AST_FireSmoke")
     require(smoke,"Smoke material missing")

@@ -31,7 +31,7 @@ for token in (
 ): assert token in c, token
 assert "D.Position+=D.Velocity*Dt;" in flame
 assert "T.Life = EFlameLife::Growing;" in flame
-assert "T.RestartLength=FMath::Min(Remaining,T.MaxLength*.34f);" in flame
+assert "T.RestartLength=FMath::Min(FMath::Min(Remaining,ResetCap),T.MaxLength*.18f);" in flame
 assert "T.Life = EFlameLife::Bridging;" in flame
 def duration(size,base=6.,ref=180.,cap=3.5):
     factor=max(.7,min(cap,(max(10.,size)/max(10.,ref))**.42))

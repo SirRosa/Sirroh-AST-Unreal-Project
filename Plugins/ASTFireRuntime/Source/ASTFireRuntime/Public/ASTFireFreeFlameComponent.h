@@ -118,6 +118,9 @@ private:
         float DisplayHeat=1.f;
         int32 DisplayGeneration=INDEX_NONE;
         bool bDisplayedPinch=false;
+        // World-space radial growth, persistent per source anchor.
+        FVector Outward=FVector::ZeroVector;
+        float RebirthDelay=0.f;
     };
     struct FDetached
     {

@@ -35,8 +35,8 @@ $sourcePlugin=Join-Path $source $plugin
 $livePlugin=Join-Path $ProjectRoot $plugin
 # Compare the exact locally deployed source to the accepted revision.
 $baseline=@{
- "$plugin\Source\ASTFireRuntime\Private\ASTFireFreeFlameComponent.cpp"=@('16af2c8653c72bba66508ff598fb157ff85d4a2d','0189c213c6d69a49beb72337dc01581b77f4e7f0')
- "$plugin\Source\ASTFireRuntime\Public\ASTFireFreeFlameComponent.h"=@('e4d980e5940a773065e7277300a35f0ea8190d6a','237adae01b04d70857c2029242e72299deaa1114')
+ "$plugin\Source\ASTFireRuntime\Private\ASTFireFreeFlameComponent.cpp"=@('16af2c8653c72bba66508ff598fb157ff85d4a2d','0189c213c6d69a49beb72337dc01581b77f4e7f0','5050224e71c7a5f75a4f77ef46fdc189e89c706c')
+ "$plugin\Source\ASTFireRuntime\Public\ASTFireFreeFlameComponent.h"=@('e4d980e5940a773065e7277300a35f0ea8190d6a','237adae01b04d70857c2029242e72299deaa1114','d74a3c735313c62524edc6d4ec735ea6bd57e1d6')
 }
 foreach($rel in $baseline.Keys){
  $current=(& git -C $ProjectRoot hash-object ('--path='+$rel.Replace('\','/')) (Join-Path $ProjectRoot $rel)).Trim()
@@ -82,7 +82,7 @@ Write-Output ('FIRE_V4_ABI_IMPORTS_CHECKED='+$checked)
 Assert-EditorClosed
 New-Item -ItemType Directory -Force -Path $backup|Out-Null
 Set-Content (Join-Path $backup 'REVISION.txt') $actual
-$restore=@($files)+@($material)
+$restore=@($files)+@($material,'Content\VFX\Fire\Materials\M_AST_FireSpark.uasset')
 $liveBin=Join-Path $livePlugin 'Binaries'
 foreach($f in Get-ChildItem -LiteralPath $bin -Recurse -File){
  $rel=$f.FullName.Substring($bin.Length).TrimStart('\')

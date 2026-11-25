@@ -17,6 +17,12 @@ try:
         raise RuntimeError("Expected two-sided procedural mesh material")
     u.MaterialEditingLibrary.recompile_material(m)
     OUT["materials"].append(path)
+    spark_path="/Game/VFX/Fire/Materials/M_AST_FireSpark"
+    spark=u.EditorAssetLibrary.load_asset(spark_path)
+    if not spark or spark.get_editor_property("blend_mode")!=u.BlendMode.BLEND_TRANSLUCENT:
+        raise RuntimeError("Expected continuously translucent sparks")
+    u.MaterialEditingLibrary.recompile_material(spark)
+    OUT["materials"].append(spark_path)
     OUT["capture"]=u.ASTFireFreeFlameComponent.run_fire_v4_capture(m)
     if not OUT["capture"].startswith("PASS:"):
         raise RuntimeError("GPU capture failed: "+OUT["capture"])
