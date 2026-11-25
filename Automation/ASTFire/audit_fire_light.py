@@ -21,11 +21,12 @@ try:
     if not box or not barrel: raise RuntimeError("Missing actual carry prop Blueprints")
     out["contact"]=u.ASTFireIgnitionZoneComponent.run_contact_audit(box,barrel)
     out["carry_visual"]=u.ASTFireFreeFlameComponent.run_carry_visual_audit(box,barrel)
+    out["prop_char"]=u.ASTFireReactiveComponent.run_prop_char_audit(box,barrel)
     out["burn"]=u.ASTFireReactiveComponent.run_burn_duration_audit(skin)
     out["fire"]=u.ASTFireFreeFlameComponent.run_fire_v4_audit(mat)
     out["smoke"]=u.ASTFireFreeFlameComponent.run_smoke_audit(smoke)
     out["surface"]=u.ASTFireFreeFlameComponent.run_fire_surface_audit(mat,skin,False)
-    if not all(out[k].startswith("PASS:") for k in ("light","contact","carry_visual","burn","fire","smoke","surface")):
+    if not all(out[k].startswith("PASS:") for k in ("light","contact","carry_visual","prop_char","burn","fire","smoke","surface")):
         raise RuntimeError("Native audit failed")
     out["status"]="PASS"
 except Exception as exc:
