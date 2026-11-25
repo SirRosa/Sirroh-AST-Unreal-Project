@@ -6,6 +6,8 @@
 #include "ASTFireIgnitionZoneComponent.generated.h"
 
 class AActor;
+class AStaticMeshActor;
+class UStaticMesh;
 class UPrimitiveComponent;
 
 /**
@@ -22,6 +24,9 @@ public:
 
     UFUNCTION(BlueprintCallable, Category="AST Fire|Audit")
     static FString RunContactAudit(UClass* BoxClass,UClass* BarrelClass);
+
+    UFUNCTION(BlueprintCallable, Category="AST Fire|Audit")
+    static FString RunWoodAudit(UStaticMesh* Beam,UStaticMesh* Fence,UStaticMesh* Rock);
 
     // Editable zone size/offset; applied on BeginPlay, NEVER on the CDO.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="AST Fire|Contact")
@@ -76,4 +81,7 @@ private:
     TSet<TWeakObjectPtr<AActor>> IgnitedDuringOverlap;
     TMap<TWeakObjectPtr<AActor>,double> ContactStartedAt;
     TSet<TWeakObjectPtr<AActor>> SuppressedInitialContacts;
+    TArray<TWeakObjectPtr<AStaticMeshActor>> NearbyWood;
+    double WoodScanAt=-1.;
+    FVector WoodScanCenter=FVector::ZeroVector;
 };
