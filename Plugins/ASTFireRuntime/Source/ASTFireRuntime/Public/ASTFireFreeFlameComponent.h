@@ -41,6 +41,9 @@ public:
     UFUNCTION(BlueprintCallable, Category="AST Fire|Diagnostics")
     static FString RunFireV4Capture(UMaterialInterface* TestMaterial);
 
+    UFUNCTION(BlueprintCallable, Category="AST Fire|Diagnostics")
+    static FString RunFireSurfaceAudit(UMaterialInterface* TestMaterial, USkeletalMesh* Mesh);
+
 protected:
     virtual void OnRegister() override;
     virtual void OnUnregister() override;

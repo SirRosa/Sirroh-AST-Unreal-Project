@@ -35,7 +35,7 @@ $sourcePlugin=Join-Path $source $plugin
 $livePlugin=Join-Path $ProjectRoot $plugin
 # Compare the exact locally deployed source to the accepted revision.
 $baseline=@{
- "$plugin\Source\ASTFireRuntime\Private\ASTFireFreeFlameComponent.cpp"=@('16af2c8653c72bba66508ff598fb157ff85d4a2d','0189c213c6d69a49beb72337dc01581b77f4e7f0','5050224e71c7a5f75a4f77ef46fdc189e89c706c','9520ada15f9b4816b3b3ba67457979e12e34832e')
+ "$plugin\Source\ASTFireRuntime\Private\ASTFireFreeFlameComponent.cpp"=@('16af2c8653c72bba66508ff598fb157ff85d4a2d','0189c213c6d69a49beb72337dc01581b77f4e7f0','5050224e71c7a5f75a4f77ef46fdc189e89c706c','9520ada15f9b4816b3b3ba67457979e12e34832e','3c74313569b73fd65da07ab5c0baee5f751f0486')
  "$plugin\Source\ASTFireRuntime\Public\ASTFireFreeFlameComponent.h"=@('e4d980e5940a773065e7277300a35f0ea8190d6a','237adae01b04d70857c2029242e72299deaa1114','d74a3c735313c62524edc6d4ec735ea6bd57e1d6','0853677c1bd187d0e7fcda4ee3acd0e2d000786c')
 }
 foreach($rel in $baseline.Keys){
@@ -118,8 +118,8 @@ try {
  $exit=$LASTEXITCODE
  if(!(Test-Path -LiteralPath $result)){Get-Content -LiteralPath $auditLog -Tail 40;throw ('No audit result, UE exit '+$exit)}
  $data=Get-Content -LiteralPath $result -Raw|ConvertFrom-Json
- Write-Output ('FIRE_V4_COMMANDLET_EXIT='+$exit+';STATUS='+$data.status+';FIRE='+$data.fire_audit+';SMOKE='+$data.smoke_audit)
- if($exit -ne 0 -or $data.status -ne 'FIRE_V4_MATERIAL_READY_VISUAL_PENDING' -or $data.fire_audit -notlike 'PASS:*' -or $data.smoke_audit -notlike 'PASS:*'){
+ Write-Output ('FIRE_V4_COMMANDLET_EXIT='+$exit+';STATUS='+$data.status+';FIRE='+$data.fire_audit+';SMOKE='+$data.smoke_audit+';SURFACE='+$data.surface_audit)
+ if($exit -ne 0 -or $data.status -ne 'FIRE_V4_MATERIAL_READY_VISUAL_PENDING' -or $data.fire_audit -notlike 'PASS:*' -or $data.smoke_audit -notlike 'PASS:*' -or $data.surface_audit -notlike 'PASS:*'){
   $data.errors|ConvertTo-Json -Depth 5 -Compress|Write-Output
   throw 'Fire or smoke audit failed'
  }

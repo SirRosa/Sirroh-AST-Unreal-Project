@@ -62,9 +62,9 @@ assert "D.Temperature=FMath::Pow(Fade,.88f);" in c
 assert "MaxTransferError<.05f" in c and "MaxResetRatio<=.151f" in c
 assert "bCycle && bFragment" in c and "bMesh && bWick" in c
 assert "World->SendAllEndOfFrameUpdates();" in c
-for cut in (1,2):
+for cut in (2,3):
     vs=[k/8 for k in range(cut,9)]
-    assert vs[0] in (.125,.25) and vs[-1]==1
+    assert vs[0] in (.25,.375) and vs[-1]==1
     assert 1-vs[0]>.60
     for i in range(1,20):
         a,b=1-(i-1)/20,1-i/20
@@ -88,3 +88,11 @@ assert "Tongue.MaxLength*=Compactness;" in c
 assert "MassRatio<2.f" in c
 assert "ActiveArea+=T.CurrentWidth*T.CurrentLength;" in c
 assert "FMath::Lerp(1.f,1.38f,Abundance)" in c
+
+# Surface is rendered as fuel, not merely sampled for depth. The native
+# skeletal fixture must pass before the installer accepts the update.
+assert "SurfaceFuel.Add({World,R,LocalPhase});" in c
+assert "for(const FSurfaceFuel& Fuel:SurfaceFuel)" in c
+assert "RunFireSurfaceAudit(" in c and "Coverage>=.85f" in c
+assert "run_fire_surface_audit" in m
+assert "ProfileSamples[9]={.58f,.91f,1.f,.96f,.84f,.70f,.50f,.28f,0.f}" in c

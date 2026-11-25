@@ -62,6 +62,16 @@ try:
     EDIT.recompile_material(spark)
     require(LIB.save_loaded_asset(spark,only_if_is_dirty=False),"Spark save failed")
     OUT["assets"].append(spark_path)
+    # Use an actual project character asset, not a primitive masquerading as skin.
+    registry=u.AssetRegistryHelpers.get_asset_registry()
+    mesh_assets=registry.get_assets_by_class(u.TopLevelAssetPath("/Script/Engine","SkeletalMesh"),True)
+    names=("skm_manny","skm_quinn","sk_mannequin","skm_manny_simple","skm_quinn_simple")
+    candidates=[a for a in mesh_assets if str(a.asset_name).lower() in names]
+    candidates.sort(key=lambda a:(not str(a.package_name).startswith("/Game/"), names.index(str(a.asset_name).lower()),str(a.package_name)))
+    require(candidates,"No mannequin skeletal mesh found for mandatory regression test")
+    skin=candidates[0].get_asset()
+    OUT["surface_audit"]=u.ASTFireFreeFlameComponent.run_fire_surface_audit(mat,skin)
+    require(OUT["surface_audit"].startswith("PASS:"),"Skeletal mantle regression: "+OUT["surface_audit"])
     OUT["fire_audit"]=u.ASTFireFreeFlameComponent.run_fire_v4_audit(mat)
     smoke=LIB.load_asset("/Game/VFX/Fire/Materials/M_AST_FireSmoke")
     require(smoke,"Smoke material missing")
