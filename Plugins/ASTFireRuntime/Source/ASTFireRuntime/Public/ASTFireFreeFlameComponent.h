@@ -60,8 +60,8 @@ private:
     static constexpr int32 MaxSparks = 48;
     static constexpr int32 MaxSmoke = 72; // bounded world-space density carriers
     static constexpr int32 SmokeTones = 5;
-    static constexpr int32 SmokeGridMaxX = 64;
-    static constexpr int32 SmokeGridMaxY = 112;
+    static constexpr int32 SmokeGridMaxX = 128;
+    static constexpr int32 SmokeGridMaxY = 256;
     static constexpr int32 RingsPerDetached = 5;
     static constexpr int32 BridgeRings = 4;
     static constexpr int32 SurfaceClusters = 8;
