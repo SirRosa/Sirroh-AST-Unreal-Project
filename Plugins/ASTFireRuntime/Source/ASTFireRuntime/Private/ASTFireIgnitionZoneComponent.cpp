@@ -56,6 +56,12 @@ void UASTFireIgnitionZoneComponent::BeginPlay()
                 IgniteTarget(Actor, Actor->GetActorLocation());
         }
     }
+    if(GetOwner() && GetOwner()->HasAuthority())
+    {
+        bPrimingContacts=!bIgniteInitialOverlaps;
+        PollContactOverlaps();
+        bPrimingContacts=false;
+    }
 }
 
 void UASTFireIgnitionZoneComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
@@ -125,15 +131,16 @@ void UASTFireIgnitionZoneComponent::PollContactOverlaps()
         if(!bPawn&&!bPhysical)continue;
         const TWeakObjectPtr<AActor> Key(Actor);
         Touching.Add(Key);
+        if(bPrimingContacts){IgnitedDuringOverlap.Add(Key);continue;}
         if(IgnitedDuringOverlap.Contains(Key))continue;
         FVector Contact=Body->Bounds.Origin;
         FVector Closest;
-        if(Body->GetClosestPointOnCollision(GetComponentLocation(),Closest)>=0.f)
+        if(Body->GetClosestPointOnCollision(GetComponentLocation(),Closest)>0.f)
             Contact=Closest;
         IgniteTarget(Actor,Contact);
     }
     // Also retry native contacts if the source was not lit on entry.
-    for(AActor* Actor:Native)
+    if(!bPrimingContacts)for(AActor* Actor:Native)
         if(IsValid(Actor))IgniteTarget(Actor,Actor->GetActorLocation());
     for(auto It=IgnitedDuringOverlap.CreateIterator();It;++It)
         if(!It->IsValid()||!Touching.Contains(*It))It.RemoveCurrent();
