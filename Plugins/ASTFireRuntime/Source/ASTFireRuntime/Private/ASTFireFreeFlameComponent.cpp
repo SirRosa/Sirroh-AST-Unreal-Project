@@ -1613,7 +1613,7 @@ FString UASTFireFreeFlameComponent::RunFireV4Audit(UMaterialInterface* TestMater
                     {
                         const FIntPoint Q(X,Y);
                         if(const int32* C=Main.Find(Q)) Raster.AppendChar(TCHAR('0'+*C));
-                        else if(const int32* C=DetachedPixels.Find(Q))Raster.AppendChar(TCHAR('a'+*C));
+                        else if(const int32* FragmentTone=DetachedPixels.Find(Q))Raster.AppendChar(TCHAR('a'+*FragmentTone));
                         else Raster.AppendChar(TCHAR('.'));
                     }
                     Raster.AppendChar(TCHAR('\n'));
@@ -1710,9 +1710,7 @@ FString UASTFireFreeFlameComponent::RunFireV4Capture(UMaterialInterface* TestMat
         Fire->UpdateGeometry(false);
         if(I>=28 && I%10==8)
         {
-            // UE 5.8 exposes the paired start/finish API for world updates.
-            World->StartAsyncSendAllEndOfFrameUpdates();
-            World->FinishAsyncSendAllEndOfFrameUpdates();
+            World->SendAllEndOfFrameUpdates();
             Capture->CaptureScene();
             FlushRenderingCommands();
             const FString Name=Folder/FString::Printf(TEXT("Frame_%03d.png"),I);
@@ -2404,7 +2402,7 @@ float UASTFireFreeFlameComponent::UpdateConnectedSource(
         float Cover=-BIG_NUMBER,Temperature=0.f,NeckDepth=-BIG_NUMBER;
         const float Z=float(P.Y-RootCenter.Y)/FMath::Max(.1f,H);
         const float XN=float(P.X-RootCenter.X)/FMath::Max(.1f,W);
-        const float Center=BodyCenter(Z);
+        const float PlumeCenter=BodyCenter(Z);
         const float Flow=.57f*FMath::Sin(XN*4.1f+Z*15.f-Elapsed*9.f+SeedPhase)+
             .27f*FMath::Sin(XN*8.f-Z*22.f+Elapsed*10.f+SeedPhase*.8f)+
             .16f*FMath::Sin(XN*13.f+Z*31.f-Elapsed*12.f+SeedPhase*1.4f);
@@ -2420,7 +2418,7 @@ float UASTFireFreeFlameComponent::UpdateConnectedSource(
             Width*=FMath::Pow(FMath::Clamp((Z+.055f)/.14f,0.f,1.f),.62f);
             Width*=1.f-.68f*ASTFireLife::SmoothStep((V-.78f)/.22f);
             if(Z>=-.055f && Z<=.83f)
-                Cover=(Width-FMath::Abs(XN-Center))*W+Rim;
+                Cover=(Width-FMath::Abs(XN-PlumeCenter))*W+Rim;
             NeckDepth=-OriginDepth+Bias;
         }
         for(const FNeckSegment& Neck:Necks)
@@ -2458,7 +2456,7 @@ float UASTFireFreeFlameComponent::UpdateConnectedSource(
         {
             // Warm core stays in the lower gas while cold lobes roll above.
             // Thermal islands travel independently through the field.
-            const float DX=XN-Center-.12f*FMath::Sin(Z*10.f-Elapsed*7.f+SeedPhase);
+            const float DX=XN-PlumeCenter-.12f*FMath::Sin(Z*10.f-Elapsed*7.f+SeedPhase);
             const float Central=FMath::Exp(-FMath::Square(DX/.49f)-FMath::Square((Z-.24f)/.34f));
             float T=.21f+.63f*Central+.12f*(1.f-FMath::Clamp(Z,0.f,1.f))+
                 .15f*Flow+.012f*FMath::Clamp(Cover/Pitch,0.f,4.f);

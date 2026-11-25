@@ -74,6 +74,7 @@ assert "Child.Width=FMath::Min" in c
 assert "Child.Lifetime=.19f + .32f" in c
 print("Fire v4 raster, independent heat, detached lifecycle, v3 smoke/spark/torch locks: PASS")
 
-# Engine 5.8 public end-of-frame update pair, not the older 5.5 API.
-assert 'StartAsyncSendAllEndOfFrameUpdates();' in c
-assert 'FinishAsyncSendAllEndOfFrameUpdates();' in c
+# Verified directly in installed UE 5.8 World.h.
+assert 'World->SendAllEndOfFrameUpdates();' in c
+assert 'FragmentTone=DetachedPixels.Find(Q)' in c
+assert 'const float PlumeCenter=BodyCenter(Z)' in c
