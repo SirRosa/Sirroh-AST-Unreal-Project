@@ -268,7 +268,7 @@ void UASTFireFreeFlameComponent::ConfigureGeneration(FTongue& Tongue)
     Tongue.RebirthDelay=FMath::Lerp(.055f,.17f,Large)+.09f*Uniform(Salt+11);
     Tongue.MaxLength = (55.f + 100.f *
         FMath::Pow(Uniform(Salt + 2),1.22f)) * Tongue.Scale * SizeScale;
-    Tongue.BaseWidth = (12.f + 23.f *
+    Tongue.BaseWidth = (15.f + 24.f *
         FMath::Pow(Uniform(Salt + 3),1.15f)) * Tongue.Scale * SizeScale;
     // Exact ring cut: the upper 5/8 or 6/8 becomes the detached flame.
     Tongue.RemainingFraction = Large>.35f?(Uniform(Salt + 4)<.65f?.125f:.25f):.25f;
@@ -548,7 +548,7 @@ void UASTFireFreeFlameComponent::BuildAnchors()
             FTongue Root;
             const float Angle=2.f*PI*float(I)/FMath::Max(1,DesiredCount)+Uniform(980)*2.f*PI;
             const FVector Radial(FMath::Cos(Angle),FMath::Sin(Angle),0.f);
-            const float SpreadRadius=FMath::Lerp(2.f,12.f,FMath::Clamp(SizeScale,0.f,1.f));
+            const float SpreadRadius=FMath::Lerp(2.f,8.5f,FMath::Clamp(SizeScale,0.f,1.f));
             Root.Outward=Radial;
             const FVector Offset=IgnitionPoints.IsEmpty()?FVector::ZeroVector:IgnitionPoints[0];
             // The explicit wick position is component-local; keep root spacing in world cm.
@@ -648,12 +648,12 @@ FVector UASTFireFreeFlameComponent::TongueCenterAt(
     const bool bPoint=ASTFireLife::IsPointSource(Source,!IgnitionPoints.IsEmpty());
     const float Shape=(Curl+Curl2+Dance+TipHook)*S+Lean*V;
     const float Large=FMath::Clamp((SizeScale-.18f)/.82f,0.f,1.f);
-    const float MaxSide=FMath::Lerp(.24f,.55f,Large);
+    const float MaxSide=FMath::Lerp(.24f,.34f,Large);
     const float Side=FMath::Clamp(Shape,-L*MaxSide*V,L*MaxSide*V);
     const FVector Drift=(Flow*V*V*.095f*S).GetClampedToMaxSize(L*.60f*V*V);
     const FVector Radial=Tongue.Outward.IsNearlyZero()?FVector(FMath::Cos(Tongue.Seed),FMath::Sin(Tongue.Seed),0.f):Tongue.Outward;
-    const float Fan=bPoint?FMath::Lerp(.10f,.69f,Large):FMath::Lerp(.13f,.35f,Large);
-    const float Lift=1.f-.18f*Large*FMath::Abs(float(FVector::DotProduct(Radial,Right)));
+    const float Fan=bPoint?FMath::Lerp(.10f,.42f,Large):FMath::Lerp(.13f,.30f,Large);
+    const float Lift=1.f-.09f*Large*FMath::Abs(float(FVector::DotProduct(Radial,Right)));
     // Distinct 3D trajectories, not camera-facing convergent tips.
     const FVector Out=Radial*(L*Fan*FMath::Pow(V,1.28f)*(.78f+.22f*FMath::Sin(Phase+Elapsed*2.f+V*4.f)));
     return Base+FVector::UpVector*L*V*Lift+Drift+Right*Side+Out;
@@ -663,10 +663,10 @@ float UASTFireFreeFlameComponent::TongueRadiusAt(const FTongue& T,float V) const
 {
     // Rounded root, fuller lower/central gas, then an asymmetric taper.
     // Radius is one field; the pinch acts on exactly the ring that is cut.
-    const float Bulge=.66f+.34f*FMath::Sin(PI*FMath::Clamp(V,0.f,1.f));
-    const float Profile=Bulge*FMath::Pow(FMath::Max(0.f,1.f-V),.64f);
+    const float Bulge=.73f+.27f*FMath::Sin(PI*FMath::Clamp(V,0.f,1.f));
+    const float Profile=Bulge*FMath::Pow(FMath::Max(0.f,1.f-V),.58f);
     const float Pulse=.91f+.09f*FMath::Sin(V*12.f-T.Age*8.f+T.Phase);
-    float Radius=FMath::Min(T.CurrentWidth,T.CurrentLength*.43f)*Profile*Pulse;
+    float Radius=FMath::Min(T.CurrentWidth,T.CurrentLength*.48f)*Profile*Pulse;
     if(T.Life==EFlameLife::Bridging)
     {
         const float Pinch=ASTFireLife::SmoothStep(T.PhaseAge/FMath::Max(.01f,T.BridgeSeconds));
