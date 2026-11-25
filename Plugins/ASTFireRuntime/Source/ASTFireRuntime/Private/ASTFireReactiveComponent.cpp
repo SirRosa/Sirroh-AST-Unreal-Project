@@ -1496,7 +1496,7 @@ float UASTFireReactiveComponent::ComputeBurnDuration() const
     // Authored BaseBurnSeconds remains a reference-duration multiplier.
     const float Factor=FMath::Clamp(FMath::Pow(SizeCm/Reference,.66f),
         3.f/7.f,FMath::Max(1.f,MaxBurnSizeMultiplier));
-    return FMath::Max(.1f,BaseBurnSeconds)*Factor;
+    return 2.f*FMath::Max(.1f,BaseBurnSeconds)*Factor;
 }
 
 FString UASTFireReactiveComponent::RunBurnDurationAudit(USkeletalMesh* CharacterMesh)
@@ -1580,13 +1580,13 @@ FString UASTFireReactiveComponent::RunBurnDurationAudit(USkeletalMesh* Character
         bPass&=Fire->FindTargetComponent()==Rendered;
         CharacterSize=float(CharacterMesh->GetBounds().BoxExtent.GetMax()*2.f);
         CharacterDuration=Fire->ComputeBurnDuration();
-        bPass&=CharacterDuration>5.5f && CharacterDuration<8.5f && Measure(Fire,CharacterActual);
+        bPass&=CharacterDuration>11.f && CharacterDuration<17.f && Measure(Fire,CharacterActual);
         bPass&=Fire->CharProgress>.8f; // unchanged normalized char accumulation
         Fire->DestroyComponent();Owner->Destroy();
     }
     else bPass=false;
-    bPass&=FMath::Abs(Durations[0]-3.f)<.05f && FMath::Abs(Durations[1]-3.f)<.12f &&
-        FMath::Abs(Durations[3]-7.f)<.01f && Durations[5]>12.f;
+    bPass&=FMath::Abs(Durations[0]-6.f)<.05f && FMath::Abs(Durations[1]-6.f)<.24f &&
+        FMath::Abs(Durations[3]-14.f)<.01f && Durations[5]>24.f;
     World->DestroyWorld(false);
     return FString::Printf(TEXT("%s:30cm=%.2f/%.2f;50cm=%.2f/%.2f;100cm=%.2f/%.2f;180cm=%.2f/%.2f;300cm=%.2f/%.2f;600cm=%.2f/%.2f;characterCm=%.1f;character=%.2f/%.2f;rotation_reignite_permanent=%d"),
         bPass?TEXT("PASS"):TEXT("FAIL"),Durations[0],Actual[0],Durations[1],Actual[1],Durations[2],Actual[2],
@@ -1733,7 +1733,7 @@ void UASTFireReactiveComponent::TickComponent(
         }
         BurnElapsedSeconds += DeltaTime;
         const float FadeStart = FMath::Max(0.f,
-            BurnDurationSeconds - FMath::Max(.1f, BurnFadeSeconds));
+            BurnDurationSeconds - FMath::Clamp(BurnFadeSeconds*3.f,1.5f,3.5f));
         if (BurnElapsedSeconds >= FadeStart)
         {
             const float Fade = FMath::Clamp(
@@ -1850,7 +1850,7 @@ void UASTFireReactiveComponent::TickComponent(
         LocalDisturbance > Disturbance ? 17.0f : 4.0f);
     const float TargetIntensity = bStartLit ? Intensity : 0.0f;
     SmoothIntensity = FMath::FInterpTo(
-        SmoothIntensity, TargetIntensity, DeltaTime, 8.0f);
+        SmoothIntensity, TargetIntensity, DeltaTime, TargetIntensity<SmoothIntensity?2.5f:8.f);
     if (!bStartLit && SmoothIntensity < .012f)
         UpdateVisibility(); // Hide only once the residual flame has faded.
 
