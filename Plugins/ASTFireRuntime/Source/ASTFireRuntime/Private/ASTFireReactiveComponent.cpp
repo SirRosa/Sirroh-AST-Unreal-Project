@@ -4,6 +4,7 @@
 #include "NiagaraComponent.h"
 #include "NiagaraSystem.h"
 #include "Materials/MaterialInstanceDynamic.h"
+#include "Materials/Material.h"
 #include "ProceduralMeshComponent.h"
 #include "Net/UnrealNetwork.h"
 #include "GameFramework/PlayerController.h"
@@ -821,10 +822,11 @@ void UASTFireReactiveComponent::SetupSurfaceFire(USceneComponent* Parent)
     if (!IsValid(Mesh) || !Mesh->IsVisible()) return;
     // Only the verified GASPALS prop material uses this route. Keep character
     // materials and every other mesh's accepted overlay path unchanged.
-    if(bCharOverlay && Cast<UStaticMeshComponent>(Mesh) && Mesh->GetNumMaterials()==1)
+    if(bCharOverlay && Cast<UStaticMeshComponent>(Mesh) && Mesh->GetNumMaterials()>=1)
     {
         UMaterialInterface* Original=Mesh->GetMaterial(0);
-        if(Original && Original->GetPathName()==TEXT("/GASPALS/Systems/EquipmentSystem/Assets/Materials/M_Prop.M_Prop"))
+        const UMaterial* Base=Original?Original->GetMaterial():nullptr;
+        if(Base && Base->GetPathName()==TEXT("/GASPALS/Systems/EquipmentSystem/Assets/Materials/M_Prop.M_Prop"))
         {
             UMaterialInterface* PropChar=LoadObject<UMaterialInterface>(nullptr,
                 TEXT("/Game/VFX/Fire/Materials/M_AST_FireCharProp.M_AST_FireCharProp"));
@@ -833,6 +835,8 @@ void UASTFireReactiveComponent::SetupSurfaceFire(USceneComponent* Parent)
                 FireSurfaceMID=UMaterialInstanceDynamic::Create(PropChar,this);
                 if(FireSurfaceMID)
                 {
+                    // Preserve all authored instance color, roughness and metallic overrides.
+                    FireSurfaceMID->CopyMaterialUniformParameters(Original);
                     FireSurfaceMesh=Mesh;
                     PreviousCharPropMaterial=Original;
                     bCharUsesPropSlot=true;
@@ -1575,8 +1579,9 @@ FString UASTFireReactiveComponent::RunPropCharAudit(UClass* BoxClass,UClass* Bar
         Fire->ReleaseSurfaceFire();
         const bool bRestore=Mesh->GetMaterial(0)==Original&&Mesh->GetOverlayMaterial(false,0)==OldOverlay;
         bPass&=bSlot&&bOverlay&&bCold&&bRestore;
-        Details+=FString::Printf(TEXT(";%s:slot=%d;overlay_untouched=%d;cold=%d;progress=%.2f;glow=%.2f;restore=%d"),
-            *Class->GetName(),int32(bSlot),int32(bOverlay),int32(bCold),Progress,Glow,int32(bRestore));
+        Details+=FString::Printf(TEXT(";%s:slot=%d;overlay_untouched=%d;cold=%d;progress=%.2f;glow=%.2f;restore=%d;original=%s;base=%s;slots=%d"),
+            *Class->GetName(),int32(bSlot),int32(bOverlay),int32(bCold),Progress,Glow,int32(bRestore),
+            *GetPathNameSafe(Original),*GetPathNameSafe(Original?Original->GetMaterial():nullptr),Mesh->GetNumMaterials());
         Actor->Destroy();
     }
     World->DestroyWorld(false);
