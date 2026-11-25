@@ -87,6 +87,7 @@ jobs:
           python -m py_compile Automation/ASTFire/setup_fire_v4.py
           python -m py_compile Automation/ASTFire/test_fire_v4.py
           python -m py_compile Automation/ASTFire/verify_fire_v4_gpu.py
+          python -m py_compile Automation/ASTFire/render_fire_v4_raster.py
           python Automation/ASTFire/test_fire_v4.py
       - name: Parse PowerShell deployment script
         shell: pwsh
