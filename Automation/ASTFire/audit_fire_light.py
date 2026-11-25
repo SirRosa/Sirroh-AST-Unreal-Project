@@ -16,7 +16,10 @@ try:
         out["capture"]=u.ASTFireReactiveComponent.run_fire_light_capture(torch)
         if not out["capture"].startswith("PASS:"):
             raise RuntimeError("Manual exposure capture failed: "+out["capture"])
-    out["contact"]=u.ASTFireIgnitionZoneComponent.run_contact_audit()
+    box=u.EditorAssetLibrary.load_blueprint_class("/Game/POIKit/CarryProps/BP_AST_Box")
+    barrel=u.EditorAssetLibrary.load_blueprint_class("/Game/POIKit/CarryProps/BP_AST_Barrel")
+    if not box or not barrel: raise RuntimeError("Missing actual carry prop Blueprints")
+    out["contact"]=u.ASTFireIgnitionZoneComponent.run_contact_audit(box,barrel)
     out["burn"]=u.ASTFireReactiveComponent.run_burn_duration_audit(skin)
     out["fire"]=u.ASTFireFreeFlameComponent.run_fire_v4_audit(mat)
     out["smoke"]=u.ASTFireFreeFlameComponent.run_smoke_audit(smoke)
