@@ -283,6 +283,7 @@ void UASTFireFreeFlameComponent::OnUnregister()
     FirePixelPitch = FireVisualHeight = FireVisualWidth = 0.f;
     PointField.Reset();FieldFragments.Reset();FieldClock=-1.f;
     MeshPrevious.Reset();MeshFieldClock=-1.f;MeshCuts=MeshTransferred=0;
+    bAeroSample=false;bAeroDiscontinuity=false;AeroVelocity=AeroPreviousVelocity=FVector::ZeroVector;AeroImpulse=AeroSampleDt=0.f;
     NearbySmokeLights.Reset();
     SmokeMaterial = nullptr;
     SparkMaterial = nullptr;
@@ -718,7 +719,8 @@ FVector UASTFireFreeFlameComponent::TongueCenterAt(
     const float Large=FMath::Clamp((SizeScale-.18f)/.82f,0.f,1.f);
     const float MaxSide=FMath::Lerp(.24f,.20f,Large);
     const float Side=FMath::Clamp(Shape*(1.f-.24f*Large),-L*MaxSide*V,L*MaxSide*V);
-    const FVector Drift=(Flow*V*V*.095f*S).GetClampedToMaxSize(L*.45f*V*V);
+    const FVector Drift=(Flow*V*V*.095f*S).GetClampedToMaxSize(L*.45f*V*V)+
+        (MotionLag(Tongue.WorldVelocity)*(.045f*S*V*V)).GetClampedToMaxSize(L*.65f*V*V);
     const FVector Radial=Tongue.Outward.IsNearlyZero()?FVector(FMath::Cos(Tongue.Seed),FMath::Sin(Tongue.Seed),0.f):Tongue.Outward;
     const float Fan=bPoint?FMath::Lerp(.10f,.24f,Large):FMath::Lerp(.08f,.14f,Large);
     const float Lift=1.f-.09f*Large*FMath::Abs(float(FVector::DotProduct(Radial,Right)));
@@ -801,12 +803,62 @@ int32 UASTFireFreeFlameComponent::EmitTip(
         Radial*(FMath::Lerp(32.f,76.f,Large)*Travel)+
         Flow*.18f-Tongue.WorldVelocity*.08f;
     Child.Velocity.Z=FMath::Max(12.f*Travel,float(Child.Velocity.Z));
+    // Existing upper arc receives bounded relative airflow only at birth.
+    Child.Velocity+=MotionLag(Tongue.WorldVelocity)*.14f;
     Child.bAlive=true;
     return Slot;
 }
 
+float UASTFireFreeFlameComponent::MotionStrength(const FVector& Velocity)
+{
+    // No additional aerodynamic forces below 1.6 m/s.
+    return ASTFireLife::SmoothStep((float(Velocity.Size())-160.f)/840.f);
+}
+
+FVector UASTFireFreeFlameComponent::MotionLag(const FVector& Velocity)
+{
+    return -Velocity.GetClampedToMaxSize(1800.f)*MotionStrength(Velocity);
+}
+
+FVector UASTFireFreeFlameComponent::PointMotionOrigin() const
+{
+    if(!IsValid(Source))return FVector::ZeroVector;
+    return IgnitionPoints.IsEmpty()?Source->GetComponentLocation():
+        Source->GetComponentTransform().TransformPosition(IgnitionPoints[0]);
+}
+
+void UASTFireFreeFlameComponent::SampleAerodynamics(float Dt)
+{
+    const FVector Origin=PointMotionOrigin();
+    const float RealDt=AeroSampleDt>0.f?AeroSampleDt:Dt;
+    AeroSampleDt=0.f;
+    bAeroDiscontinuity=false;
+    if(!bAeroSample)
+    {
+        AeroPreviousOrigin=Origin;bAeroSample=true;return;
+    }
+    const FVector Delta=Origin-AeroPreviousOrigin;
+    AeroPreviousOrigin=Origin;
+    // A teleport or hitch must not be rendered as a streak across the map.
+    if(RealDt>.22f || Delta.Size()>FMath::Max(300.f,RealDt*5000.f))
+    {
+        bAeroDiscontinuity=true;
+        AeroVelocity=AeroPreviousVelocity=FVector::ZeroVector;AeroImpulse=0.f;
+        return;
+    }
+    const FVector Raw=Delta/FMath::Max(.004f,RealDt);
+    const float Acceleration=float((Raw-AeroPreviousVelocity).Size())/FMath::Max(.004f,RealDt);
+    AeroPreviousVelocity=Raw;
+    AeroVelocity=FMath::VInterpTo(AeroVelocity,Raw.GetClampedToMaxSize(2400.f),Dt,12.f);
+    if(Raw.IsNearlyZero()&&AeroVelocity.Size()<1.f)AeroVelocity=FVector::ZeroVector;
+    const float Impulse=ASTFireLife::SmoothStep((Acceleration-1800.f)/6500.f)*
+        FMath::Max(MotionStrength(Raw),MotionStrength(AeroVelocity));
+    AeroImpulse=FMath::Max(Impulse,FMath::FInterpTo(AeroImpulse,0.f,Dt,7.f));
+}
+
 void UASTFireFreeFlameComponent::AdvanceSimulation(float Dt)
 {
+    SampleAerodynamics(Dt);
     Elapsed += Dt;
     Spread = FMath::Clamp(Spread + Dt * (Heat > .01f ? .23f : 0.f), 0.f, 1.f);
     float SumEnergy = 0.f;
@@ -829,9 +881,14 @@ void UASTFireFreeFlameComponent::AdvanceSimulation(float Dt)
     {
         FTongue& T=Tongues[TongueIndex];
         const FVector Base=SampleRoot(T);
-        const FVector Velocity=(Base-T.WorldPrevious)/FMath::Max(.004f,Dt);
+        const FVector Delta=Base-T.WorldPrevious;
+        const bool bJump=bAeroDiscontinuity||Delta.Size()>FMath::Max(300.f,Dt*5000.f);
+        const FVector Velocity=bJump?FVector::ZeroVector:Delta/FMath::Max(.004f,Dt);
         T.WorldPrevious=Base;
-        T.WorldVelocity=FMath::VInterpTo(T.WorldVelocity,Velocity,Dt,13.f);
+        T.WorldVelocity=bJump?FVector::ZeroVector:FMath::VInterpTo(T.WorldVelocity,Velocity,Dt,13.f);
+        if(bJump)T.bDisplayedPinch=false;
+        const float Aero=MotionStrength(T.WorldVelocity);
+        const float CycleRate=1.f+Aero*(1.30f+.55f*AeroImpulse);
         if(!T.bActive)
         {
             if(Spread<T.ActivationSpread)continue;
@@ -841,7 +898,7 @@ void UASTFireFreeFlameComponent::AdvanceSimulation(float Dt)
         if(Heat<.015f)continue;
         if(T.Life==EFlameLife::Growing)
         {
-            T.Age+=Dt;
+            T.Age+=Dt*CycleRate;
             const float Growth=ASTFireLife::SmoothStep(FMath::Max(0.f,T.Age-T.RebirthDelay)/FMath::Max(.1f,T.GrowSeconds));
             T.CurrentLength=FMath::Lerp(T.RestartLength,T.MaxLength,Growth);
             T.CurrentWidth=FMath::Lerp(T.PreviousWidth,T.BaseWidth,Growth);
@@ -857,7 +914,7 @@ void UASTFireFreeFlameComponent::AdvanceSimulation(float Dt)
         {
             // Pinch only. The upper arc does not retract toward the root.
             const bool bCutReady=T.bDisplayedPinch && T.DisplayGeneration==T.Generation;
-            T.PhaseAge=FMath::Min(T.BridgeSeconds,T.PhaseAge+Dt);
+            T.PhaseAge=FMath::Min(T.BridgeSeconds,T.PhaseAge+Dt*CycleRate);
             if(T.PhaseAge>=T.BridgeSeconds && bCutReady)
             {
                 const FVector Flow=(Wind-T.WorldVelocity*.65f).GetClampedToMaxSize(1600.f);
@@ -2566,6 +2623,8 @@ float UASTFireFreeFlameComponent::UpdatePointField(bool bCreate,const FVector& R
     }
     const float Dt=FMath::Max(0.f,Elapsed-FieldClock);
     FieldClock=Elapsed;
+    const float Aero=MotionStrength(AeroVelocity);
+    if(bAeroDiscontinuity)for(auto& Cell:PointField)Cell.bLit=false;
     // Detached material is already in world space: source motion cannot
     // drag it back onto the next flame. Age-zero uses the exact old cells.
     for(int32 I=FieldFragments.Num()-1;I>=0;--I)
@@ -2595,7 +2654,7 @@ float UASTFireFreeFlameComponent::UpdatePointField(bool bCreate,const FVector& R
         const int32 Salt=Z*213+FieldGeneration[Z]*997;
         const float Grow=.52f+.62f*Random(Salt+123);
         const float Rest=.12f+.14f*Random(Salt+125);
-        FieldAge[Z]+=Dt;
+        FieldAge[Z]+=Dt*(1.f+Aero*(1.45f+.65f*AeroImpulse));
         if(FieldAge[Z]>=Grow+Rest)
         {
             Cut[Z]=true;FieldAge[Z]=0.f;++FieldGeneration[Z];
@@ -2643,6 +2702,11 @@ float UASTFireFreeFlameComponent::UpdatePointField(bool bCreate,const FVector& R
         if(H<Bottom || H>Top || A>Edge*FMath::Lerp(.22f,1.f,Dying))continue;
         auto& C=Next[Y*FieldX+X];C.bLit=true;
         C.World=P.Unproject(GridOrigin+FVector2D((X-20+.5f)*Pitch,(Y-3+.5f)*Pitch),Depth);
+        if(Aero>0.f)
+        {
+            const float Upper=FMath::Square(FMath::Clamp((H-2.f)/26.f,0.f,1.f));
+            C.World+=(MotionLag(AeroVelocity)*(.055f*Upper)).GetClampedToMaxSize(32.f*FMath::Clamp(SizeScale,.15f,2.f)*Upper);
+        }
         // Advect heat independently of the advancing contour. It is not
         // a distance-to-center ring; irregular hot islands travel upwards.
         const float Flow=.62f*FMath::Sin(U*6.2f+H*.34f-Elapsed*7.7f+Phase)+
@@ -2655,13 +2719,26 @@ float UASTFireFreeFlameComponent::UpdatePointField(bool bCreate,const FVector& R
     }
     // Transfer exactly the cells that were visible in the preceding field
     // but have been lost by a local cut. No separately generated shape.
+    TSet<FIntPoint> CurrentPixels;
+    if(Aero>0.f)
+        for(const auto& Cell:Next)if(Cell.bLit)
+        {
+            const FVector2D Q=P.Project(Cell.World);
+            CurrentPixels.Add(FIntPoint(FMath::FloorToInt(Q.X/Pitch),FMath::FloorToInt(Q.Y/Pitch)));
+        }
     for(int32 Z=0;Z<FieldZones;++Z)if(Cut[Z])
     {
         TArray<int32> Removed;FVector Center=FVector::ZeroVector;
         for(int32 Y=9;Y<FieldY;++Y)for(int32 X=0;X<FieldX;++X)
         {
             const int32 I=Y*FieldX+X;
-            if(!PointField[I].bLit || Next[I].bLit)continue;
+            if(Aero<=0.f){if(!PointField[I].bLit || Next[I].bLit)continue;}
+            else
+            {
+                if(!PointField[I].bLit)continue;
+                const FVector2D Q=P.Project(PointField[I].World);
+                if(CurrentPixels.Contains(FIntPoint(FMath::FloorToInt(Q.X/Pitch),FMath::FloorToInt(Q.Y/Pitch))))continue;
+            }
             const float U=(float(X)-19.5f)/13.f;
             int32 Owner=0;float Dist=BIG_NUMBER;
             for(int32 K=0;K<FieldZones;++K)
@@ -2673,13 +2750,14 @@ float UASTFireFreeFlameComponent::UpdatePointField(bool bCreate,const FVector& R
             Removed.Add(I);Center+=PointField[I].World;
         }
         if(Removed.Num()<2)continue;
-        if(FieldFragments.Num()>=12)FieldFragments.RemoveAt(0);
+        const int32 Capacity=Aero>0.f?24:12;
+        if(FieldFragments.Num()>=Capacity){if(Aero<=0.f&&FieldFragments.Num()>Capacity)continue;FieldFragments.RemoveAt(0);}
         auto& F=FieldFragments.AddDefaulted_GetRef();
         F.Center=Center/Removed.Num();F.Serial=FieldSplitCount+1;F.Life=.66f+.31f*Random(Z*37+FieldGeneration[Z]*811);
         const float S=FMath::Clamp(SizeScale,.08f,2.f);
         F.Side=P.Right;
         F.Velocity=FVector::UpVector*(32.f+Random(Z*91+FieldGeneration[Z]*77)*19.f)*S+
-            F.Side*(Centers[Z]*36.f*S)+Wind*.10f;
+            F.Side*(Centers[Z]*36.f*S)+Wind*.10f+MotionLag(AeroVelocity)*.14f;
         for(int32 I:Removed)
         {
             const FVector Offset=PointField[I].World-F.Center;
@@ -2790,6 +2868,7 @@ float UASTFireFreeFlameComponent::UpdateConnectedSource(
     }
     const float Dt=FMath::Max(0.f,Elapsed-MeshFieldClock);
     MeshFieldClock=Elapsed;
+    if(bAeroDiscontinuity)MeshPrevious.Reset();
     for(int32 I=FieldFragments.Num()-1;I>=0;--I)
     {
         auto& F=FieldFragments[I];F.Age+=Dt;
@@ -2908,6 +2987,10 @@ float UASTFireFreeFlameComponent::UpdateConnectedSource(
     const float MaxRise=MaxHeight*ASTFireLife::FFireProjection::Reference/FMath::Max(10.f,OriginDepth*.70f);
     Lo.X-=MaxRise*.55f+Nominal*2.f;Hi.X+=MaxRise*.55f+Nominal*2.f;
     Lo.Y-=Nominal*2.f;Hi.Y+=MaxRise+Nominal*3.f;
+    float MaxAero=0.f;
+    for(const auto& T:Tongues)MaxAero=FMath::Max(MaxAero,MotionStrength(T.WorldVelocity));
+    // Reserve room only for the bounded bend, never for the detached trail.
+    if(MaxAero>0.f){const float Margin=MaxRise*.65f*MaxAero;Lo.X-=Margin;Hi.X+=Margin;Lo.Y-=Margin;Hi.Y+=Margin;}
     const float Required=FMath::Max(Nominal,FMath::Max(float((Hi.X-Lo.X)/(MaxXCells-2)),float((Hi.Y-Lo.Y)/(MaxYCells-2))));
     // Store a world-space grid spacing in the existing unused width cache.
     // Changing active surface cells may enlarge the envelope, but must
@@ -2984,7 +3067,13 @@ float UASTFireFreeFlameComponent::UpdateConnectedSource(
             const float Rise=float(Step)/FMath::Max(1.f,Crest);
             const float Side=Rise*float(Step)*(.32f*WindSide-.22f*Drift+
                 .24f*FMath::Sin(float(X)*.28f+float(Step)*.41f-Elapsed*5.2f+Phase));
-            const FVector2D Offset=UpAxis*float(Step)+SideAxis*Side;
+            FVector2D Offset=UpAxis*float(Step)+SideAxis*Side;
+            const FVector Lag=MotionLag(Tongues[F.Owner].WorldVelocity);
+            if(!Lag.IsNearlyZero())
+            {
+                const FVector2D ScreenLag(FVector::DotProduct(Lag,Projection.Right),FVector::DotProduct(Lag,Projection.Up));
+                Offset+=ScreenLag.GetSafeNormal()*float(Step)*(.65f*MotionStrength(Tongues[F.Owner].WorldVelocity)*Rise);
+            }
             const int32 TX=X+FMath::RoundToInt(Offset.X),TY=Y+FMath::RoundToInt(Offset.Y);
             if(TX<0 || TX>=NX || TY<0 || TY>=NY)continue;
             const int32 I=TY*NX+TX;
@@ -3045,12 +3134,15 @@ float UASTFireFreeFlameComponent::UpdateConnectedSource(
                         if(!Seen.Contains(*Index)){Seen.Add(*Index);Group.Add(*Index);}
             }
             if(Group.Num()<2)continue;
-            if(FieldFragments.Num()>=16)FieldFragments.RemoveAt(0);
+            const float Aero=MotionStrength(Tongues[I].WorldVelocity);
+            const int32 Capacity=Aero>0.f?32:16;
+            if(FieldFragments.Num()>=Capacity){if(Aero<=0.f&&FieldFragments.Num()>Capacity)continue;FieldFragments.RemoveAt(0);}
             auto& F=FieldFragments.AddDefaulted_GetRef();
             F.Center=Center/Group.Num();F.Serial=++MeshCuts;F.Side=Projection.Right;
             F.Life=.55f+.34f*FMath::Abs(Uniform(I*911+MeshCuts*37));
             F.Velocity=FVector::UpVector*(26.f+22.f*FMath::Abs(Uniform(MeshCuts*73)))*S+
-                F.Side*(FMath::Abs(Uniform(MeshCuts*71))-.5f)*36.f*S+Wind*.1f;
+                F.Side*(FMath::Abs(Uniform(MeshCuts*71))-.5f)*36.f*S+Wind*.1f+
+                MotionLag(Tongues[I].WorldVelocity)*.14f;
             const float D=Projection.Depth(F.Center);
             const FVector2D CP=Projection.Project(F.Center);
             for(int32 J:Group)
@@ -3113,6 +3205,7 @@ void UASTFireFreeFlameComponent::TickComponent(
         return;
     }
     const float SimDt=FMath::Min(Dt,.08f);
+    AeroSampleDt=Dt;
     AdvanceSimulation(SimDt);
     UpdateDetachedVortices(SimDt);
     UpdateSparks(SimDt);
