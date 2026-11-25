@@ -21,14 +21,14 @@ assert fnv(r)=="930b76ee","burn/torch runtime changed"
 for token in ("GetTongueCount()", "SetSizeScale(", "RunSmokeAudit(", "RunFireV4Audit("):
     assert token in h,token
 for token in ("GetSkinnedVertexPosition","LineTraceComponent(","ConnectedRoots.Add(",
-              "AppendNeck(WorldA,WorldB,T.DisplayRadius[K-1],T.DisplayRadius[K],V0,V1,Phase)",
+              "AddFuel(W,A.RestPosition,INDEX_NONE)",
               "EFlameLife::Bridging","D.Position+=D.Velocity*Dt;",
               "const float PixelPitch=bPointField?UpdatePointField",
               "const float Pitch=FMath::Max(.1875f,PixelPitch);",
-              "const float Support=R-D;", "Cell.Temperature=FMath::Clamp",
-              "CornerDepth(CX,CY)","Colors.Add(FLinearColor(ASTFireLife::ToneCode(C.Temperature),0.f,0.f,1.f))",
-              "Projection.Unproject(P,Depth)", "ThermalLut.Evaluate(Along,Core)",
-              "MaxXCells=72,MaxYCells=104", "RunFireV4Audit("):
+              "const float Edge=F.Strength", "Cell.Temperature=Hot*Heat",
+              "Colors.Add(FLinearColor(ASTFireLife::ToneCode(Cell.Temperature),0.f,0.f,1.f))",
+              "Projection.Unproject(P,Cell.Depth)", "RenderFieldFragments(Pitch,Verts,UVs,Colors,Triangles)",
+              "MaxXCells=72", "RunFireV4Audit("):
     assert token in c,token
 assert "floor(UV" not in m
 assert "MP_WORLD_POSITION_OFFSET" not in m
@@ -91,19 +91,19 @@ assert "FMath::Lerp(1.f,1.38f,Abundance)" in c
 
 # Surface is rendered as fuel, not merely sampled for depth. The native
 # skeletal fixture must pass before the installer accepts the update.
-assert "SurfaceFuel.Add({World,R,LocalPhase});" in c
-assert "for(const FSurfaceFuel& Fuel:SurfaceFuel)" in c
+assert "Fuel.Add({Q,Depth,Radius,Influence,Owner});" in c
+assert "Surface.SetNum(NX*NY);Gas.SetNum(NX*NY)" in c
 assert "RunFireSurfaceAudit(" in c and "Coverage>=.85f" in c
 assert "run_fire_surface_audit" in m
 assert "ProfileSamples[9]={.58f,.91f,1.f,.96f,.84f,.70f,.50f,.28f,0.f}" in c
 
-assert c.count("ThermalLut.Evaluate(Along,Core)") == 2
-assert "FArcHeatSegment" in c and "ArcCells.SetNum(DX*DY)" in c
-assert "SizeScale<.35f?40.f:28.f" in c
+assert "AppendNeck(" not in region("float UASTFireFreeFlameComponent::UpdateConnectedSource(","void UASTFireFreeFlameComponent::TickComponent")
+assert "Lost[C.Owner].Add(C)" in c and "MeshTransferred+=Group.Num()" in c
+assert "MeshCuts>=2 && MeshTransferred>=4" in c
 
 # Point fire is a shared evolving front: no legacy arcs in its render path.
 assert "bPointField?UpdatePointField" in c
-assert "if(bPointField)RenderFieldFragments" in c
+assert "RenderFieldFragments(Pitch,Verts,UVs,Colors,Triangles);" in c
 assert "if(!PointField[I].bLit || Next[I].bLit)continue;" in c
 assert "FieldCellsTransferred>=15" in c
 assert "Ridge=FMath::Max(Ridge,Heights[I]*Shape)" in c
@@ -114,3 +114,9 @@ assert 'FVector::DistSquared(OldField[J].World,Restored)<.0001f' in c
 assert 'FirePixelPitch=Desired;' in c
 assert 'const float Bottom=-2.5f+6.0f' in c
 assert 'const FVector2D Rotated(' in c
+
+# Accepted point effect is locked, including its actual transferred cells.
+assert fnv(region("float UASTFireFreeFlameComponent::UpdatePointField(","void UASTFireFreeFlameComponent::RenderFieldFragments("))=="823258f0"
+assert "GetSkinnedVertexPosition(Skel,A.SkinnedVertexIndex" in c
+assert "if(X>=0 && X<NX && Y>=0 && Y<NY && Gas[Y*NX+X].Owner!=INDEX_NONE)continue;" in c
+assert "Group.Num()<2" in c

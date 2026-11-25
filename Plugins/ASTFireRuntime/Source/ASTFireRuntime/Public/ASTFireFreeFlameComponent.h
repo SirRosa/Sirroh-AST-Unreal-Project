@@ -287,6 +287,21 @@ private:
     float FieldClock=-1.f;
     int32 FieldSplitCount=0;
     int32 FieldTransferredCells=0;
+    // Surface field has its own history: attached cells remain rooted to
+    // live skin/mesh samples; detached cells enter the same world-space pool
+    // as point-source fragments.
+    struct FMeshFieldCell
+    {
+        FVector World=FVector::ZeroVector;
+        float Temperature=0.f;
+        float Rise=0.f;
+        int32 Owner=INDEX_NONE;
+    };
+    TArray<FMeshFieldCell> MeshPrevious;
+    int32 MeshGeneration[MaxTongues]={};
+    float MeshFieldClock=-1.f;
+    int32 MeshCuts=0;
+    int32 MeshTransferred=0;
     float UpdatePointField(bool bCreate,const FVector& Right);
     void RenderFieldFragments(float Pitch,TArray<FVector>& Verts,TArray<FVector2D>& UVs,
         TArray<FLinearColor>& Colors,TArray<int32>& Triangles);
