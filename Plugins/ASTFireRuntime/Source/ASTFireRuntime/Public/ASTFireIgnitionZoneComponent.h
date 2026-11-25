@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Components/BoxComponent.h"
+#include "TimerManager.h"
 #include "ASTFireIgnitionZoneComponent.generated.h"
 
 class AActor;
@@ -61,5 +62,7 @@ protected:
 
 private:
     void IgniteTarget(AActor* Target, const FVector& ContactPosition);
+    void PollContactOverlaps();
+    FTimerHandle ContactPollTimer;
     TSet<TWeakObjectPtr<AActor>> IgnitedDuringOverlap;
 };
