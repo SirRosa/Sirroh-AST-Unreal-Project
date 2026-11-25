@@ -11,7 +11,8 @@ $ProgressPreference='SilentlyContinue'
 function Assert-EditorClosed {
  if(Get-Process UnrealEditor,UnrealEditor-Cmd -ErrorAction SilentlyContinue){throw 'Editor is open; no files may be replaced'}
 }
-Assert-EditorClosed
+# Building in an isolated clone is safe while the editor is open.
+# The existing Assert-EditorClosed after ABI checks still blocks all live writes.
 $stamp=Get-Date -Format 'yyyyMMdd_HHmmss'
 $root=Join-Path $env:TEMP ('ASTFireBurnDuration_'+$stamp)
 $source=Join-Path $root 'Source'
