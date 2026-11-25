@@ -21,6 +21,9 @@ class ASTFIRERUNTIME_API UASTFireIgnitionZoneComponent : public UBoxComponent
 public:
     UASTFireIgnitionZoneComponent();
 
+    UFUNCTION(BlueprintCallable, Category="AST Fire|Audit")
+    static FString RunContactAudit();
+
     // Editable zone size/offset; applied on BeginPlay, NEVER on the CDO.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="AST Fire|Contact")
     FVector TriggerHalfExtent = FVector(75.0f, 75.0f, 84.0f);
