@@ -301,7 +301,7 @@ FString UASTFireIgnitionZoneComponent::RunContactAudit(UClass* BoxClass,UClass* 
         Prop->Destroy();
     }
     World->DestroyWorld(false);
-    return FString(bPass?TEXT("PASS"):TEXT("FAIL"))+Details;
+    return FString(bPass?TEXT("PASS:"):TEXT("FAIL:"))+Details;
 #else
     return TEXT("EDITOR_ONLY");
 #endif
