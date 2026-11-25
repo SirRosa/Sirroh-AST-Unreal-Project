@@ -23,7 +23,7 @@ for token in ("GetTongueCount()", "SetSizeScale(", "RunSmokeAudit(", "RunFireV4A
 for token in ("GetSkinnedVertexPosition","LineTraceComponent(","ConnectedRoots.Add(",
               "AppendNeck(WorldA,WorldB,T.DisplayRadius[K-1],T.DisplayRadius[K],V0,V1,Phase)",
               "EFlameLife::Bridging","D.Position+=D.Velocity*Dt;",
-              "const float PixelPitch=UpdateConnectedSource",
+              "const float PixelPitch=bPointField?UpdatePointField",
               "const float Pitch=FMath::Max(.1875f,PixelPitch);",
               "const float Support=R-D;", "Cell.Temperature=FMath::Clamp",
               "CornerDepth(CX,CY)","Colors.Add(FLinearColor(ASTFireLife::ToneCode(C.Temperature),0.f,0.f,1.f))",
@@ -100,3 +100,10 @@ assert "ProfileSamples[9]={.58f,.91f,1.f,.96f,.84f,.70f,.50f,.28f,0.f}" in c
 assert c.count("ThermalLut.Evaluate(Along,Core)") == 2
 assert "FArcHeatSegment" in c and "ArcCells.SetNum(DX*DY)" in c
 assert "SizeScale<.35f?40.f:28.f" in c
+
+# Point fire is a shared evolving front: no legacy arcs in its render path.
+assert "bPointField?UpdatePointField" in c
+assert "if(bPointField)RenderFieldFragments" in c
+assert "if(!PointField[I].bLit || Next[I].bLit)continue;" in c
+assert "FieldCellsTransferred>=15" in c
+assert "Ridge=FMath::Max(Ridge,Heights[I]*Shape)" in c
