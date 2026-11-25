@@ -7,4 +7,5 @@ for k in ("Cell.Density+=Mass","Cell.Carrier=I","Cell.Density<.19f",
           "const FVector2D Gradient","S.LightDir","SmokeRender->CreateMeshSection_LinearColor"):
     assert k in g,k
 assert "Live.Sort" not in g and "LayerScale" not in g
+assert "SmokePixelPitch" in g and "constexpr float Reference=600.f" in g
 print("Unified density field and bounded support geometry")

@@ -29,6 +29,10 @@ public:
     float GetVisualEnergy() const { return VisualEnergy; }
     void SetFlamesVisible(bool bVisible);
 
+    /** Editor commandlet audit: isolated transient physics world, no map writes. */
+    UFUNCTION(BlueprintCallable, Category="AST Fire|Diagnostics")
+    static FString RunSmokeAudit(UMaterialInterface* TestMaterial);
+
 protected:
     virtual void OnRegister() override;
     virtual void OnUnregister() override;
@@ -201,6 +205,7 @@ private:
     float SmokeLightScanDebt = 0.f;
     float SmokeSimDebt = 0.f;
     float SmokeFireSize = 0.f;
+    float SmokePixelPitch = 0.f;
     FVector SmokeFireTop = FVector::ZeroVector;
     TArray<TWeakObjectPtr<UPointLightComponent>> NearbySmokeLights;
     TArray<FVector> IgnitionPoints;

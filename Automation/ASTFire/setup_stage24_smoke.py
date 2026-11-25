@@ -37,6 +37,10 @@ try:
     EDIT.recompile_material(m)
     need(LIB.save_loaded_asset(m,only_if_is_dirty=False),
          "Failed to save density smoke")
+    # Call the production C++ smoke path in a transient collision world.
+    audit=u.ASTFireFreeFlameComponent.run_smoke_audit(m)
+    OUT["runtime_audit"]=audit
+    need(audit.startswith("PASS:"),"Smoke runtime audit: "+audit)
     OUT["status"]="STAGE24_SMOKE_MATERIAL_READY_VISUAL_TEST_PENDING"
     OUT["native_expressions"]=1
     OUT["render_mode"]="DENSITY_FIVE_TONE_TERMINAL_ALPHA"

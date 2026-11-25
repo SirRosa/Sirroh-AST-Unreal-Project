@@ -39,3 +39,18 @@ assert "S.WaveAmplitude=5.f+9.f*FMath::Abs(Random)" in c
 palette=(.018,.065,.17,.36,.64)
 assert len(palette)==5 and all(a<b for a,b in zip(palette,palette[1:]))
 print("Stage33: proportional scale, bounded pool, overlap, terminal fade and swept support reference")
+
+# Test the actual native audit is invoked by the material commandlet.
+m=Path("Automation/ASTFire/setup_stage24_smoke.py").read_text()
+assert "run_smoke_audit(m)" in m and 'audit.startswith("PASS:")' in m
+assert "UWorld::CreateWorld(EWorldType::Game,false)" in c
+assert "Trigger->SetCollisionResponseToAllChannels(ECR_Overlap)" in c
+assert "bMeshClip" in c and "bStayedAlive" in c
+assert "OverlapBlockingTestByChannel" in c
+assert "SmokePixelPitch" in h
+# Representative lighting inputs span all five palette indices.
+def tone(height,light,facing,core):
+    shade=max(0,min(1,.39-.32*height+.43*light+.42*facing-.32*core))
+    return min(4,int(shade*5))
+assert {tone(h,l,f,k) for h in (0,.25,.5,.75,1) for l in (0,.3,.6,1) for f in (0,.5,1) for k in (0,.5,1)}==set(range(5))
+print("Stage33 audit: collision fixtures and five achievable light bands")

@@ -19,6 +19,7 @@
 #include "Components/SpotLightComponent.h"
 #include "UObject/UObjectIterator.h"
 #include "CollisionQueryParams.h"
+#include "Components/BoxComponent.h"
 
 namespace ASTFireLife
 {
@@ -179,6 +180,7 @@ void UASTFireFreeFlameComponent::OnUnregister()
     SmokeLightScanDebt = 0.f;
     SmokeSimDebt = 0.f;
     SmokeFireSize = 0.f;
+    SmokePixelPitch = 0.f;
     NearbySmokeLights.Reset();
     SmokeMaterial = nullptr;
     SparkMaterial = nullptr;
@@ -856,10 +858,9 @@ void UASTFireFreeFlameComponent::UpdateSmoke(float Dt)
     Dt=FMath::Min(SmokeSimDebt,.12f);
     SmokeSimDebt=0.f;
     UWorld* World=GetWorld();
-    FCollisionObjectQueryParams Objects;
-    Objects.AddObjectTypesToQuery(ECC_WorldStatic);
-    Objects.AddObjectTypesToQuery(ECC_WorldDynamic);
-    Objects.AddObjectTypesToQuery(ECC_PhysicsBody);
+    // Use a blocking trace, not object-type overlaps: ignition zones
+    // deliberately overlap WorldDynamic and must not act like walls.
+    constexpr ECollisionChannel SmokeChannel=ECC_Visibility;
     FCollisionQueryParams Query(SCENE_QUERY_STAT(ASTSmoke),false,GetOwner());
     Query.bFindInitialOverlaps=true;
 
@@ -867,6 +868,8 @@ void UASTFireFreeFlameComponent::UpdateSmoke(float Dt)
     // Smooth dimensions only: old smoke must stay in world space.
     FBox FlameBounds(ForceInit);
     FVector Highest=GetOwner()->GetActorLocation();
+    FVector HighestRoot=Highest;
+    FBox RootBounds(ForceInit);
     float Peak=-BIG_NUMBER,WidthSum=0.f,LengthSum=0.f;
     int32 Active=0;
     FVector TipRight=FVector::RightVector;
@@ -886,7 +889,8 @@ void UASTFireFreeFlameComponent::UpdateSmoke(float Dt)
         const FVector Tip=TongueCenterAt(T,Root,1.f,TipRight);
         FlameBounds+=Root;
         FlameBounds+=Tip;
-        if (Tip.Z>Peak) { Peak=Tip.Z; Highest=Tip; }
+        RootBounds+=Root;
+        if (Tip.Z>Peak) { Peak=Tip.Z; Highest=Tip; HighestRoot=Root; }
         WidthSum+=FMath::Max(1.f,T.CurrentWidth);
         LengthSum+=T.CurrentLength;
         ++Active;
@@ -896,7 +900,8 @@ void UASTFireFreeFlameComponent::UpdateSmoke(float Dt)
         const FVector Size=FlameBounds.GetSize();
         const float Width=WidthSum/Active;
         const float MeanLength=LengthSum/Active;
-        const float Footprint=FMath::Max(Size.X,Size.Y);
+        const FVector RootSize=RootBounds.GetSize();
+        const float Footprint=FMath::Max(RootSize.X,RootSize.Y);
         const float Measured=FMath::Clamp(
             (Width*1.4f+Footprint*.30f+MeanLength*.25f)*
             FMath::Sqrt(FMath::Clamp(Heat,.02f,1.f)),8.f,280.f);
@@ -936,8 +941,8 @@ void UASTFireFreeFlameComponent::UpdateSmoke(float Dt)
     // A growing carrier can shrink under a ceiling or next to a wall.
     const auto IsClear=[&](const FVector& P,float Radius)
     {
-        return !World->OverlapAnyTestByObjectType(P,FQuat::Identity,
-            Objects,FCollisionShape::MakeSphere(Radius+1.5f),Query);
+        return !World->OverlapBlockingTestByChannel(P,FQuat::Identity,
+            SmokeChannel,FCollisionShape::MakeSphere(Radius+1.5f),Query);
     };
     for (FSmoke& S:Smoke)
     {
@@ -974,11 +979,11 @@ void UASTFireFreeFlameComponent::UpdateSmoke(float Dt)
         Delta.Z=FMath::Min(float(Delta.Z),FMath::Max(0.f,Headroom-Radius));
         const FCollisionShape Shape=FCollisionShape::MakeSphere(Radius+1.f);
         FHitResult Hit;
-        if (World->SweepSingleByObjectType(Hit,S.Position,S.Position+Delta,
-                FQuat::Identity,Objects,Shape,Query))
+        if (World->SweepSingleByChannel(Hit,S.Position,S.Position+Delta,
+                FQuat::Identity,SmokeChannel,Shape,Query))
         {
             if (Hit.bStartPenetrating) { S.bAlive=false; continue; }
-            S.Position=Hit.Location+Hit.Normal*.35f;
+            S.Position=Hit.Location+Hit.Normal*.85f;
             FVector Slide=FVector::VectorPlaneProject(
                 Delta*(1.f-Hit.Time),Hit.Normal);
             if (Hit.Normal.Z<-.45f)
@@ -990,16 +995,20 @@ void UASTFireFreeFlameComponent::UpdateSmoke(float Dt)
                     Side*S.RiseSpeed*.43f*Dt,Hit.Normal);
             }
             FHitResult Second;
-            if (World->SweepSingleByObjectType(Second,S.Position,
-                    S.Position+Slide,FQuat::Identity,Objects,Shape,Query))
+            if (World->SweepSingleByChannel(Second,S.Position,
+                    S.Position+Slide,FQuat::Identity,SmokeChannel,Shape,Query))
             {
                 if (!Second.bStartPenetrating)
-                    S.Position=Second.Location+Second.Normal*.35f;
+                    S.Position=Second.Location+Second.Normal*.85f;
             }
             else S.Position+=Slide;
             S.Velocity=FVector::VectorPlaneProject(S.Velocity,Hit.Normal);
         }
         else S.Position+=Delta;
+        // Final clearance and height check also covers the slide leg.
+        const float Remaining=S.MaxRise-FMath::Max(0.f,float(S.Position.Z-S.BaseZ))-2.f;
+        S.Radius=FMath::Min(S.Radius,Remaining);
+        if (S.Radius<3.f || !IsClear(S.Position,S.Radius)) S.bAlive=false;
     }
 
     if (bVisible && Heat>.10f && Active>0)
@@ -1038,17 +1047,41 @@ void UASTFireFreeFlameComponent::UpdateSmoke(float Dt)
             const float Angle=S.Seed*2.39996f;
             const FVector Side(FMath::Cos(Angle),FMath::Sin(Angle),0.f);
             bool bFound=false;
-            for (int32 Attempt=0;Attempt<3;++Attempt)
+            // Check the route with a thin ray; a full-radius sweep starting
+            // at the flame tip would reject otherwise valid nearby pockets.
+            FHitResult Roof;
+            const FVector ProbeEnd=SmokeFireTop+FVector::UpVector*
+                (S.InitialRadius+12.f);
+            const bool bRoof=World->LineTraceSingleByChannel(
+                Roof,HighestRoot,ProbeEnd,SmokeChannel,Query);
+            for (int32 Attempt=0;Attempt<4;++Attempt)
             {
-                const float TryRadius=S.InitialRadius*
-                    (1.f-.25f*Attempt);
-                const FVector P=SmokeFireTop+FVector::UpVector*
-                    (TryRadius+6.f)+Side*(Attempt*TryRadius*.8f);
-                FHitResult SpawnHit;
-                const bool bBlocked=World->SweepSingleByObjectType(
-                    SpawnHit,SmokeFireTop,P,FQuat::Identity,Objects,
-                    FCollisionShape::MakeSphere(TryRadius+1.f),Query);
-                if (!bBlocked && IsClear(P,TryRadius))
+                const float TryRadius=FMath::Max(4.f,S.InitialRadius*
+                    (1.f-.22f*Attempt));
+                FVector P=SmokeFireTop+FVector::UpVector*
+                    (TryRadius+6.f)+Side*(Attempt*TryRadius*.65f);
+                if (bRoof)
+                {
+                    // Under a roof, start on its near side and fan sideways.
+                    // Never seed a carrier on the far side of the obstacle.
+                    const FVector Tangent=FVector::VectorPlaneProject(
+                        Side,Roof.ImpactNormal).GetSafeNormal();
+                    const FVector Near=Roof.ImpactPoint+
+                        Roof.ImpactNormal*(TryRadius+3.f);
+                    P=Near+Tangent*(TryRadius*(1.f+.65f*Attempt));
+                    FHitResult SideHit;
+                    if (World->SweepSingleByChannel(SideHit,Near,P,
+                        FQuat::Identity,SmokeChannel,
+                        FCollisionShape::MakeSphere(TryRadius+1.f),Query))
+                        continue;
+                }
+                else
+                {
+                    FHitResult SpawnHit;
+                    if (World->LineTraceSingleByChannel(SpawnHit,
+                        SmokeFireTop,P,SmokeChannel,Query)) continue;
+                }
+                if (IsClear(P,TryRadius))
                 { Spawn=P; S.Radius=S.InitialRadius=TryRadius; bFound=true; break; }
             }
             if (!bFound) continue;
@@ -1082,7 +1115,7 @@ void UASTFireFreeFlameComponent::UpdateSmokeGeometry()
     Right=(Right-Forward*FVector::DotProduct(Right,Forward)).GetSafeNormal();
     if (Right.IsNearlyZero()) return;
     const FVector Up=FVector::CrossProduct(Forward,Right).GetSafeNormal();
-    const float Reference=FMath::Max(100.f,float(FVector::Dist(Cam,SmokeFireTop)));
+    constexpr float Reference=600.f; // fixed projection plane, stable pixel pitch
     struct FProjected
     {
         FVector2D Center;
@@ -1139,8 +1172,14 @@ void UASTFireFreeFlameComponent::UpdateSmokeGeometry()
         return;
     }
     // Hard pixel edges. Adapt pitch to the footprint, not a fixed 10m grid.
-    const float Pitch=FMath::Max(2.5f,float(FMath::Max(
+    const float Required=FMath::Max(.75f,float(FMath::Max(
         (Max.X-Min.X)/(SmokeGridMaxX-2),(Max.Y-Min.Y)/(SmokeGridMaxY-2))));
+    // Quantized pitch with hysteresis: no continuously changing raster.
+    if (SmokePixelPitch<=0.f || Required>SmokePixelPitch ||
+        Required<SmokePixelPitch*.43f)
+        SmokePixelPitch=.75f*FMath::Pow(2.f,FMath::CeilToFloat(
+            FMath::Log2(Required/.75f)));
+    const float Pitch=SmokePixelPitch;
     Min.X=FMath::FloorToDouble(Min.X/Pitch)*Pitch;
     Min.Y=FMath::FloorToDouble(Min.Y/Pitch)*Pitch;
     const int32 NX=FMath::Clamp(FMath::CeilToInt((Max.X-Min.X)/Pitch)+1,1,SmokeGridMaxX);
@@ -1194,8 +1233,10 @@ void UASTFireFreeFlameComponent::UpdateSmokeGeometry()
         const float Facing=FMath::Max(0.f,float(FVector2D::DotProduct(
             Gradient.GetSafeNormal(),S.LightDir)));
         const float Core=FMath::Clamp((Cell.Density-.35f)/1.5f,0.f,1.f);
-        const float Shade=FMath::Clamp(.36f-.26f*S.Height+
-            .44f*S.Light+.32f*Facing-.26f*Core,0.f,1.f);
+        // Facing is directional even in a single carrier; dense interiors
+        // and distant regions fall into dark tones, not a flat middle grey.
+        const float Shade=FMath::Clamp(.39f-.32f*S.Height+
+            .43f*S.Light+.42f*Facing-.32f*Core,0.f,1.f);
         const int32 Tone=FMath::Clamp(FMath::FloorToInt(Shade*5.f),0,SmokeTones-1);
         const float Grey=Palette[Tone];
         const FLinearColor Color(Grey,Grey,Grey,Cell.Alpha);
@@ -1218,6 +1259,114 @@ void UASTFireFreeFlameComponent::UpdateSmokeGeometry()
     SmokeRender->CreateMeshSection_LinearColor(0,V,Tris,N,UV,C,Tangents,false);
     SmokeRender->SetMaterial(0,SmokeMaterial);
     SmokeRender->SetVisibility(true);
+}
+
+
+FString UASTFireFreeFlameComponent::RunSmokeAudit(UMaterialInterface* TestMaterial)
+{
+#if WITH_EDITOR
+    if (!IsValid(TestMaterial)) return TEXT("FAIL:NO_MATERIAL");
+    UWorld* World=UWorld::CreateWorld(EWorldType::Game,false);
+    if (!World) return TEXT("FAIL:NO_WORLD");
+    FString Report=TEXT("FAIL:UNINITIALIZED");
+    AActor* Host=World->SpawnActor<AActor>();
+    AActor* RoofActor=World->SpawnActor<AActor>();
+    AActor* TriggerActor=World->SpawnActor<AActor>();
+    if (Host && RoofActor && TriggerActor)
+    {
+        // Real engine collision components in an isolated, unsaved world.
+        UBoxComponent* Roof=NewObject<UBoxComponent>(RoofActor);
+        RoofActor->SetRootComponent(Roof);
+        Roof->SetBoxExtent(FVector(65,65,8));
+        Roof->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+        Roof->SetCollisionObjectType(ECC_WorldStatic);
+        Roof->SetCollisionResponseToAllChannels(ECR_Block);
+        Roof->RegisterComponent();
+        Roof->SetWorldLocation(FVector(0,0,128));
+        UBoxComponent* Trigger=NewObject<UBoxComponent>(TriggerActor);
+        TriggerActor->SetRootComponent(Trigger);
+        Trigger->SetBoxExtent(FVector(100,100,100));
+        Trigger->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+        Trigger->SetCollisionObjectType(ECC_WorldDynamic);
+        Trigger->SetCollisionResponseToAllChannels(ECR_Overlap);
+        Trigger->RegisterComponent();
+        Trigger->SetWorldLocation(FVector(0,0,70));
+        FHitResult Check;
+        const bool bRoof=World->LineTraceSingleByChannel(Check,
+            FVector(0,0,60),FVector(0,0,170),ECC_Visibility);
+        if (!bRoof || Check.GetActor()!=RoofActor)
+            Report=TEXT("FAIL:FIXTURE_COLLISION");
+        else
+        {
+            UASTFireFreeFlameComponent* Fire=NewObject<UASTFireFreeFlameComponent>(Host);
+            Fire->RegisterComponent();
+            Fire->SmokeRender=NewObject<UProceduralMeshComponent>(Host);
+            Fire->SmokeRender->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+            Fire->SmokeRender->RegisterComponent();
+            Fire->SmokeMaterial=TestMaterial;
+            Fire->SmokeFireTop=FVector(0,0,24);
+            Fire->Heat=0.f;
+            Fire->bVisible=false;
+            Fire->Smoke.SetNum(MaxSmoke);
+            FSmoke& Blocked=Fire->Smoke[0];
+            Blocked.Position=FVector(0,0,64);
+            Blocked.BaseZ=24.f;
+            Blocked.InitialRadius=Blocked.Radius=12.f;
+            Blocked.MaxRise=400.f;
+            Blocked.RiseSpeed=40.f;
+            Blocked.Lifetime=12.f;
+            Blocked.Seed=1.f;
+            Blocked.bAlive=true;
+            FSmoke& Free=Fire->Smoke[1];
+            Free=Blocked;
+            Free.Position.X=220.f;
+            Free.Seed=2.f;
+            bool bClip=false,bMesh=false,bMeshClip=false,bStayedAlive=true;
+            float MaxSide=0.f;
+            FCollisionQueryParams Q;
+            Q.AddIgnoredActor(Host);
+            for (int32 Frame=0;Frame<60;++Frame)
+            {
+                Fire->Elapsed+=.08f;
+                Fire->UpdateSmoke(.08f);
+                bStayedAlive &= Blocked.bAlive && Free.bAlive;
+                if (Blocked.bAlive)
+                {
+                    MaxSide=FMath::Max(MaxSide,float(
+                        FVector2D(Blocked.Position.X,Blocked.Position.Y).Size()));
+                    if (World->OverlapBlockingTestByChannel(Blocked.Position,
+                        FQuat::Identity,ECC_Visibility,
+                        FCollisionShape::MakeSphere(Blocked.Radius),Q))
+                        bClip=true;
+                }
+                if (const FProcMeshSection* Section=Fire->SmokeRender->GetProcMeshSection(0))
+                {
+                    bMesh |= Section->ProcVertexBuffer.Num()>0;
+                    for (const FProcMeshVertex& Vertex:Section->ProcVertexBuffer)
+                    {
+                        const FVector P=Fire->SmokeRender->GetComponentTransform()
+                            .TransformPosition(Vertex.Position);
+                        if (FMath::Abs(P.X)<64.f && FMath::Abs(P.Y)<64.f &&
+                            P.Z>120.2f && P.Z<135.8f)
+                            bMeshClip=true;
+                    }
+                }
+            }
+            const bool bRise=Free.bAlive && Free.Position.Z>190.f;
+            const bool bSlide=MaxSide>8.f;
+            Report=FString::Printf(TEXT("%s:roof=%d;alive=%d;slide=%.1f;freeZ=%.1f;mesh=%d;carrierClip=%d;meshClip=%d"),
+                bStayedAlive && bSlide && bRise && bMesh && !bClip && !bMeshClip?
+                    TEXT("PASS"):TEXT("FAIL"),
+                int32(bRoof),int32(bStayedAlive),MaxSide,
+                float(Free.Position.Z),int32(bMesh),int32(bClip),int32(bMeshClip));
+            Fire->DestroyComponent();
+        }
+    }
+    World->DestroyWorld(false);
+    return Report;
+#else
+    return TEXT("EDITOR_ONLY");
+#endif
 }
 
 // Applied AFTER the approved life simulation. The age, cooling, death,
