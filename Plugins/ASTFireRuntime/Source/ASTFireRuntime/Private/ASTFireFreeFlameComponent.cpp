@@ -175,7 +175,8 @@ void UASTFireFreeFlameComponent::SetIgnitionPoints(
 void UASTFireFreeFlameComponent::SetFlamesVisible(bool bInVisible)
 {
     bVisible = bInVisible;
-    if (IsValid(Render)) Render->SetVisibility(bVisible);
+    // The tick owns visibility so released embers remain visible until dead.
+    if (bVisible && IsValid(Render)) Render->SetVisibility(true);
 }
 
 float UASTFireFreeFlameComponent::Uniform(int32 Salt) const
@@ -196,6 +197,7 @@ void UASTFireFreeFlameComponent::OnRegister()
     Render->SetCollisionEnabled(ECollisionEnabled::NoCollision);
     Render->SetGenerateOverlapEvents(false);
     Render->SetCastShadow(false);
+    Render->SetAbsolute(false,true,true);
     Render->SetupAttachment(GetOwner()->GetRootComponent());
     Render->SetMaterial(0, Material);
     Render->SetMaterial(1, Material); // unified mesh-bound source, same pixels
@@ -212,6 +214,8 @@ void UASTFireFreeFlameComponent::OnRegister()
     SmokeMaterial = LoadObject<UMaterialInterface>(nullptr,
         TEXT("/Game/VFX/Fire/Materials/M_AST_FireSmoke.M_AST_FireSmoke"));
     Render->RegisterComponent();
+    Render->SetWorldRotation(FRotator::ZeroRotator);
+    Render->SetWorldScale3D(FVector::OneVector);
     // Separate absolute-transform component: world smoke must not move
     // with the burning actor or alter the approved fire mesh sections.
     if (IsValid(SmokeMaterial))
@@ -547,6 +551,30 @@ void UASTFireFreeFlameComponent::BuildAnchors()
                         if(FVector::DistSquared(Existing,Rest)<FMath::Square(8.f))
                         {bDuplicate=true;break;}
                     if(!bDuplicate) SurfaceCandidates.Add(Rest);
+                }
+        // A carried prop disables collision, so surface traces can all fail.
+        // Sample the same actual static-mesh render vertices used by the mantle.
+        if(SurfaceCandidates.Num()<DesiredCount)
+            if(UStaticMesh* Asset=Static->GetStaticMesh())
+            if(Asset->bAllowCPUAccess || GIsEditor)
+            if(const FStaticMeshRenderData* Data=Asset->GetRenderData())
+            if(Data->LODResources.Num()>0)
+            {
+                const auto& Positions=Data->LODResources[0].VertexBuffers.PositionVertexBuffer;
+                const int32 Count=int32(Positions.GetNumVertices());
+                const int32 Samples=FMath::Min(Count,192);
+                if(Positions.GetVertexData()!=nullptr)
+                    for(int32 I=0;I<Samples;++I)
+                        SurfaceCandidates.Add(FVector(Positions.VertexPosition((I*Count+Count/2)/Samples)));
+            }
+        // Cooked assets may strip CPU buffers too. Last-resort samples remain
+        // on the local mesh bounds, not an unrelated pickup collision proxy.
+        if(SurfaceCandidates.IsEmpty())
+            for(int32 Axis=0;Axis<3;++Axis)
+                for(int32 Sign:{-1,1})
+                {
+                    FVector P=Bounds.Origin;P[Axis]+=Half[Axis]*Sign;
+                    SurfaceCandidates.Add(P);
                 }
         while(Tongues.Num()<DesiredCount && !SurfaceCandidates.IsEmpty())
         {
@@ -1185,10 +1213,10 @@ void UASTFireFreeFlameComponent::UpdateSmoke(float Dt)
         if(S.Radius<3.f) { S.Position=Previous; S.Radius=Radius; }
     }
 
-    if (bVisible && Heat>.10f && Active>0)
+    if ((bVisible && Heat>.10f && Active>0) || (Heat<.10f && Heat>.005f && SmokeFireSize>8.f))
     {
         // Small flames produce modest smoke. 10m is a cap, not a default.
-        const float Rate=FMath::Lerp(4.2f,5.3f,Scale)*
+        const float Rate=FMath::Lerp(4.2f,8.5f,Scale)*
             FMath::Lerp(1.f,1.48f,Abundance)*FMath::Lerp(.72f,1.f,Heat);
         SmokeSpawnDebt=FMath::Min(3.f,SmokeSpawnDebt+Dt*Rate);
         const int32 Born=FMath::FloorToInt(SmokeSpawnDebt);
@@ -1206,7 +1234,7 @@ void UASTFireFreeFlameComponent::UpdateSmoke(float Dt)
             const float R=FMath::Abs(Uniform(Salt*7+441));
             const float J=FMath::Abs(Uniform(Salt*11+617));
             FSmoke& S=*Slot;
-            S.InitialRadius=FMath::Lerp(10.f,46.f,Scale)*(.90f+.20f*R)*
+            S.InitialRadius=FMath::Lerp(10.f,32.f,Scale)*(.90f+.20f*R)*
                 FMath::Lerp(1.f,1.38f,Abundance);
             S.Radius=S.InitialRadius;
             S.MaxRise=FMath::Lerp(125.f,1000.f,FMath::Pow(Scale,1.25f))*
@@ -2241,7 +2269,7 @@ void UASTFireFreeFlameComponent::UpdateGeometry(bool bCreate)
     const FProcMeshSection* OldFragments=Render->GetProcMeshSection(0);
     if(Verts.IsEmpty()){if(OldFragments && !OldFragments->ProcVertexBuffer.IsEmpty())Render->ClearMeshSection(0);}
     else if(OldFragments && OldFragments->ProcVertexBuffer.Num()==Verts.Num())
-        Render->UpdateMeshSection_LinearColor(0,Verts,Normals,UVs,Colors,Tangents);
+        Render->UpdateMeshSection_LinearColor(0,Verts,Normals,UVs,Colors,Tangents,false);
     else Render->CreateMeshSection_LinearColor(0,Verts,Triangles,Normals,UVs,Colors,Tangents,false,false);
     Render->SetMaterial(0,Material);
 
@@ -2545,10 +2573,11 @@ float UASTFireFreeFlameComponent::UpdatePointField(bool bCreate,const FVector& R
         }
         const float Detail=1.2f*FMath::Sin(U*29.f+H*.55f-Elapsed*8.f+Phase)+
             .75f*FMath::Sin(U*51.f-H*.92f+Elapsed*11.f);
-        const float Top=BaseHeight+Ridge+Detail;
+        const float Dying=FMath::SmoothStep(0.f,.30f,Heat);
+        const float Top=(BaseHeight+Ridge+Detail)*Dying;
         const float Edge=1.04f-.04f*Z+.10f*FMath::Sin(H*.53f-Elapsed*6.f+Phase)+
             .045f*FMath::Sin(H*1.31f+Elapsed*8.f);
-        if(H<Bottom || H>Top || A>Edge)continue;
+        if(H<Bottom || H>Top || A>Edge*FMath::Lerp(.22f,1.f,Dying))continue;
         auto& C=Next[Y*FieldX+X];C.bLit=true;
         C.World=P.Unproject(GridOrigin+FVector2D((X-20+.5f)*Pitch,(Y-3+.5f)*Pitch),Depth);
         // Advect heat independently of the advancing contour. It is not
@@ -2632,7 +2661,7 @@ float UASTFireFreeFlameComponent::UpdatePointField(bool bCreate,const FVector& R
     const FProcMeshSection* Old=Render->GetProcMeshSection(1);
     if(Verts.IsEmpty())Render->ClearMeshSection(1);
     else if(Old && Old->ProcVertexBuffer.Num()==Verts.Num())
-        Render->UpdateMeshSection_LinearColor(1,Verts,Normals,UVs,Colors,Tangents);
+        Render->UpdateMeshSection_LinearColor(1,Verts,Normals,UVs,Colors,Tangents,false);
     else Render->CreateMeshSection_LinearColor(1,Verts,Tris,Normals,UVs,Colors,Tangents,false,false);
     Render->SetMaterial(1,Material);
     return Pitch;
@@ -2725,7 +2754,8 @@ float UASTFireFreeFlameComponent::UpdateConnectedSource(
     float Heights[MaxTongues]={};
     FVector Roots[MaxTongues];
     ConnectedRoots.Reset();
-    const float MaxHeight=(Skel?28.f:36.f)*FMath::Sqrt(S);
+    const float Dying=FMath::SmoothStep(0.f,.30f,Heat);
+    const float MaxHeight=(Skel?28.f:36.f)*FMath::Sqrt(S)*Dying;
     for(int32 I=0;I<Tongues.Num();++I)
     {
         FTongue& T=Tongues[I];Roots[I]=SampleRoot(T);ConnectedRoots.Add(Roots[I]);
@@ -2772,7 +2802,7 @@ float UASTFireFreeFlameComponent::UpdateConnectedSource(
         }
         const float Depth=FMath::Max(10.f,Projection.Depth(World)-Bias);
         const FVector2D Q=Projection.Project(World);
-        const float Radius=(Skel?FMath::Lerp(5.f,9.5f,Influence):FMath::Lerp(6.f,10.f,Influence))*
+        const float Radius=FMath::Lerp(.22f,1.f,Dying)*(Skel?FMath::Lerp(5.f,9.5f,Influence):FMath::Lerp(6.f,10.f,Influence))*
             FMath::Sqrt(S)*ASTFireLife::FFireProjection::Reference/Depth;
         Fuel.Add({Q,Depth,Radius,Influence,Owner});
         Lo.X=FMath::Min(Lo.X,Q.X-Radius);Lo.Y=FMath::Min(Lo.Y,Q.Y-Radius);
@@ -2801,9 +2831,9 @@ float UASTFireFreeFlameComponent::UpdateConnectedSource(
     // A single lattice for the whole visible burning surface. Inject fuel
     // near real samples, then transport the shared field upwards. No
     // circular flame blobs, swept ribbons, or geometry per simulation root.
-    constexpr int32 MaxXCells=72;
-    constexpr int32 MaxYCells=104;
-    const float Nominal=FMath::Max(.1875f,2.55f*FMath::Sqrt(S)*ASTFireLife::FFireProjection::Reference/OriginDepth);
+    constexpr int32 MaxXCells=144;
+    constexpr int32 MaxYCells=224;
+    const float Nominal=FMath::Max(.1875f,2.0f*ASTFireLife::FFireProjection::Reference/OriginDepth);
     const float MaxRise=MaxHeight*ASTFireLife::FFireProjection::Reference/FMath::Max(10.f,OriginDepth*.70f);
     Lo.X-=MaxRise*.55f+Nominal*2.f;Hi.X+=MaxRise*.55f+Nominal*2.f;
     Lo.Y-=Nominal*2.f;Hi.Y+=MaxRise+Nominal*3.f;
@@ -2875,10 +2905,12 @@ float UASTFireFreeFlameComponent::UpdateConnectedSource(
     {
         const auto& F=Surface[Y*NX+X];
         if(F.Owner==INDEX_NONE)continue;
+        // Deterministic per-cell loss during final cooling, no random flicker.
+        if(Dying<1.f && ASTFireLife::Hash(float((X+GX)*13+(Y+GY)*71)+Seed*.031f)>Dying)continue;
         const float H=Heights[F.Owner]*ASTFireLife::FFireProjection::Reference/F.Depth/Pitch;
         const float Crest=FMath::Max(1.f,H*(.55f+.45f*F.Strength)+Corrugation[Y*NX+X]*2.0f);
         const float Drift=FMath::Clamp(float(FVector::DotProduct(Tongues[F.Owner].WorldVelocity,Projection.Right))/180.f,-1.f,1.f);
-        for(int32 Step=0;Step<=FMath::CeilToInt(Crest) && Step<=32;++Step)
+        for(int32 Step=0;Step<=FMath::CeilToInt(Crest) && Step<=64;++Step)
         {
             const float Rise=float(Step)/FMath::Max(1.f,Crest);
             const float Side=Rise*float(Step)*(.32f*WindSide-.22f*Drift+
@@ -2986,7 +3018,7 @@ float UASTFireFreeFlameComponent::UpdateConnectedSource(
     const FProcMeshSection* Old=Render->GetProcMeshSection(1);
     if(Verts.IsEmpty())Render->ClearMeshSection(1);
     else if(Old && Old->ProcVertexBuffer.Num()==Verts.Num())
-        Render->UpdateMeshSection_LinearColor(1,Verts,Normals,UVs,Colors,Tangents);
+        Render->UpdateMeshSection_LinearColor(1,Verts,Normals,UVs,Colors,Tangents,false);
     else Render->CreateMeshSection_LinearColor(1,Verts,Tris,Normals,UVs,Colors,Tangents,false,false);
     Render->SetMaterial(1,Material);
     return Pitch;
@@ -3003,7 +3035,7 @@ void UASTFireFreeFlameComponent::TickComponent(
     bool bHasSmoke=false;
     for (const FSmoke& S:Smoke)
         if (S.bAlive) { bHasSmoke=true; break; }
-    if ((!bVisible || Heat<.005f) && !bHasSparks && !bHasSmoke)
+    if ((!bVisible || Heat<.005f) && !bHasSparks && !bHasSmoke && FieldFragments.IsEmpty())
     {
         // No active fire or embers: skip expensive field reconstruction.
         VisualEnergy=FMath::FInterpTo(VisualEnergy,0.f,Dt,6.f);
