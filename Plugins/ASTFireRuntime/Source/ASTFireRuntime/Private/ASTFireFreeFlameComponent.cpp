@@ -1,4 +1,6 @@
 #include "ASTFireFreeFlameComponent.h"
+#include "ASTFireBlueprintLibrary.h"
+#include "ASTFireReactiveComponent.h"
 
 #include "ProceduralMeshComponent.h"
 #include "Components/SceneComponent.h"
@@ -1241,7 +1243,7 @@ void UASTFireFreeFlameComponent::UpdateSmoke(float Dt)
             const float R=FMath::Abs(Uniform(Salt*7+441));
             const float J=FMath::Abs(Uniform(Salt*11+617));
             FSmoke& S=*Slot;
-            S.InitialRadius=FMath::Lerp(10.f,32.f,Scale)*(.90f+.20f*R)*
+            S.InitialRadius=FMath::Lerp(10.f,46.f,Scale)*(.90f+.20f*R)*
                 FMath::Lerp(1.f,1.38f,Abundance);
             S.Radius=S.InitialRadius;
             S.MaxRise=FMath::Lerp(125.f,1000.f,FMath::Pow(Scale,1.25f))*
@@ -2090,6 +2092,60 @@ FString UASTFireFreeFlameComponent::RunFireSurfaceAudit(UMaterialInterface* Test
     const bool bPass=Roots>=4 && Anchors>=30 && Samples>=100 && ValidFrames>=30 && Coverage>=.85f && MeshCuts>=2 && MeshTransferred>=4 && (!bCapture || Saved>=4);
     return FString::Printf(TEXT("%s:mesh=%s;roots=%d;anchors=%d;frames=%d;coverage=%.3f;samples=%d;captures=%d;fieldCuts=%d;fieldCells=%d"),
         bPass?TEXT("PASS"):TEXT("FAIL"),*Mesh->GetName(),Roots,Anchors,ValidFrames,Coverage,Samples,Saved,MeshCuts,MeshTransferred);
+#else
+    return TEXT("EDITOR_ONLY");
+#endif
+}
+
+FString UASTFireFreeFlameComponent::RunCarryVisualAudit(UClass* BoxClass,UClass* BarrelClass)
+{
+#if WITH_EDITOR
+    UWorld* World=UWorld::CreateWorld(EWorldType::Game,false);
+    if(!World||!BoxClass||!BarrelClass){if(World)World->DestroyWorld(false);return TEXT("FAIL:assets");}
+    bool bPass=true;
+    FString Detail;
+    for(UClass* Class:{BoxClass,BarrelClass})
+    {
+        FActorSpawnParameters Spawn;
+        Spawn.SpawnCollisionHandlingOverride=ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+        AActor* Prop=World->SpawnActor<AActor>(Class,FVector(0,0,0),FRotator(23,40,17),Spawn);
+        auto* Body=Prop?Cast<UStaticMeshComponent>(Prop->GetRootComponent()):nullptr;
+        if(!Body||!Body->GetStaticMesh()){bPass=false;continue;}
+        Body->SetGenerateOverlapEvents(false);
+        Body->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+        auto* Fire=UASTFireBlueprintLibrary::IgniteActor(Prop,Body->Bounds.Origin,.9f,6);
+        auto* FX=Prop->FindComponentByClass<UASTFireFreeFlameComponent>();
+        if(!Fire||!FX){bPass=false;Detail+=TEXT(";no_visual_component");Prop->Destroy();continue;}
+        int32 Peak=0,Low=0;
+        for(int32 Frame=0;Frame<90;++Frame)
+        {
+            FX->SetThermal(.9f,FVector::ZeroVector,.75f);
+            FX->AdvanceSimulation(.04f);FX->UpdateDetachedVortices(.04f);FX->UpdateSmoke(.04f);FX->UpdateGeometry(false);
+            if(const auto* Section=FX->Render->GetProcMeshSection(1))
+                Peak=FMath::Max(Peak,Section->ProcVertexBuffer.Num()/4);
+        }
+        for(int32 Frame=0;Frame<35;++Frame)
+        {
+            FX->SetThermal(.08f,FVector::ZeroVector,.25f);
+            FX->AdvanceSimulation(.04f);FX->UpdateGeometry(false);FX->UpdateSmoke(.04f);
+            if(const auto* Section=FX->Render->GetProcMeshSection(1))
+                Low=FMath::Max(Low,Section->ProcVertexBuffer.Num()/4);
+        }
+        bool bSmoke=false;
+        for(const auto& Cloud:FX->Smoke)bSmoke|=Cloud.bAlive;
+        FX->SetThermal(0.f,FVector::ZeroVector,0.f);
+        FX->UpdateGeometry(false);
+        const auto* Section=FX->Render->GetProcMeshSection(1);
+        const bool bOff=!Section||Section->ProcVertexBuffer.IsEmpty();
+        const bool bTail=FX->SmokeAfterglowSeconds>0.f || bSmoke;
+        const bool bOK=FX->Tongues.Num()>=2 && Peak>=12 && Low<Peak && bOff && bTail;
+        bPass&=bOK;
+        Detail+=FString::Printf(TEXT(";%s:roots=%d;peak=%d;cooling=%d;off=%d;smoke_tail=%d"),
+            *Class->GetName(),FX->Tongues.Num(),Peak,Low,int32(bOff),int32(bTail));
+        Prop->Destroy();
+    }
+    World->DestroyWorld(false);
+    return FString(bPass?TEXT("PASS:"):TEXT("FAIL:"))+Detail;
 #else
     return TEXT("EDITOR_ONLY");
 #endif
