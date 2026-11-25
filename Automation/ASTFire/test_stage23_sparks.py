@@ -15,7 +15,7 @@ for key in (
     "void UASTFireFreeFlameComponent::UpdateSparks(float Dt)",
     "SparkSpawnDebt",
     "Heat<.15f",
-    "S.Velocity=S.Velocity.GetClampedToMaxSize(560.f);",
+    "S.Velocity=S.Velocity.GetClampedToMaxSize(135.f);",
     "S.DriftPosition+=S.Velocity*Dt",
     "S.WaveSide*(S.WaveAmplitude*(Offset+Second))",
     "const float Angle=2.f*PI*ASTFireLife::Hash(",
@@ -46,7 +46,7 @@ assert "DetachedColumns=7;" in c
 assert 48*4==192 and 48*2==96
 # Reference particle count stays bounded even if the spawn debt is huge.
 def births(debt,dt,heat,energy):
-    debt=min(4.,debt+dt*(7.+17*heat*max(.2,min(1.2,energy))))
+    debt=min(4.,debt+dt*(4.+9*heat*max(.2,min(1.2,energy))))
     born=min(3,int(debt))
     return debt-born,born
 d=0.

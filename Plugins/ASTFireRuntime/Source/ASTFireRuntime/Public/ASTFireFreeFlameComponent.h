@@ -40,8 +40,10 @@ private:
     static constexpr int32 RingsPerTongue = 9;
     static constexpr int32 MaxDetached = 16;
     static constexpr int32 MaxSparks = 48;
-    static constexpr int32 MaxSmoke = 96; // flowing centreline: ~12 samples/s * 7 s
-    static constexpr int32 SmokeLayers = 4; // exactly four solid grey shades
+    static constexpr int32 MaxSmoke = 72; // bounded world-space density carriers
+    static constexpr int32 SmokeTones = 5;
+    static constexpr int32 SmokeGridMaxX = 64;
+    static constexpr int32 SmokeGridMaxY = 112;
     static constexpr int32 RingsPerDetached = 5;
     static constexpr int32 BridgeRings = 4;
     static constexpr int32 SurfaceClusters = 8;
@@ -135,9 +137,12 @@ private:
         FVector Velocity = FVector::ZeroVector;
         float Age = 0.f;
         float Lifetime = 1.4f;
-        float Radius = 24.f;
+        float Radius = 10.f; // collision-cleared support radius
+        float InitialRadius = 10.f;
+        float MaxRise = 150.f;
+        float RiseSpeed = 40.f;
         float Seed = 0.f;
-        float BaseZ = 0.f; // travelled height survives owner motion
+        float BaseZ = 0.f;
         bool bAlive = false;
     };
 
@@ -153,6 +158,7 @@ private:
     void UpdateDetachedVortices(float Dt);
     void UpdateSparks(float Dt);
     void UpdateSmoke(float Dt);
+    void UpdateSmokeGeometry();
     void UpdateGeometry(bool bCreate);
     void UpdateSurfaceMap(float Dt);
     int32 EmitTip(FTongue& Tongue, const FVector& Base, float Length,
@@ -168,6 +174,8 @@ private:
     TObjectPtr<USceneComponent> Source = nullptr;
     UPROPERTY(Transient)
     TObjectPtr<UProceduralMeshComponent> Render = nullptr;
+    UPROPERTY(Transient)
+    TObjectPtr<UProceduralMeshComponent> SmokeRender = nullptr;
     UPROPERTY(Transient)
     TObjectPtr<UMaterialInterface> Material = nullptr;
     UPROPERTY(Transient)
@@ -191,6 +199,9 @@ private:
     float SmokeSpawnDebt = 0.f;
     int32 SmokeCursor = 0;
     float SmokeLightScanDebt = 0.f;
+    float SmokeSimDebt = 0.f;
+    float SmokeFireSize = 0.f;
+    FVector SmokeFireTop = FVector::ZeroVector;
     TArray<TWeakObjectPtr<UPointLightComponent>> NearbySmokeLights;
     TArray<FVector> IgnitionPoints;
     FVector Wind = FVector::ZeroVector;

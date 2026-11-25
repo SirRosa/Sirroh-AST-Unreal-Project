@@ -16,6 +16,9 @@
 #include "Components/PointLightComponent.h"
 #include "Engine/PointLight.h"
 #include "EngineUtils.h"
+#include "Components/SpotLightComponent.h"
+#include "UObject/UObjectIterator.h"
+#include "CollisionQueryParams.h"
 
 namespace ASTFireLife
 {
@@ -118,13 +121,32 @@ void UASTFireFreeFlameComponent::OnRegister()
     }
     SmokeMaterial = LoadObject<UMaterialInterface>(nullptr,
         TEXT("/Game/VFX/Fire/Materials/M_AST_FireSmoke.M_AST_FireSmoke"));
-    if (IsValid(SmokeMaterial))
-        Render->SetMaterial(3, SmokeMaterial);
-    else
-        UE_LOG(LogTemp, Error, TEXT(
-            "AST Fire: missing M_AST_FireSmoke; smoke section disabled for %s"),
-            *GetOwner()->GetName());
     Render->RegisterComponent();
+    // Separate absolute-transform component: world smoke must not move
+    // with the burning actor or alter the approved fire mesh sections.
+    if (IsValid(SmokeMaterial))
+    {
+        SmokeRender=NewObject<UProceduralMeshComponent>(
+            GetOwner(),NAME_None,RF_Transient);
+        if (IsValid(SmokeRender))
+        {
+            SmokeRender->SetMobility(EComponentMobility::Movable);
+            SmokeRender->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+            SmokeRender->SetGenerateOverlapEvents(false);
+            SmokeRender->SetCastShadow(false);
+            SmokeRender->SetupAttachment(GetOwner()->GetRootComponent());
+            SmokeRender->SetAbsolute(true,true,true);
+            SmokeRender->RegisterComponent();
+            SmokeRender->SetWorldLocation(GetOwner()->GetActorLocation());
+            SmokeRender->SetWorldRotation(FRotator::ZeroRotator);
+            SmokeRender->SetWorldScale3D(FVector::OneVector);
+            SmokeRender->SetMaterial(0,SmokeMaterial);
+            SmokeRender->SetVisibility(false);
+        }
+    }
+    else
+        UE_LOG(LogTemp,Error,TEXT("AST Fire: missing smoke material on %s"),
+            *GetOwner()->GetName());
 
     Sparks.SetNum(MaxSparks);
     Smoke.SetNum(MaxSmoke);
@@ -143,6 +165,8 @@ void UASTFireFreeFlameComponent::OnRegister()
 void UASTFireFreeFlameComponent::OnUnregister()
 {
     if (IsValid(Render)) Render->DestroyComponent();
+    if (IsValid(SmokeRender)) SmokeRender->DestroyComponent();
+    SmokeRender=nullptr;
     Render = nullptr;
     Tongues.Reset();
     BurnClusters.Reset();
@@ -153,6 +177,8 @@ void UASTFireFreeFlameComponent::OnUnregister()
     Smoke.Reset();
     SmokeSpawnDebt = 0.f;
     SmokeLightScanDebt = 0.f;
+    SmokeSimDebt = 0.f;
+    SmokeFireSize = 0.f;
     NearbySmokeLights.Reset();
     SmokeMaterial = nullptr;
     SparkMaterial = nullptr;
@@ -728,9 +754,10 @@ void UASTFireFreeFlameComponent::UpdateSparks(float Dt)
         S.Age+=Dt;
         if (S.Age>=S.Lifetime) { S.bAlive=false; continue; }
         // The base flight may arc upward slowly. It is NOT forced onto Z.
-        S.Velocity+=(FVector::UpVector*38.f+Wind*.085f-
-            S.Velocity*.22f)*Dt;
-        S.Velocity=S.Velocity.GetClampedToMaxSize(560.f);
+        S.Velocity+=(FVector::UpVector*12.f+
+            (Wind*.035f).GetClampedToMaxSize(25.f)-
+            S.Velocity*.48f)*Dt;
+        S.Velocity=S.Velocity.GetClampedToMaxSize(135.f);
         S.DriftPosition+=S.Velocity*Dt;
         const float Offset=FMath::Sin(
             S.WavePhase+S.Age*S.WaveFrequency)-
@@ -760,7 +787,7 @@ void UASTFireFreeFlameComponent::UpdateSparks(float Dt)
         CameraScreenRight=FVector::RightVector;
 
     SparkSpawnDebt=FMath::Min(4.f,SparkSpawnDebt+
-        Dt*(7.f+17.f*Heat*FMath::Clamp(Energy,.2f,1.2f)));
+        Dt*(4.f+9.f*Heat*FMath::Clamp(Energy,.2f,1.2f)));
     const int32 Born=FMath::Min(3,FMath::FloorToInt(SparkSpawnDebt));
     SparkSpawnDebt-=Born;
     for (int32 I=0;I<Born;++I)
@@ -799,15 +826,16 @@ void UASTFireFreeFlameComponent::UpdateSparks(float Dt)
             FVector::UpVector*(T.CurrentLength*HeightFraction)+
             Outward*(T.CurrentWidth*(.45f+.40f*Other));
         S.Position=S.DriftPosition;
-        S.Velocity=Outward*(115.f+145.f*Other)+
-            FVector::UpVector*26.f+T.WorldVelocity*.12f+
-            Wind*.055f;
+        S.Velocity=Outward*(45.f+55.f*FMath::Abs(Other))+
+            FVector::UpVector*8.f+
+            (T.WorldVelocity*.045f+Wind*.025f).GetClampedToMaxSize(20.f);
+        S.Velocity=S.Velocity.GetClampedToMaxSize(125.f);
         S.WaveSide=FVector::CrossProduct(
             Outward,CameraForward).GetSafeNormal();
         if (S.WaveSide.IsNearlyZero())
             S.WaveSide=CameraScreenRight;
-        S.WaveAmplitude=11.f+21.f*Random;
-        S.WaveFrequency=6.4f+5.2f*Other;
+        S.WaveAmplitude=5.f+9.f*FMath::Abs(Random);
+        S.WaveFrequency=3.0f+2.3f*FMath::Abs(Other);
         S.WavePhase=2.f*PI*ASTFireLife::Hash(
             float(Salt)*.57f+T.Seed*.29f);
         S.Size=2.8f+2.9f*Other;
@@ -818,104 +846,378 @@ void UASTFireFreeFlameComponent::UpdateSparks(float Dt)
     }
 }
 
-// Stage31: advected centreline nodes form ONE continuous plume surface.
-// Older samples remain in WORLD SPACE, so character movement, gusts and
-// extinguishing do not drag a ten-metre column behind the actor as a sprite.
-// The topology is fixed; only the node positions, width and bands change.
+// Stage33: slow, scale-dependent smoke. Invisible carriers transport mass;
+// the visible field is reconstructed separately. No centreline links.
 void UASTFireFreeFlameComponent::UpdateSmoke(float Dt)
 {
-    SmokeLightScanDebt-=Dt;
-    if (SmokeLightScanDebt<=0.f && GetOwner())
-    {
-        SmokeLightScanDebt=1.0f; // cache; never scan the world per vertex
-        NearbySmokeLights.Reset();
-        TArray<UPointLightComponent*> OwnedLights;
-        GetOwner()->GetComponents<UPointLightComponent>(OwnedLights);
-        for (UPointLightComponent* Light:OwnedLights)
-            if (IsValid(Light) && Light->IsVisible())
-                NearbySmokeLights.Add(Light);
-        if (UWorld* World=GetWorld())
+    if (!IsValid(SmokeRender) || !GetWorld() || !GetOwner()) return;
+    SmokeSimDebt+=Dt;
+    if (SmokeSimDebt<.079f) return;
+    Dt=FMath::Min(SmokeSimDebt,.12f);
+    SmokeSimDebt=0.f;
+    UWorld* World=GetWorld();
+    FCollisionObjectQueryParams Objects;
+    Objects.AddObjectTypesToQuery(ECC_WorldStatic);
+    Objects.AddObjectTypesToQuery(ECC_WorldDynamic);
+    Objects.AddObjectTypesToQuery(ECC_PhysicsBody);
+    FCollisionQueryParams Query(SCENE_QUERY_STAT(ASTSmoke),false,GetOwner());
+    Query.bFindInitialOverlaps=true;
+
+    // Evaluate the actual live flame envelope, not the entire actor bounds.
+    // Smooth dimensions only: old smoke must stay in world space.
+    FBox FlameBounds(ForceInit);
+    FVector Highest=GetOwner()->GetActorLocation();
+    float Peak=-BIG_NUMBER,WidthSum=0.f,LengthSum=0.f;
+    int32 Active=0;
+    FVector TipRight=FVector::RightVector;
+    if (const APlayerController* PC=World->GetFirstPlayerController())
+        if (const APlayerCameraManager* Cam=PC->PlayerCameraManager)
         {
-            for (TActorIterator<APointLight> It(World);It;++It)
-            {
-                UPointLightComponent* Light=
-                    It->FindComponentByClass<UPointLightComponent>();
-                if (!IsValid(Light) || !Light->IsVisible()) continue;
-                const float MaxDistance=1300.f+
-                    FMath::Max(100.f,Light->AttenuationRadius);
-                if (FVector::DistSquared(
-                        Light->GetComponentLocation(),
-                        GetOwner()->GetActorLocation())<
-                    FMath::Square(MaxDistance))
-                    NearbySmokeLights.Add(Light);
-            }
+            const FVector V=(Cam->GetCameraLocation()-
+                GetOwner()->GetActorLocation()).GetSafeNormal();
+            const FVector R=FVector::CrossProduct(FVector::UpVector,V)
+                .GetSafeNormal();
+            if (!R.IsNearlyZero()) TipRight=R;
         }
+    for (const FTongue& T:Tongues)
+    {
+        if (!T.bActive || T.Age<0.f || T.CurrentLength<3.f) continue;
+        const FVector Root=SampleRoot(T);
+        const FVector Tip=TongueCenterAt(T,Root,1.f,TipRight);
+        FlameBounds+=Root;
+        FlameBounds+=Tip;
+        if (Tip.Z>Peak) { Peak=Tip.Z; Highest=Tip; }
+        WidthSum+=FMath::Max(1.f,T.CurrentWidth);
+        LengthSum+=T.CurrentLength;
+        ++Active;
+    }
+    if (Active>0)
+    {
+        const FVector Size=FlameBounds.GetSize();
+        const float Width=WidthSum/Active;
+        const float MeanLength=LengthSum/Active;
+        const float Footprint=FMath::Max(Size.X,Size.Y);
+        const float Measured=FMath::Clamp(
+            (Width*1.4f+Footprint*.30f+MeanLength*.25f)*
+            FMath::Sqrt(FMath::Clamp(Heat,.02f,1.f)),8.f,280.f);
+        SmokeFireSize=SmokeFireSize>0.f?
+            FMath::FInterpTo(SmokeFireSize,Measured,Dt,1.8f):Measured;
+        SmokeFireTop=Highest;
+    }
+    const float Scale=FMath::Clamp((SmokeFireSize-16.f)/220.f,0.f,1.f);
+
+    // Light cache: actual point/spot components, including BP lights.
+    // Cache only the strongest nearby candidates, not a per-pixel world scan.
+    SmokeLightScanDebt-=Dt;
+    if (SmokeLightScanDebt<=0.f)
+    {
+        SmokeLightScanDebt=2.f+.4f*FMath::Abs(Uniform(772));
+        NearbySmokeLights.Reset();
+        struct FLightCandidate { UPointLightComponent* Light; float Score; };
+        TArray<FLightCandidate> Candidates;
+        for (TObjectIterator<UPointLightComponent> It;It;++It)
+        {
+            UPointLightComponent* L=*It;
+            if (!IsValid(L) || L->GetWorld()!=World || !L->IsRegistered() ||
+                !L->IsVisible() || L->Intensity<=0.f) continue;
+            const float R=FMath::Max(50.f,L->AttenuationRadius);
+            const float D=FVector::Dist(L->GetComponentLocation(),SmokeFireTop);
+            if (D>R+1000.f) continue;
+            Candidates.Add({L, (R+100.f)/(D+100.f)*
+                (L->Intensity/(L->Intensity+100.f))});
+        }
+        Candidates.Sort([](const FLightCandidate& A,const FLightCandidate& B)
+            { return A.Score>B.Score; });
+        for (int32 I=0;I<FMath::Min(8,Candidates.Num());++I)
+            NearbySmokeLights.Add(Candidates[I].Light);
     }
 
+    // Collision volume is also the exact support of visible density.
+    // A growing carrier can shrink under a ceiling or next to a wall.
+    const auto IsClear=[&](const FVector& P,float Radius)
+    {
+        return !World->OverlapAnyTestByObjectType(P,FQuat::Identity,
+            Objects,FCollisionShape::MakeSphere(Radius+1.5f),Query);
+    };
     for (FSmoke& S:Smoke)
     {
         if (!S.bAlive) continue;
         S.Age+=Dt;
-        if (S.Age>=S.Lifetime || S.Position.Z-S.BaseZ>=1050.f)
+        if (S.Age>=S.Lifetime) { S.bAlive=false; continue; }
+        const float Age=FMath::Clamp(S.Age/S.Lifetime,0.f,1.f);
+        const float Height=FMath::Max(0.f,float(S.Position.Z-S.BaseZ));
+        // Cap the complete visible carrier (not merely the centre).
+        const float Headroom=S.MaxRise-Height-2.f;
+        if (Headroom<3.f) { S.bAlive=false; continue; }
+        const float Growth=1.f+1.5f*ASTFireLife::SmoothStep(Age/.68f);
+        float Radius=FMath::Min(Headroom,S.InitialRadius*Growth*
+            (.91f+.09f*FMath::Sin(S.Seed+S.Age*.8f)));
+        Radius=FMath::Min(Radius,S.Radius+Dt*8.f);
+        // Bounded clearance checks; moving obstacles can displace/dissolve
+        // a carrier, but cannot leave a big rendered patch inside them.
+        for (int32 Try=0;Try<3 && Radius>=3.f && !IsClear(S.Position,Radius);++Try)
+            Radius*=.72f;
+        if (Radius<3.f || !IsClear(S.Position,Radius))
+        { S.bAlive=false; continue; }
+        S.Radius=Radius;
+        const float Phase=float(S.Position.Z-S.BaseZ)*.013f+
+            Elapsed*.43f+S.Seed*.20f;
+        const FVector Eddy(
+            FMath::Sin(Phase)*(.14f*S.RiseSpeed)+
+                FMath::Sin(Phase*1.7f)*3.f,
+            FMath::Cos(Phase*.83f+1.f)*(.12f*S.RiseSpeed),
+            S.RiseSpeed*(.91f+.08f*FMath::Sin(Phase*.55f)));
+        const FVector Target=Eddy+
+            FVector(Wind.X,Wind.Y,0.f).GetClampedToMaxSize(450.f)*.035f;
+        S.Velocity=FMath::VInterpTo(S.Velocity,Target,Dt,1.25f);
+        FVector Delta=S.Velocity*Dt;
+        Delta.Z=FMath::Min(float(Delta.Z),FMath::Max(0.f,Headroom-Radius));
+        const FCollisionShape Shape=FCollisionShape::MakeSphere(Radius+1.f);
+        FHitResult Hit;
+        if (World->SweepSingleByObjectType(Hit,S.Position,S.Position+Delta,
+                FQuat::Identity,Objects,Shape,Query))
         {
-            S.bAlive=false;
-            continue;
+            if (Hit.bStartPenetrating) { S.bAlive=false; continue; }
+            S.Position=Hit.Location+Hit.Normal*.35f;
+            FVector Slide=FVector::VectorPlaneProject(
+                Delta*(1.f-Hit.Time),Hit.Normal);
+            if (Hit.Normal.Z<-.45f)
+            {
+                // Accumulation under a roof: tangent drift, varied by
+                // carrier; after passing an edge buoyancy resumes.
+                const FVector Side(FMath::Cos(S.Seed),FMath::Sin(S.Seed),0.f);
+                Slide+=FVector::VectorPlaneProject(
+                    Side*S.RiseSpeed*.43f*Dt,Hit.Normal);
+            }
+            FHitResult Second;
+            if (World->SweepSingleByObjectType(Second,S.Position,
+                    S.Position+Slide,FQuat::Identity,Objects,Shape,Query))
+            {
+                if (!Second.bStartPenetrating)
+                    S.Position=Second.Location+Second.Normal*.35f;
+            }
+            else S.Position+=Slide;
+            S.Velocity=FVector::VectorPlaneProject(S.Velocity,Hit.Normal);
         }
-        const float Height=FMath::Clamp(S.Position.Z-S.BaseZ,0.f,1050.f);
-        // Spatially coherent turbulence: neighbouring slices bend together.
-        // A different phase for every puff would tear the column into blobs.
-        const float Phase=Height*.011f+Elapsed*1.52f;
-        const FVector Flow(
-            62.f*FMath::Sin(Phase)+21.f*FMath::Sin(
-                Height*.025f-Elapsed*.73f),
-            49.f*FMath::Cos(Phase*.83f+1.3f),
-            156.f+15.f*FMath::Sin(Phase*.57f));
-        const FVector Target=Flow+FVector(Wind.X*.085f,
-            Wind.Y*.085f,0.f);
-        S.Velocity=FMath::VInterpTo(S.Velocity,Target,Dt,1.85f);
-        S.Position+=S.Velocity*Dt;
+        else S.Position+=Delta;
     }
 
-    if (!bVisible || Heat<.10f || Tongues.IsEmpty()) return;
-    const float BurnRate=Heat*FMath::Clamp(Energy,.15f,1.25f);
-    SmokeSpawnDebt=FMath::Min(4.f,SmokeSpawnDebt+
-        Dt*(10.f+3.f*BurnRate));
-    const int32 Born=FMath::Min(2,FMath::FloorToInt(SmokeSpawnDebt));
-    SmokeSpawnDebt-=Born;
-
-    // One shared source position, not 15 unrelated mouth locations.
-    // This is the most important difference from the old independent puffs.
-    FVector SourceCenter=GetOwner()
-        ? GetOwner()->GetActorLocation() : FVector::ZeroVector;
-    FVector WeightedRoots=FVector::ZeroVector;
-    int32 RootCount=0;
-    for (const FTongue& Tongue:Tongues)
-        if (Tongue.bActive && Tongue.Age>=0.f)
-        {
-            WeightedRoots+=SampleRoot(Tongue)+
-                FVector::UpVector*FMath::Min(45.f,
-                    Tongue.CurrentLength*.40f);
-            ++RootCount;
-        }
-    if (RootCount>0) SourceCenter=WeightedRoots/float(RootCount);
-    for (int32 I=0;I<Born;++I)
+    if (bVisible && Heat>.10f && Active>0)
     {
-        const int32 Salt=SmokeCursor++;
-        FSmoke& S=Smoke[Salt%MaxSmoke];
-        const float R=ASTFireLife::Hash(float(Salt)*.83f+Seed*.011f);
-        const float J=ASTFireLife::Hash(float(Salt)*.37f+Seed*.023f);
-        const float Phase=float(Salt)*2.39996f;
-        S.Position=SourceCenter+FVector(
-            FMath::Cos(Phase),FMath::Sin(Phase),0.f)*(4.f+8.f*R);
-        S.Velocity=FVector(
-            (R-.5f)*24.f,(J-.5f)*23.f,150.f+18.f*R);
-        S.BaseZ=SourceCenter.Z;
-        S.Radius=24.f+11.f*J;
-        S.Lifetime=6.1f+.45f*R; // about 900–1050 cm of plume
-        S.Seed=float(Salt)*.319f+Seed*.037f;
-        S.Age=0.f;
-        S.bAlive=true;
+        // Small flames produce modest smoke. 10m is a cap, not a default.
+        const float Rate=FMath::Lerp(4.2f,5.3f,Scale)*
+            FMath::Lerp(.72f,1.f,Heat);
+        SmokeSpawnDebt=FMath::Min(2.f,SmokeSpawnDebt+Dt*Rate);
+        const int32 Born=FMath::FloorToInt(SmokeSpawnDebt);
+        SmokeSpawnDebt-=Born;
+        for (int32 I=0;I<Born;++I)
+        {
+            const int32 Salt=SmokeCursor++;
+            FSmoke* Slot=nullptr;
+            for (int32 J=0;J<Smoke.Num();++J)
+            {
+                FSmoke& Candidate=Smoke[(Salt+J)%Smoke.Num()];
+                if (!Candidate.bAlive) { Slot=&Candidate; break; }
+            }
+            if (!Slot) break; // never pop a living cloud to make room
+            const float R=FMath::Abs(Uniform(Salt*7+441));
+            const float J=FMath::Abs(Uniform(Salt*11+617));
+            FSmoke& S=*Slot;
+            S.InitialRadius=FMath::Lerp(10.f,46.f,Scale)*(.90f+.20f*R);
+            S.Radius=S.InitialRadius;
+            S.MaxRise=FMath::Lerp(125.f,1000.f,FMath::Pow(Scale,1.25f))*
+                (.83f+.17f*J);
+            S.RiseSpeed=FMath::Lerp(35.f,85.f,Scale)*(.94f+.12f*R);
+            S.Lifetime=FMath::Min(14.f,(S.MaxRise-S.Radius)/
+                S.RiseSpeed*(1.04f+.08f*J));
+            S.Seed=Salt*.713f+Seed*.031f;
+            // Bottom of carrier starts ABOVE the highest active tongue tip.
+            FVector Spawn=SmokeFireTop+FVector::UpVector*(S.Radius+6.f);
+            // A low ceiling can prevent the desired spawn; use a smaller,
+            // clear lateral pocket or reject, never teleport through roof.
+            const float Angle=S.Seed*2.39996f;
+            const FVector Side(FMath::Cos(Angle),FMath::Sin(Angle),0.f);
+            bool bFound=false;
+            for (int32 Attempt=0;Attempt<3;++Attempt)
+            {
+                const float TryRadius=S.InitialRadius*
+                    (1.f-.25f*Attempt);
+                const FVector P=SmokeFireTop+FVector::UpVector*
+                    (TryRadius+6.f)+Side*(Attempt*TryRadius*.8f);
+                FHitResult SpawnHit;
+                const bool bBlocked=World->SweepSingleByObjectType(
+                    SpawnHit,SmokeFireTop,P,FQuat::Identity,Objects,
+                    FCollisionShape::MakeSphere(TryRadius+1.f),Query);
+                if (!bBlocked && IsClear(P,TryRadius))
+                { Spawn=P; S.Radius=S.InitialRadius=TryRadius; bFound=true; break; }
+            }
+            if (!bFound) continue;
+            S.Position=Spawn;
+            S.BaseZ=SmokeFireTop.Z;
+            S.Velocity=FVector::UpVector*S.RiseSpeed*.75f+
+                Side*S.RiseSpeed*.08f;
+            S.Age=0.f;
+            S.bAlive=true;
+        }
     }
+    UpdateSmokeGeometry();
+}
+
+// Perspective-correct density raster, with per-cell collision-safe depth.
+// Support is bounded by the swept sphere, including the square's corners.
+// Overlapping supports produce one field, not individual circles or ribbons.
+void UASTFireFreeFlameComponent::UpdateSmokeGeometry()
+{
+    if (!IsValid(SmokeRender) || !IsValid(SmokeMaterial)) return;
+    FVector Cam=GetOwner()->GetActorLocation()+FVector::ForwardVector*700.f;
+    FVector Forward=(GetOwner()->GetActorLocation()-Cam).GetSafeNormal();
+    FVector Right=FVector::RightVector;
+    if (const APlayerController* PC=GetWorld()->GetFirstPlayerController())
+        if (const APlayerCameraManager* C=PC->PlayerCameraManager)
+        {
+            Cam=C->GetCameraLocation();
+            Forward=C->GetCameraRotation().RotateVector(FVector::ForwardVector);
+            Right=C->GetCameraRotation().RotateVector(FVector::RightVector);
+        }
+    Right=(Right-Forward*FVector::DotProduct(Right,Forward)).GetSafeNormal();
+    if (Right.IsNearlyZero()) return;
+    const FVector Up=FVector::CrossProduct(Forward,Right).GetSafeNormal();
+    const float Reference=FMath::Max(100.f,float(FVector::Dist(Cam,SmokeFireTop)));
+    struct FProjected
+    {
+        FVector2D Center;
+        float Radius,Depth,Fade,Height,Light;
+        FVector2D LightDir;
+    };
+    TArray<FProjected> Supports;
+    FVector2D Min( BIG_NUMBER, BIG_NUMBER),Max(-BIG_NUMBER,-BIG_NUMBER);
+    for (const FSmoke& S:Smoke)
+    {
+        if (!S.bAlive) continue;
+        const FVector Rel=S.Position-Cam;
+        const float Depth=FVector::DotProduct(Rel,Forward);
+        if (Depth<S.Radius+10.f) continue;
+        const float Projection=Reference/Depth;
+        const FVector2D P(FVector::DotProduct(Rel,Right)*Projection,
+            FVector::DotProduct(Rel,Up)*Projection);
+        const float Radius=S.Radius*Projection;
+        const float Fade=FMath::Clamp((S.Lifetime-S.Age)/
+            FMath::Max(.1f,S.Lifetime*.24f),0.f,1.f);
+        const float Height=FMath::Clamp(
+            float(S.Position.Z-S.BaseZ)/S.MaxRise,0.f,1.f);
+        FVector ToLight=(SmokeFireTop-S.Position).GetSafeNormal();
+        float Light=Heat*.65f*FMath::Square(FMath::Max(0.f,1.f-Height));
+        FVector LightVector=ToLight*Light;
+        for (const auto& Weak:NearbySmokeLights)
+        {
+            const UPointLightComponent* L=Weak.Get();
+            if (!IsValid(L) || !L->IsVisible() || L->Intensity<=0.f) continue;
+            const FVector Delta=L->GetComponentLocation()-S.Position;
+            const float D=Delta.Size();
+            const float R=FMath::Max(50.f,L->AttenuationRadius);
+            if (D>=R || D<.1f) continue;
+            const FVector Dir=Delta/D;
+            if (const USpotLightComponent* Spot=Cast<USpotLightComponent>(L))
+                if (FVector::DotProduct(-Dir,Spot->GetForwardVector())<
+                    FMath::Cos(FMath::DegreesToRadians(Spot->OuterConeAngle)))
+                    continue;
+            const float Amount=.65f*FMath::Square(1.f-D/R)*
+                (L->Intensity/(L->Intensity+100.f));
+            Light+=Amount;
+            LightVector+=Dir*Amount;
+        }
+        const FVector2D LightDir(FVector::DotProduct(LightVector,Right),
+            FVector::DotProduct(LightVector,Up));
+        Supports.Add({P,Radius,Depth,Fade,Height,
+            FMath::Clamp(Light,0.f,1.f),LightDir.GetSafeNormal()});
+        Min.X=FMath::Min(Min.X,P.X-Radius);Min.Y=FMath::Min(Min.Y,P.Y-Radius);
+        Max.X=FMath::Max(Max.X,P.X+Radius);Max.Y=FMath::Max(Max.Y,P.Y+Radius);
+    }
+    if (Supports.IsEmpty())
+    {
+        SmokeRender->SetVisibility(false);
+        return;
+    }
+    // Hard pixel edges. Adapt pitch to the footprint, not a fixed 10m grid.
+    const float Pitch=FMath::Max(2.5f,float(FMath::Max(
+        (Max.X-Min.X)/(SmokeGridMaxX-2),(Max.Y-Min.Y)/(SmokeGridMaxY-2))));
+    Min.X=FMath::FloorToDouble(Min.X/Pitch)*Pitch;
+    Min.Y=FMath::FloorToDouble(Min.Y/Pitch)*Pitch;
+    const int32 NX=FMath::Clamp(FMath::CeilToInt((Max.X-Min.X)/Pitch)+1,1,SmokeGridMaxX);
+    const int32 NY=FMath::Clamp(FMath::CeilToInt((Max.Y-Min.Y)/Pitch)+1,1,SmokeGridMaxY);
+    struct FCell { float Density=0.f,Best=0.f,Alpha=0.f; int32 Carrier=INDEX_NONE; };
+    TArray<FCell> Grid;
+    Grid.SetNum(NX*NY);
+    for (int32 I=0;I<Supports.Num();++I)
+    {
+        const FProjected& S=Supports[I];
+        // Every corner fits inside the support sphere at this depth.
+        const float SafeRadius=S.Radius-Pitch*.72f;
+        if (SafeRadius<=0.f) continue;
+        const int32 X0=FMath::Clamp(FMath::FloorToInt((S.Center.X-SafeRadius-Min.X)/Pitch),0,NX-1);
+        const int32 X1=FMath::Clamp(FMath::CeilToInt((S.Center.X+SafeRadius-Min.X)/Pitch),0,NX-1);
+        const int32 Y0=FMath::Clamp(FMath::FloorToInt((S.Center.Y-SafeRadius-Min.Y)/Pitch),0,NY-1);
+        const int32 Y1=FMath::Clamp(FMath::CeilToInt((S.Center.Y+SafeRadius-Min.Y)/Pitch),0,NY-1);
+        for (int32 Y=Y0;Y<=Y1;++Y) for (int32 X=X0;X<=X1;++X)
+        {
+            const FVector2D P=Min+FVector2D((X+.5f)*Pitch,(Y+.5f)*Pitch);
+            const float Q=(P-S.Center).SizeSquared()/FMath::Square(SafeRadius);
+            if (Q>=1.f) continue;
+            const float Mass=FMath::Square(1.f-Q)*FMath::Lerp(.58f,1.f,S.Fade);
+            FCell& Cell=Grid[Y*NX+X];
+            Cell.Density+=Mass;
+            Cell.Alpha=FMath::Max(Cell.Alpha,S.Fade);
+            if (Mass>Cell.Best)
+            { Cell.Best=Mass; Cell.Carrier=I; }
+        }
+    }
+    const float Palette[SmokeTones]={.018f,.065f,.17f,.36f,.64f};
+    TArray<FVector> V,N;
+    TArray<FVector2D> UV;
+    TArray<FLinearColor> C;
+    TArray<int32> Tris;
+    TArray<FProcMeshTangent> Tangents;
+    const FTransform Transform=SmokeRender->GetComponentTransform();
+    const auto Density=[&](int32 X,int32 Y)->float
+    {
+        return X>=0 && X<NX && Y>=0 && Y<NY?Grid[Y*NX+X].Density:0.f;
+    };
+    for (int32 Y=0;Y<NY;++Y) for (int32 X=0;X<NX;++X)
+    {
+        const FCell& Cell=Grid[Y*NX+X];
+        if (Cell.Carrier==INDEX_NONE || Cell.Density<.19f || Cell.Alpha<.015f) continue;
+        const FProjected& S=Supports[Cell.Carrier];
+        // Density gradient gives lobe contours, depth and self-shading.
+        // Five hard grey bands; lighting direction is evaluated in plane.
+        const FVector2D Gradient(Density(X-1,Y)-Density(X+1,Y),
+            Density(X,Y-1)-Density(X,Y+1));
+        const float Facing=FMath::Max(0.f,float(FVector2D::DotProduct(
+            Gradient.GetSafeNormal(),S.LightDir)));
+        const float Core=FMath::Clamp((Cell.Density-.35f)/1.5f,0.f,1.f);
+        const float Shade=FMath::Clamp(.36f-.26f*S.Height+
+            .44f*S.Light+.32f*Facing-.26f*Core,0.f,1.f);
+        const int32 Tone=FMath::Clamp(FMath::FloorToInt(Shade*5.f),0,SmokeTones-1);
+        const float Grey=Palette[Tone];
+        const FLinearColor Color(Grey,Grey,Grey,Cell.Alpha);
+        const int32 First=V.Num();
+        for (int32 K=0;K<4;++K)
+        {
+            const FVector2D P=Min+FVector2D(
+                (X+(K%2))*Pitch,(Y+(K/2))*Pitch);
+            const FVector WorldP=Cam+Forward*S.Depth+
+                (Right*P.X+Up*P.Y)*(S.Depth/Reference);
+            V.Add(Transform.InverseTransformPosition(WorldP));
+            N.Add(Transform.InverseTransformVectorNoScale(-Forward));
+            UV.Add(FVector2D(K%2,K/2));C.Add(Color);
+            Tangents.Add(FProcMeshTangent(1,0,0));
+        }
+        Tris.Add(First);Tris.Add(First+2);Tris.Add(First+1);
+        Tris.Add(First+1);Tris.Add(First+2);Tris.Add(First+3);
+    }
+    if (V.IsEmpty()) { SmokeRender->SetVisibility(false); return; }
+    SmokeRender->CreateMeshSection_LinearColor(0,V,Tris,N,UV,C,Tangents,false);
+    SmokeRender->SetMaterial(0,SmokeMaterial);
+    SmokeRender->SetVisibility(true);
 }
 
 // Applied AFTER the approved life simulation. The age, cooling, death,
@@ -1262,179 +1564,6 @@ void UASTFireFreeFlameComponent::UpdateGeometry(bool bCreate)
     else
         Render->UpdateMeshSection_LinearColor(
             2,SV,SN,SU,SC,SX);
-
-    // Stage31: a SINGLE continuous silhouette extruded along advected smoke
-    // samples. Four nested, masked bands share exactly the same centreline.
-    // No independent circles, translucent sprites or texture lookup.
-    if (IsValid(SmokeMaterial))
-    {
-        TArray<const FSmoke*> Live;
-        Live.Reserve(MaxSmoke);
-        for (const FSmoke& Sample:Smoke)
-            if (Sample.bAlive) Live.Add(&Sample);
-        Live.Sort([](const FSmoke& A,const FSmoke& B)
-            { return A.Age<B.Age; }); // youngest bottom, oldest top
-        constexpr int32 Sides=2;
-        constexpr int32 VerticesPerQuad=4;
-        constexpr float PixelStep=3.f;
-        const float LayerScale[SmokeLayers]={1.f,.83f,.63f,.39f};
-        const FLinearColor Palette[SmokeLayers]={
-            FLinearColor(.56f,.56f,.57f,1.f), // firelit grey
-            FLinearColor(.39f,.39f,.40f,1.f), // neutral
-            FLinearColor(.24f,.24f,.26f,1.f), // shaded
-            FLinearColor(.105f,.105f,.12f,1.f) // deep smoke
-        };
-        const int32 BandCount=MaxSmoke-1;
-        const int32 QuadCount=BandCount*SmokeLayers*Sides;
-        TArray<FVector> MV;
-        TArray<FVector2D> MU;
-        TArray<FLinearColor> MC;
-        TArray<int32> MT;
-        MV.Reserve(QuadCount*VerticesPerQuad);
-        MU.Reserve(QuadCount*VerticesPerQuad);
-        MC.Reserve(QuadCount*VerticesPerQuad);
-        if (bCreate) MT.Reserve(QuadCount*6);
-        const FVector FireWorld=Live.IsEmpty()
-            ? GetOwner()->GetActorLocation()
-            : Live[0]->Position;
-        const auto BuildRow=[&](const FSmoke* Sample,
-            int32 Index,int32 Layer,FVector& Left,FVector& Middle,
-            FVector& Right,float& NormalizedHeight)
-        {
-            if (!Sample)
-            {
-                Left=Middle=Right=FireWorld;
-                NormalizedHeight=1.f;
-                return;
-            }
-            const FVector Ray=(CameraLocation-Sample->Position)
-                .GetSafeNormal();
-            const FVector CameraNormal=Ray.IsNearlyZero()?View:Ray;
-            FVector Side=(CameraRight-CameraNormal*
-                FVector::DotProduct(CameraRight,CameraNormal))
-                .GetSafeNormal();
-            if (Side.IsNearlyZero())
-                Side=FVector::CrossProduct(
-                    FVector::UpVector,CameraNormal).GetSafeNormal();
-            if (Side.IsNearlyZero()) Side=FVector::RightVector;
-            const float Height=FMath::Max(
-                0.f,Sample->Position.Z-Sample->BaseZ);
-            NormalizedHeight=FMath::Clamp(Height/1000.f,0.f,1.f);
-            const float Age=FMath::Clamp(
-                Sample->Age/FMath::Max(.1f,Sample->Lifetime),0.f,1.f);
-            const float RootTaper=FMath::Clamp(Sample->Age/.22f,0.f,1.f);
-            const float TipTaper=FMath::Clamp(
-                (Sample->Lifetime-Sample->Age)/.82f,0.f,1.f);
-            const float Phase=Height*.019f+Elapsed*.92f+
-                float(Seed%31)*.13f;
-            const float Scallop=FMath::Clamp(
-                .91f+.20f*FMath::Sin(Phase)+
-                .14f*FMath::Sin(Phase*1.78f+.72f),.57f,1.24f);
-            const float Expansion=FMath::Pow(NormalizedHeight,.70f);
-            float Width=(27.f+145.f*Expansion)*
-                Scallop*RootTaper*TipTaper*LayerScale[Layer];
-            // Small bright interior exists mostly near the live flame.
-            if (Layer==SmokeLayers-1)
-                Width*=FMath::Clamp((1.13f-NormalizedHeight)*1.55f,
-                    0.f,1.f);
-            Width=FMath::RoundToFloat(Width/PixelStep)*PixelStep;
-            const float Wobble=(8.f+22.f*NormalizedHeight)*
-                (FMath::Sin(Phase*.8f)+.28f*FMath::Sin(Phase*2.3f));
-            FVector Center=Sample->Position+Side*Wobble;
-            // A small front offset makes the bands readable without z-fight.
-            Center+=CameraNormal*(1.0f+float(Layer)*1.2f);
-            Middle=Center+Side*(
-                FMath::RoundToFloat(
-                    FMath::Sin(Phase*.48f+Layer)*Width*.12f/PixelStep)
-                    *PixelStep);
-            Left=Center-Side*Width;
-            Right=Center+Side*Width;
-        };
-        for (int32 Layer=0;Layer<SmokeLayers;++Layer)
-            for (int32 Row=0;Row<BandCount;++Row)
-            {
-                const bool bConnected=Live.IsValidIndex(Row+1);
-                const FSmoke* A=Live.IsValidIndex(Row)
-                    ? Live[Row] : nullptr;
-                const FSmoke* B=bConnected?Live[Row+1]:nullptr;
-                FVector AL,AM,AR,BL,BM,BR;
-                float HA=1.f,HB=1.f;
-                BuildRow(A,Row,Layer,AL,AM,AR,HA);
-                BuildRow(B,Row+1,Layer,BL,BM,BR,HB);
-                const FVector AverageCenter=A && B
-                    ? (A->Position+B->Position)*.5f : FireWorld;
-                const float H=(HA+HB)*.5f;
-                float NearbyLight=0.f;
-                for (const TWeakObjectPtr<UPointLightComponent>& Weak:
-                    NearbySmokeLights)
-                {
-                    const UPointLightComponent* Light=Weak.Get();
-                    if (!IsValid(Light) || !Light->IsVisible()) continue;
-                    const float R=FMath::Max(50.f,Light->AttenuationRadius);
-                    const float Distance=FVector::Dist(
-                        Light->GetComponentLocation(),AverageCenter);
-                    const float Reach=FMath::Clamp(1.f-Distance/R,0.f,1.f);
-                    const float Strength=FMath::Clamp(
-                        Light->Intensity/1700.f,0.f,1.5f);
-                    NearbyLight=FMath::Max(NearbyLight,
-                        Reach*Reach*Strength);
-                }
-                for (int32 Half=0;Half<Sides;++Half)
-                {
-                    const FVector Start=Half==0?AL:AM;
-                    const FVector End=Half==0?AM:AR;
-                    const FVector NextStart=Half==0?BL:BM;
-                    const FVector NextEnd=Half==0?BM:BR;
-                    const FVector SideVector=(End-Start).GetSafeNormal();
-                    const FVector TowardFire=(FireWorld-AverageCenter)
-                        .GetSafeNormal();
-                    const float Facing=FMath::Max(0.f,
-                        FVector::DotProduct(
-                            TowardFire,SideVector*(Half==0?-1.f:1.f)));
-                    // Light and height decide which of precisely four greys
-                    // is shown. Color is constant PER QUAD (no interpolated
-                    // intermediate shades).
-                    const float Shade=.63f*FMath::Pow(
-                        FMath::Max(0.f,1.f-H),1.22f)+
-                        .63f*NearbyLight+.13f*float(Layer)+
-                        .16f*Facing-.20f*H;
-                    const int32 Tone=Shade>.88f?0:
-                        Shade>.62f?1:Shade>.34f?2:3;
-                    const FLinearColor Color=FLinearColor(
-                        Palette[Tone].R,Palette[Tone].G,Palette[Tone].B,
-                        bConnected?1.f:0.f);
-                    const FVector WorldQuad[4]={
-                        Start,End,NextStart,NextEnd};
-                    const int32 First=MV.Num();
-                    for (int32 V=0;V<VerticesPerQuad;++V)
-                    {
-                        MV.Add(RenderTransform.InverseTransformPosition(
-                            WorldQuad[V]));
-                        MU.Add(FVector2D((V%2)?1.f:0.f,
-                            (V/2)?1.f:0.f));
-                        MC.Add(Color);
-                    }
-                    if (bCreate)
-                    {
-                        MT.Add(First);MT.Add(First+2);MT.Add(First+1);
-                        MT.Add(First+1);MT.Add(First+2);MT.Add(First+3);
-                    }
-                }
-            }
-        TArray<FVector> MN;
-        TArray<FProcMeshTangent> MX;
-        MN.Init(FVector::ForwardVector,MV.Num());
-        MX.Init(FProcMeshTangent(1,0,0),MV.Num());
-        if (bCreate)
-        {
-            Render->CreateMeshSection_LinearColor(
-                3,MV,MT,MN,MU,MC,MX,false);
-            Render->SetMaterial(3,SmokeMaterial);
-        }
-        else
-            Render->UpdateMeshSection_LinearColor(
-                3,MV,MN,MU,MC,MX);
-    }
 
     // Section 1 was authored before this section, so each tongue's
     // zero-width starting point lies inside the same filled fire source.
@@ -2009,6 +2138,7 @@ void UASTFireFreeFlameComponent::TickComponent(
         // No active fire or embers: skip expensive field reconstruction.
         VisualEnergy=FMath::FInterpTo(VisualEnergy,0.f,Dt,6.f);
         if (IsValid(Render)) Render->SetVisibility(false);
+        if (IsValid(SmokeRender)) SmokeRender->SetVisibility(false);
         return;
     }
     const float SimDt=FMath::Min(Dt,.08f);

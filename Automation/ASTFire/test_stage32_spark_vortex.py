@@ -13,9 +13,9 @@ for expr in (
     "FVector::UpVector*FMath::Sin(Angle)",
     "const float HeightFraction=.08f+.86f*Random;",
     "Outward*(T.CurrentWidth*(.45f+.40f*Other))",
-    "S.Velocity=Outward*(115.f+145.f*Other)+",
-    "S.WaveAmplitude=11.f+21.f*Random;",
-    "S.WaveFrequency=6.4f+5.2f*Other;",
+    "S.Velocity=Outward*(45.f+55.f*FMath::Abs(Other))+",
+    "S.WaveAmplitude=5.f+9.f*FMath::Abs(Random);",
+    "S.WaveFrequency=3.0f+2.3f*FMath::Abs(Other);",
     "S.WaveSide*(S.WaveAmplitude*(Offset+Second))",
     "S.DriftPosition+=S.Velocity*Dt",
 ):

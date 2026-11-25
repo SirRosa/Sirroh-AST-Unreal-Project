@@ -85,6 +85,8 @@ jobs:
           python Automation/ASTFire/test_stage31_continuous_plume.py
           python -m py_compile Automation/ASTFire/test_stage32_spark_vortex.py
           python Automation/ASTFire/test_stage32_spark_vortex.py
+          python -m py_compile Automation/ASTFire/test_stage33_density_smoke.py
+          python Automation/ASTFire/test_stage33_density_smoke.py
           python -m py_compile Automation/ASTFire/verify_stage24_materials_gpu.py
           python Automation/ASTFire/test_stage4_source.py
       - name: Parse PowerShell deployment script
