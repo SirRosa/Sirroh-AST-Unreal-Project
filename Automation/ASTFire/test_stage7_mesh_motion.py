@@ -39,11 +39,11 @@ for token in (
 ):
     assert token in runtime, "Missing reactive life/light: " + token
 assert "FMath::Clamp(DesiredFlamePoints, 1, 16)" in api
-assert "FindComponentByClass<USkeletalMeshComponent>()" in api
+assert "FindComponentByClass<USkinnedMeshComponent>()" in api
 assert "Fire->SetFireCoverage(" in api
 assert "MaxDistributedFlames = 8;" in zone_h
 assert "if (LongestDimension >= 70.0f) Points = 2;" in zone
-assert "if (Target->FindComponentByClass<USkeletalMeshComponent>())" in zone
+assert "if (Target->FindComponentByClass<USkinnedMeshComponent>())" in zone
 
 # Match Stage7 flame-breath / voxel aging math and check actual cycle depth.
 seed = float(1729 % 1009) * .0137
