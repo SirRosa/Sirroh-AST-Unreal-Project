@@ -21,7 +21,11 @@ for a,b,expected in [["void UASTFireFreeFlameComponent::UpdateSparks(","void UAS
 # Pin all non-light runtime code to the deployed stage2 baseline (ec2a067).
 light_start=r.index("void UASTFireReactiveComponent::ConfigureFireLight(")
 light_end=r.index("void UASTFireReactiveComponent::RemoveGeneratedVisuals(",light_start)
-assert fnv(r[:light_start]+r[light_end:])=="65a92251","unexpected non-light runtime change"
+cleanup_start=r.index("    // Explicitly remove the transient camera fill",light_end)
+cleanup_end=r.index("    if (IsValid(GeneratedLight))",cleanup_start)
+assert fnv(r[:light_start]+r[light_end:cleanup_start]+r[cleanup_end:])=="65a92251","unexpected non-light runtime change"
+for token in ("ASTFireCharacterFill", "Fill->SetLightingChannels(false,false,true)", "ASTFireCharacterFillOcclusion", "Fill->SetCastShadows(false)", "Mesh->SetLightingChannels"):
+    assert token in r, token
 assert fnv(c[:c.index("\nbool UASTFireFreeFlameComponent::GetFireLightCenter(")])=="73dbf86a","accepted fire rendering changed"
 for token in ("GetTongueCount()", "SetSizeScale(", "RunSmokeAudit(", "RunFireV4Audit("):
     assert token in h,token
