@@ -14,13 +14,13 @@ function Assert-EditorClosed {
 # Building in an isolated clone is safe while the editor is open.
 # The existing Assert-EditorClosed after ABI checks still blocks all live writes.
 $stamp=Get-Date -Format 'yyyyMMdd_HHmmss'
-$root=Join-Path $env:TEMP ('ASTFireCameraLighting_'+$stamp)
+$root=Join-Path $env:TEMP ('ASTFireCharacterFill_'+$stamp)
 $source=Join-Path $root 'Source'
 $built=Join-Path $root 'Built'
 $report=Join-Path $ProjectRoot 'Saved\ChatGPT\NiagaraFire\FireV4'
-$backup=Join-Path $report ('Backup_CameraLighting_'+$stamp)
+$backup=Join-Path $report ('Backup_CharacterFill_'+$stamp)
 New-Item -ItemType Directory -Force -Path $root,$report | Out-Null
-& git clone --quiet --depth 1 --branch work/fire-light-camera-falloff 'https://github.com/SirRosa/Sirroh-AST-Unreal-Project.git' $source
+& git clone --quiet --depth 1 --branch work/fire-light-character-fill 'https://github.com/SirRosa/Sirroh-AST-Unreal-Project.git' $source
 if($LASTEXITCODE -ne 0){throw 'Clone failed'}
 $actual=(& git -C $source rev-parse HEAD).Trim()
 if($actual -ne $Revision){throw ('Revision mismatch '+$actual)}
@@ -32,7 +32,7 @@ $files=@(
 $sourcePlugin=Join-Path $source $plugin
 $livePlugin=Join-Path $ProjectRoot $plugin
 $baseline=@{
- "$plugin\Source\ASTFireRuntime\Private\ASTFireReactiveComponent.cpp"=@('018cfe69373f98ba15a111c1eef7251c6817f5fc')
+ "$plugin\Source\ASTFireRuntime\Private\ASTFireReactiveComponent.cpp"=@('a1d4993d3a38ab86fae1ffb842db2f6e6f376763')
  "$plugin\Source\ASTFireRuntime\Public\ASTFireReactiveComponent.h"=@('cacced9b064461bfde4e3007c8c039858a785bb6')
  "$plugin\Source\ASTFireRuntime\Private\ASTFireFreeFlameComponent.cpp"=@('a5b099d121bbcbf9692ea8399745c42643d2cd3b')
  "$plugin\Source\ASTFireRuntime\Public\ASTFireFreeFlameComponent.h"=@('6c96b7e9723790605fab64c3bda66cfe86be53d7')
@@ -51,6 +51,13 @@ foreach($f in Get-ChildItem -LiteralPath (Join-Path $sourcePlugin 'Source') -Fil
  $b=(Get-Content -LiteralPath $live -Raw).Replace("`r`n","`n").TrimEnd()
  if($a -ne $b){throw ('Unrelated local source differs '+$rel)}
 }
+Push-Location $source
+try {
+ & python Automation/ASTFire/test_fire_v4.py
+ if($LASTEXITCODE -ne 0){throw 'Static fire regression failed'}
+ & python Automation/ASTFire/test_stage7_mesh_motion.py
+ if($LASTEXITCODE -ne 0){throw 'Static mesh motion regression failed'}
+} finally { Pop-Location }
 $uat=Join-Path $EngineRoot 'Engine\Build\BatchFiles\RunUAT.bat'
 $ue=Join-Path $EngineRoot 'Engine\Binaries\Win64\UnrealEditor-Cmd.exe'
 $log=Join-Path $report ('Build_'+$stamp+'.log')
