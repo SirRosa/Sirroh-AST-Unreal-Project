@@ -27,7 +27,7 @@ for token in ("GetSkinnedVertexPosition","LineTraceComponent(","ConnectedRoots.A
               "const float Pitch=FMath::Max(.1875f,PixelPitch);",
               "const float Support=R-D;", "Cell.Temperature=FMath::Clamp",
               "CornerDepth(CX,CY)","Colors.Add(FLinearColor(ASTFireLife::ToneCode(C.Temperature),0.f,0.f,1.f))",
-              "Projection.Unproject(P,Depth)", "ASTFireLife::ArcHeat(V,Core",
+              "Projection.Unproject(P,Depth)", "ThermalLut.Evaluate(Along,Core)",
               "MaxXCells=72,MaxYCells=104", "RunFireV4Audit("):
     assert token in c,token
 assert "floor(UV" not in m
@@ -96,3 +96,7 @@ assert "for(const FSurfaceFuel& Fuel:SurfaceFuel)" in c
 assert "RunFireSurfaceAudit(" in c and "Coverage>=.85f" in c
 assert "run_fire_surface_audit" in m
 assert "ProfileSamples[9]={.58f,.91f,1.f,.96f,.84f,.70f,.50f,.28f,0.f}" in c
+
+assert c.count("ThermalLut.Evaluate(Along,Core)") == 2
+assert "FArcHeatSegment" in c and "ArcCells.SetNum(DX*DY)" in c
+assert "SizeScale<.35f?40.f:28.f" in c

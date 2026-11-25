@@ -23,6 +23,13 @@ try:
         raise RuntimeError("Expected continuously translucent sparks")
     u.MaterialEditingLibrary.recompile_material(spark)
     OUT["materials"].append(spark_path)
+    folder=os.path.join(u.Paths.convert_relative_path_to_full(u.Paths.project_saved_dir()),"ChatGPT","NiagaraFire","FireV4")
+    with open(os.path.join(folder,"material_result.json"),encoding="utf-8") as f:
+        audit=json.load(f)
+    skin=u.load_asset(audit["surface_asset"])
+    OUT["skin_capture"]=u.ASTFireFreeFlameComponent.run_fire_surface_audit(m,skin,True)
+    if not OUT["skin_capture"].startswith("PASS:"):
+        raise RuntimeError("Skeletal GPU capture failed: "+OUT["skin_capture"])
     OUT["capture"]=u.ASTFireFreeFlameComponent.run_fire_v4_capture(m)
     if not OUT["capture"].startswith("PASS:"):
         raise RuntimeError("GPU capture failed: "+OUT["capture"])

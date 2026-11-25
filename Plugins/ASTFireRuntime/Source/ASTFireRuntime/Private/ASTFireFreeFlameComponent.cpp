@@ -90,12 +90,31 @@ namespace ASTFireLife
 
     // Both halves evaluate the same thermal field, parameterized along the
     // original arc. Its clock is carried across the split, not randomized.
-    float ArcHeat(float V,float Core,float Seed,float Clock)
+    float ArcHeatBase(float V,float Seed,float Clock)
     {
         const float Flow=.64f*FMath::Sin(V*13.f-Clock*8.8f+Seed)+
             .36f*FMath::Sin(V*24.f-Clock*12.1f+Seed*.7f);
-        return FMath::Clamp(.23f+.73f*Core-.30f*V+.12f*Flow,0.f,1.f);
+        return .23f-.30f*V+.12f*Flow;
     }
+    // One lookup table per swept segment, shared by the live and severed
+    // arc. Avoid two trigonometric calls per covered pixel. With a .125
+    // segment interval and 12 subdivisions the max interpolation error
+    // is below a palette quantization step.
+    struct FArcHeatSegment
+    {
+        float Values[13];
+        FArcHeatSegment(float V0,float V1,float Seed,float Clock)
+        {
+            for(int32 I=0;I<=12;++I)
+                Values[I]=ArcHeatBase(FMath::Lerp(V0,V1,float(I)/12.f),Seed,Clock);
+        }
+        float Evaluate(float Along,float Core) const
+        {
+            const float U=FMath::Clamp(Along,0.f,1.f)*12.f;
+            const int32 I=FMath::Min(11,FMath::FloorToInt(U));
+            return FMath::Clamp(FMath::Lerp(Values[I],Values[I+1],U-I)+.73f*Core,0.f,1.f);
+        }
+    };
     float ArcFade(float Age,float Life)
     {return FMath::Clamp(1.f-Age/FMath::Max(.01f,Life),0.f,1.f);}
     float SmoothStep(float V)
@@ -1915,7 +1934,7 @@ FString UASTFireFreeFlameComponent::RunFireV4Audit(UMaterialInterface* TestMater
 #endif
 }
 
-FString UASTFireFreeFlameComponent::RunFireSurfaceAudit(UMaterialInterface* TestMaterial,USkeletalMesh* Mesh)
+FString UASTFireFreeFlameComponent::RunFireSurfaceAudit(UMaterialInterface* TestMaterial,USkeletalMesh* Mesh,bool bCapture)
 {
 #if WITH_EDITOR
     if(!IsValid(TestMaterial)||!IsValid(Mesh))return TEXT("FAIL:NO_SKELETAL_ASSET");
@@ -1928,13 +1947,41 @@ FString UASTFireFreeFlameComponent::RunFireSurfaceAudit(UMaterialInterface* Test
     Skin->RefreshBoneTransforms();
     auto* Fire=NewObject<UASTFireFreeFlameComponent>(Host);
     Fire->SetSource(Skin,TestMaterial,4811);Fire->RegisterComponent();
-    int32 Samples=0,Covered=0,ValidFrames=0;
+    int32 Samples=0,Covered=0,ValidFrames=0,Saved=0;
+    USceneCaptureComponent2D* SkinCamera=nullptr;
+    UTextureRenderTarget2D* Target=nullptr;
+    const FString SkinFolder=FPaths::ProjectSavedDir()/TEXT("ChatGPT/NiagaraFire/FireV4/GPU");
+    if(bCapture)
+    {
+        AActor* ViewActor=World->SpawnActor<AActor>();
+        if(!ViewActor){World->DestroyWorld(false);return TEXT("FAIL:CAPTURE_ACTOR");}
+        SkinCamera=NewObject<USceneCaptureComponent2D>(ViewActor);
+        ViewActor->SetRootComponent(SkinCamera);
+        SkinCamera->bCaptureEveryFrame=false;SkinCamera->bCaptureOnMovement=false;
+        SkinCamera->ProjectionType=ECameraProjectionMode::Perspective;
+        SkinCamera->FOVAngle=30.f;SkinCamera->CaptureSource=SCS_FinalColorLDR;
+        SkinCamera->ShowFlags.SetBloom(false);SkinCamera->ShowFlags.SetTemporalAA(false);
+        SkinCamera->ShowFlags.SetMotionBlur(false);SkinCamera->ShowFlags.SetEyeAdaptation(false);
+        Target=NewObject<UTextureRenderTarget2D>(SkinCamera);
+        Target->RenderTargetFormat=RTF_RGBA8_SRGB;Target->ClearColor=FLinearColor(.007f,.009f,.014f,1.f);
+        Target->InitAutoFormat(512,512);Target->UpdateResourceImmediate(true);
+        SkinCamera->TextureTarget=Target;SkinCamera->RegisterComponent();
+        SkinCamera->SetWorldLocation(FVector(1000,0,0));SkinCamera->SetWorldRotation(FRotator(0,180,0));
+        IFileManager::Get().MakeDirectory(*SkinFolder,true);
+    }
     for(int32 I=0;I<100;++I)
     {
         if(I>45)Host->SetActorRotation(FRotator(0,(I-45)*2.f,0));
         Fire->SetThermal(1.f,FVector::ZeroVector,.75f);
         Fire->AdvanceSimulation(.04f);Fire->UpdateDetachedVortices(.04f);
         Fire->UpdateGeometry(false);
+        if(bCapture && SkinCamera && Target && I>=58 && I%10==8)
+        {
+            World->SendAllEndOfFrameUpdates();SkinCamera->CaptureScene();FlushRenderingCommands();
+            const FString Name=SkinFolder/FString::Printf(TEXT("Skin_%03d.png"),I);
+            TUniquePtr<FArchive> Ar(IFileManager::Get().CreateFileWriter(*Name));
+            if(Ar && FImageUtils::ExportRenderTarget2DAsPNG(Target,*Ar))++Saved;
+        }
         if(I<55 || Fire->FirePixelPitch<=0.f || !Fire->Render)continue;
         const FProcMeshSection* Section=Fire->Render->GetProcMeshSection(1);
         if(!Section)continue;
@@ -1968,9 +2015,9 @@ FString UASTFireFreeFlameComponent::RunFireSurfaceAudit(UMaterialInterface* Test
     const float Coverage=float(Covered)/FMath::Max(1,Samples);
     const int32 Roots=Fire->Tongues.Num(),Anchors=Fire->SourceAnchors.Num();
     Fire->DestroyComponent();Host->Destroy();World->DestroyWorld(false);
-    const bool bPass=Roots>=4 && Anchors>=30 && Samples>=100 && ValidFrames>=30 && Coverage>=.85f;
-    return FString::Printf(TEXT("%s:mesh=%s;roots=%d;anchors=%d;frames=%d;coverage=%.3f;samples=%d"),
-        bPass?TEXT("PASS"):TEXT("FAIL"),*Mesh->GetName(),Roots,Anchors,ValidFrames,Coverage,Samples);
+    const bool bPass=Roots>=4 && Anchors>=30 && Samples>=100 && ValidFrames>=30 && Coverage>=.85f && (!bCapture || Saved>=4);
+    return FString::Printf(TEXT("%s:mesh=%s;roots=%d;anchors=%d;frames=%d;coverage=%.3f;samples=%d;captures=%d"),
+        bPass?TEXT("PASS"):TEXT("FAIL"),*Mesh->GetName(),Roots,Anchors,ValidFrames,Coverage,Samples,Saved);
 #else
     return TEXT("EDITOR_ONLY");
 #endif
@@ -2136,26 +2183,43 @@ void UASTFireFreeFlameComponent::UpdateGeometry(bool bCreate)
         const int32 X0=FMath::FloorToInt(Lo.X/Pitch),Y0=FMath::FloorToInt(Lo.Y/Pitch);
         const int32 X1=FMath::CeilToInt(Hi.X/Pitch),Y1=FMath::CeilToInt(Hi.Y/Pitch);
         if(X1-X0>160 || Y1-Y0>200)continue; // near-plane safety bound
-        for(int32 Y=Y0;Y<Y1;++Y)for(int32 X=X0;X<X1;++X)
+        const int32 DX=X1-X0,DY=Y1-Y0;
+        if(DX<=0 || DY<=0)continue;
+        struct FArcCell { float Thermal=0.f,Depth=0.f,Best=-BIG_NUMBER; };
+        TArray<FArcCell> ArcCells;ArcCells.SetNum(DX*DY);
+        // Rasterize each severed segment only over its own rectangle.
+        // Same interpolation and thermal field as the living parent.
+        for(int32 K=1;K<D.ArcCount;++K)
         {
-            const FVector2D Sample((X+.5f)*Pitch,(Y+.5f)*Pitch);
-            float Thermal=0.f,Depth=0.f,Best=-BIG_NUMBER;
-            for(int32 K=1;K<D.ArcCount;++K)
+            const FVector2D Axis=Arc[K]-Arc[K-1];
+            const float Inv=1.f/FMath::Max(.001f,float(Axis.SizeSquared()));
+            const float Reach=FMath::Max(Radius[K-1],Radius[K]);
+            const int32 SX0=FMath::Max(X0,FMath::FloorToInt((FMath::Min(Arc[K-1].X,Arc[K].X)-Reach)/Pitch));
+            const int32 SX1=FMath::Min(X1,FMath::CeilToInt((FMath::Max(Arc[K-1].X,Arc[K].X)+Reach)/Pitch));
+            const int32 SY0=FMath::Max(Y0,FMath::FloorToInt((FMath::Min(Arc[K-1].Y,Arc[K].Y)-Reach)/Pitch));
+            const int32 SY1=FMath::Min(Y1,FMath::CeilToInt((FMath::Max(Arc[K-1].Y,Arc[K].Y)+Reach)/Pitch));
+            const ASTFireLife::FArcHeatSegment ThermalLut(D.SourceV[K-1],D.SourceV[K],D.BirthPhase,D.BirthClock);
+            for(int32 Y=SY0;Y<SY1;++Y)for(int32 X=SX0;X<SX1;++X)
             {
-                const FVector2D Axis=Arc[K]-Arc[K-1];
-                const float Along=FMath::Clamp(float(FVector2D::DotProduct(Sample-Arc[K-1],Axis))/
-                    FMath::Max(.001f,float(Axis.SizeSquared())),0.f,1.f);
+                const FVector2D Sample((X+.5f)*Pitch,(Y+.5f)*Pitch);
+                const float Along=FMath::Clamp(float(FVector2D::DotProduct(Sample-Arc[K-1],Axis))*Inv,0.f,1.f);
                 const FVector2D Center=Arc[K-1]+Axis*Along;
                 const float R=FMath::Lerp(Radius[K-1],Radius[K],Along);
-                const float Distance=float((Sample-Center).Size());
+                const float Dist2=float((Sample-Center).SizeSquared());
+                if(R<.001f || Dist2>R*R)continue;
+                const float Distance=FMath::Sqrt(Dist2);
                 const float Support=R-Distance;
-                if(Support<0.f || R<.001f)continue;
-                const float V=FMath::Lerp(D.SourceV[K-1],D.SourceV[K],Along);
                 const float Core=FMath::Clamp(1.f-Distance/R,0.f,1.f);
-                Thermal=FMath::Max(Thermal,ASTFireLife::ArcHeat(V,Core,D.BirthPhase,D.BirthClock));
-                if(Support>Best){Best=Support;Depth=FMath::Lerp(Depths[K-1],Depths[K],Along);}
+                FArcCell& Cell=ArcCells[(Y-Y0)*DX+X-X0];
+                Cell.Thermal=FMath::Max(Cell.Thermal,ThermalLut.Evaluate(Along,Core));
+                if(Support>Cell.Best){Cell.Best=Support;Cell.Depth=FMath::Lerp(Depths[K-1],Depths[K],Along);}
             }
-            if(Best<0.f)continue;
+        }
+        for(int32 Y=Y0;Y<Y1;++Y)for(int32 X=X0;X<X1;++X)
+        {
+            const FArcCell& Cell=ArcCells[(Y-Y0)*DX+X-X0];
+            if(Cell.Best<0.f)continue;
+            const float Thermal=Cell.Thermal,Depth=Cell.Depth;
             const int32 First=Verts.Num();
             for(int32 K=0;K<4;++K)
             {
@@ -2633,7 +2697,11 @@ float UASTFireFreeFlameComponent::UpdateConnectedSource(
     // Pitch tracks potential source size, not the instantaneous growing length.
     const float H=FMath::Max(.5f,MaxRise);
     FireVisualHeight=FireVisualHeight>0.f?FMath::Lerp(FireVisualHeight,H,.08f):H;
-    float Desired=FMath::Max(Base,FireVisualHeight/(bPoint?40.f:38.f));
+    // Broad silhouettes contain more cells than the rejected narrow tubes.
+    // Keep normal point sources near the reference's 20-30 pixel width,
+    // while retaining fine sampling on small torch wicks and skin surfaces.
+    const float TargetRows=bPoint?(SizeScale<.35f?40.f:28.f):38.f;
+    float Desired=FMath::Max(Base,FireVisualHeight/TargetRows);
     if(SmokePixelPitch>0.f)
         Desired=FMath::Max(Desired,FMath::Min(SmokePixelPitch,Desired*1.55f));
     const float Required=FMath::Max(Base,FMath::Max(
@@ -2661,7 +2729,8 @@ float UASTFireFreeFlameComponent::UpdateConnectedSource(
         const int32 Y0=FMath::Clamp(FMath::FloorToInt((FMath::Min(Neck.Start.Y,Neck.End.Y)-Reach-MinY)/Pitch),0,NY-1);
         const int32 Y1=FMath::Clamp(FMath::CeilToInt((FMath::Max(Neck.Start.Y,Neck.End.Y)+Reach-MinY)/Pitch),0,NY-1);
         const FVector2D Axis=Neck.End-Neck.Start;
-        const float InvDenominator=FMath::Max(.001f,float(Axis.SizeSquared()));
+        const float InvDenominator=1.f/FMath::Max(.001f,float(Axis.SizeSquared()));
+        const ASTFireLife::FArcHeatSegment ThermalLut(Neck.StartV,Neck.EndV,Neck.Phase,Elapsed);
         for(int32 Y=Y0;Y<=Y1;++Y) for(int32 X=X0;X<=X1;++X)
         {
             FFireCell& Cell=Cells[Y*NX+X];
@@ -2669,16 +2738,16 @@ float UASTFireFreeFlameComponent::UpdateConnectedSource(
             float& Cover=Cell.Cover;
             float& Temperature=Cell.Temperature;
             float& NeckDepth=Cell.NeckDepth;
-            const float Along=FMath::Clamp(float(FVector2D::DotProduct(P-Neck.Start,Axis))/
+            const float Along=FMath::Clamp(float(FVector2D::DotProduct(P-Neck.Start,Axis))*
                 InvDenominator,0.f,1.f);
             const FVector2D Center=Neck.Start+Axis*Along;
             const float R=FMath::Lerp(Neck.StartRadius,Neck.EndRadius,Along);
-            const float D=float((P-Center).Size());
+            const float DistanceSquared=float((P-Center).SizeSquared());
+            if(R<.001f || DistanceSquared>R*R)continue;
+            const float D=FMath::Sqrt(DistanceSquared);
             const float Support=R-D;
-            if(Support<0.f || R<.001f) continue;
-            const float V=FMath::Lerp(Neck.StartV,Neck.EndV,Along);
             const float Core=FMath::Clamp(1.f-D/R,0.f,1.f);
-            const float LocalHeat=ASTFireLife::ArcHeat(V,Core,Neck.Phase,Elapsed);
+            const float LocalHeat=ThermalLut.Evaluate(Along,Core);
             Temperature=FMath::Max(Temperature,LocalHeat);
             if(Support>Cover)
             {
