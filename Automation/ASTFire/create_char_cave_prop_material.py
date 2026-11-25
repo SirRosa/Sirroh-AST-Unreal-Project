@@ -36,11 +36,22 @@ try:
     require(isinstance(original,u.Material),"Cave decor must be a base material")
     require(not original.get_editor_property("use_material_attributes"),"Unsupported attributes")
     require(original.get_editor_property("blend_mode")==u.BlendMode.BLEND_OPAQUE,"Unsupported blend")
-    require(not L.does_asset_exist(dst),"Destination already exists")
+
     bp=u.MaterialProperty.MP_BASE_COLOR
     ep=u.MaterialProperty.MP_EMISSIVE_COLOR
     out["source"]={"shading":str(original.get_editor_property("shading_model")),"base":str(get(original,bp)[0]),"emissive":str(get(original,ep)[0]),"params":[str(x) for x in E.get_scalar_parameter_names(original)]}
     require(get(original,bp)[0] or get(original,ep)[0],"No authored color input")
+    if L.does_asset_exist(dst):
+        m=L.load_asset(dst)
+        candidates=[n for n in u.ObjectIterator(u.MaterialExpressionCustom) if n.get_outer()==m and "return Original.rgb*soot+ember;" in n.get_editor_property("code")]
+        require(len(candidates)==1,"Unexpected prior derivative emissive graph")
+        n=candidates[0]
+        n.set_editor_property("code",n.get_editor_property("code").replace("return Original.rgb*soot+ember;","return Original.rgb*(1.-saturate(Progress*3.))+ember;"))
+        E.recompile_material(m)
+        require(L.save_loaded_asset(m,only_if_is_dirty=False),"Save failed")
+        out["asset"]=dst;out["status"]="PASS"
+        # Skip creation on an existing, verified derivative.
+        raise StopIteration()
     m=L.duplicate_asset(src,dst)
     require(m,"Duplicate failed")
     b,bpin=get(m,bp);e,epin=get(m,ep)
@@ -60,13 +71,15 @@ try:
         dark=custom(m,field+"return Base.rgb*soot;",[("Base",b,bpin)]+inputs,800,u.CustomMaterialOutputType.CMOT_FLOAT3)
         require(E.connect_material_property(dark,"",bp),"Base color connect")
     if e:
-        emit=custom(m,field+"return Original.rgb*soot+ember;",[("Original",e,epin)]+inputs,1150,u.CustomMaterialOutputType.CMOT_FLOAT3)
+        emit=custom(m,field+"return Original.rgb*(1.-saturate(Progress*3.))+ember;",[("Original",e,epin)]+inputs,1150,u.CustomMaterialOutputType.CMOT_FLOAT3)
     else:
         emit=custom(m,field+"return ember;",inputs,1150,u.CustomMaterialOutputType.CMOT_FLOAT3)
     require(E.connect_material_property(emit,"",ep),"Emission connect")
     E.recompile_material(m)
     require(L.save_loaded_asset(m,only_if_is_dirty=False),"Save failed")
     out["asset"]=dst;out["status"]="PASS"
+except StopIteration:
+    pass
 except Exception:
     out["error"]=traceback.format_exc()
 folder=os.path.join(u.Paths.convert_relative_path_to_full(u.Paths.project_saved_dir()),"ChatGPT","NiagaraFire","FireV4")
