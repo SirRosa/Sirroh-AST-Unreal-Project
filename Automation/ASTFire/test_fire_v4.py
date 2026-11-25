@@ -21,7 +21,7 @@ for a,b,expected in [["void UASTFireFreeFlameComponent::UpdateSparks(","void UAS
 # Pin all non-light runtime code to the deployed stage2 baseline (ec2a067).
 light_start=r.index("void UASTFireReactiveComponent::ConfigureFireLight(")
 light_end=r.index("void UASTFireReactiveComponent::RemoveGeneratedVisuals(",light_start)
-assert fnv(r[:light_start]+r[light_end:])=="102d1299","unexpected non-light runtime change after approved poseable target adaptation"
+assert fnv(r[:light_start]+r[light_end:])=="e640b570","unexpected non-light runtime change after approved poseable target adaptation"
 assert fnv(c[:c.index("\nbool UASTFireFreeFlameComponent::GetFireLightCenter(")])=="94a582ea","accepted fire rendering changed after approved skinned-type adaptation"
 for token in ("GetTongueCount()", "SetSizeScale(", "RunSmokeAudit(", "RunFireV4Audit("):
     assert token in h,token
@@ -173,7 +173,7 @@ assert "SirrohCarryProp" in zone and "Separated(FVector::CrossProduct" in zone
 assert "UpdateMeshSection_LinearColor(1,Verts,Normals,UVs,Colors,Tangents,false)" in c
 assert "UpdateMeshSection_LinearColor(0,Verts,Normals,UVs,Colors,Tangents,false)" in c
 assert "SmokeAfterglowSeconds=3.f" in c and "bSmolder" in c
-assert "return 2.f*FMath::Max(.1f,BaseBurnSeconds)*Factor;" in r
+assert "return 4.f*FMath::Max(.1f,BaseBurnSeconds)*Factor;" in r
 assert "RunCarryVisualAudit" in c and "Low<Peak" in c
 assert "SmokeGridMaxX = 128" in h and "SmokeGridMaxY = 256" in h
 assert "const float Dying=FMath::SmoothStep" in c
@@ -183,3 +183,8 @@ assert "ASTPropCharGlow" in r and "RunPropCharAudit" in r and "PreviousCharPropM
 assert "CopyMaterialUniformParameters(Original)" in r and "Original->GetMaterial()" in r
 
 assert "mat_cave_decos.mat_cave_decos" in r and "M_AST_FireCharCaveProp" in r
+
+assert "ContactStartedAt.FindOrAdd" in zone and "Now-Started+1.e-6>=ContactDelay(Size)" in zone
+assert "1.5f*FMath::Sqrt(FMath::Max(1.f,SizeCm/50.f))" in zone
+assert "bFullOutside" in zone and "bOtherHolds" in zone and "bSourceOut" in zone
+assert "if(HasActiveIgniter())" in r and "else BurnElapsedSeconds += DeltaTime;" in r
