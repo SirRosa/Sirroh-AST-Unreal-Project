@@ -56,7 +56,7 @@ for scale in (.15,1,2):
 def field(distance,r,v,flow,rim=0):
     cover=r-distance+rim>=0
     core=max(0,min(1,1-abs(distance-.28*r*flow)/max(.25,r)))
-    heat=max(0,min(1,.40+.46*core-.35*v+.19*flow))
+    heat=max(0,min(1,.21+.62*core-.31*v+.15*flow))
     return cover,heat
 assert field(13,10,.2,1)[0] is False
 assert field(2,10,.2,-1)[0] and field(2,10,.2,1)[0]
@@ -73,3 +73,7 @@ for remaining in (.66,.75,.83):
 assert "Child.Width=FMath::Min" in c
 assert "Child.Lifetime=.19f + .32f" in c
 print("Fire v4 raster, independent heat, detached lifecycle, v3 smoke/spark/torch locks: PASS")
+
+# Engine 5.8 public end-of-frame update pair, not the older 5.5 API.
+assert 'StartAsyncSendAllEndOfFrameUpdates();' in c
+assert 'FinishAsyncSendAllEndOfFrameUpdates();' in c

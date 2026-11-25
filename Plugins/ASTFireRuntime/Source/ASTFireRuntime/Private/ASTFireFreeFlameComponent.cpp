@@ -1710,7 +1710,9 @@ FString UASTFireFreeFlameComponent::RunFireV4Capture(UMaterialInterface* TestMat
         Fire->UpdateGeometry(false);
         if(I>=28 && I%10==8)
         {
-            World->SendAllEndOfFrameUpdates();
+            // UE 5.8 exposes the paired start/finish API for world updates.
+            World->StartAsyncSendAllEndOfFrameUpdates();
+            World->FinishAsyncSendAllEndOfFrameUpdates();
             Capture->CaptureScene();
             FlushRenderingCommands();
             const FString Name=Folder/FString::Printf(TEXT("Frame_%03d.png"),I);
