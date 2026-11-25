@@ -82,6 +82,26 @@ namespace ASTFireLife
         {return Cam+Forward*Depth+(Right*P.X+Up*P.Y)*(Depth/Reference);}
     };
 
+    // The rise vector is allowed to cross the horizontal plane and invert.
+    // 180 cm/s is the reference buoyant flow, not a limit on motion.
+    FVector FlowDirection(const FVector& Lag)
+    {
+        const FVector Flow=FVector::UpVector*180.f+Lag;
+        return Flow.IsNearlyZero(1.f)?FVector::ZeroVector:Flow.GetSafeNormal();
+    }
+
+    FVector2D ScreenFlow(const FFireProjection& P,const FVector& Origin,const FVector& Lag,
+        const FVector2D& StillUp)
+    {
+        if(Lag.IsNearlyZero())return StillUp;
+        const FVector Direction=FlowDirection(Lag);
+        if(Direction.IsZero())return FVector2D::ZeroVector;
+        const FVector2D Projected=P.Project(Origin+Direction*20.f)-P.Project(Origin);
+        // An axial flow should compress, not invent a sideways direction.
+        const float ReferenceLength=20.f*FFireProjection::Reference/P.Depth(Origin);
+        return (Projected/FMath::Max(.01f,ReferenceLength)).GetClampedToMaxSize(1.);
+    }
+
     // Hidden torch wicks are explicit attachment points, not burnable surfaces.
     bool IsPointSource(const USceneComponent* Source, bool bHasContact)
     {
@@ -719,14 +739,15 @@ FVector UASTFireFreeFlameComponent::TongueCenterAt(
     const float Large=FMath::Clamp((SizeScale-.18f)/.82f,0.f,1.f);
     const float MaxSide=FMath::Lerp(.24f,.20f,Large);
     const float Side=FMath::Clamp(Shape*(1.f-.24f*Large),-L*MaxSide*V,L*MaxSide*V);
-    const FVector Drift=(Flow*V*V*.095f*S).GetClampedToMaxSize(L*.45f*V*V)+
-        (MotionLag(Tongue.WorldVelocity)*(.045f*S*V*V)).GetClampedToMaxSize(L*.65f*V*V);
+    const FVector Lag=MotionLag(Tongue.WorldVelocity);
+    const FVector Axis=Lag.IsNearlyZero()?FVector::UpVector:ASTFireLife::FlowDirection(Lag);
+    const FVector Drift=(Flow*V*V*.095f*S).GetClampedToMaxSize(L*(Lag.IsNearlyZero()?.45f:.12f)*V*V);
     const FVector Radial=Tongue.Outward.IsNearlyZero()?FVector(FMath::Cos(Tongue.Seed),FMath::Sin(Tongue.Seed),0.f):Tongue.Outward;
     const float Fan=bPoint?FMath::Lerp(.10f,.24f,Large):FMath::Lerp(.08f,.14f,Large);
     const float Lift=1.f-.09f*Large*FMath::Abs(float(FVector::DotProduct(Radial,Right)));
     // Distinct 3D trajectories, not camera-facing convergent tips.
     const FVector Out=Radial*(L*Fan*FMath::Pow(V,1.28f)*(.78f+.22f*FMath::Sin(Phase+Elapsed*2.f+V*4.f)));
-    return Base+FVector::UpVector*L*V*Lift+Drift+Right*Side+Out;
+    return Base+Axis*L*V*Lift+Drift+Right*Side+Out;
 }
 
 float UASTFireFreeFlameComponent::TongueRadiusAt(const FTongue& T,float V) const
@@ -804,7 +825,7 @@ int32 UASTFireFreeFlameComponent::EmitTip(
         Flow*.18f-Tongue.WorldVelocity*.08f;
     Child.Velocity.Z=FMath::Max(12.f*Travel,float(Child.Velocity.Z));
     // Existing upper arc receives bounded relative airflow only at birth.
-    Child.Velocity+=MotionLag(Tongue.WorldVelocity)*.14f;
+    Child.Velocity+=MotionLag(Tongue.WorldVelocity)*.30f;
     Child.bAlive=true;
     return Slot;
 }
@@ -2628,6 +2649,8 @@ float UASTFireFreeFlameComponent::UpdatePointField(bool bCreate,const FVector& R
     const float Dt=FMath::Max(0.f,Elapsed-FieldClock);
     FieldClock=Elapsed;
     const float Aero=MotionStrength(AeroVelocity);
+    const FVector2D FlowAxis=ASTFireLife::ScreenFlow(P,Origin,MotionLag(AeroVelocity),FVector2D(0,1));
+    const FVector2D FlowSide=FlowAxis.IsNearlyZero()?FVector2D(1,0):FVector2D(FlowAxis.Y,-FlowAxis.X).GetSafeNormal();
     if(bAeroDiscontinuity)for(auto& Cell:PointField)Cell.bLit=false;
     // Detached material is already in world space: source motion cannot
     // drag it back onto the next flame. Age-zero uses the exact old cells.
@@ -2705,12 +2728,11 @@ float UASTFireFreeFlameComponent::UpdatePointField(bool bCreate,const FVector& R
             .045f*FMath::Sin(H*1.31f+Elapsed*8.f);
         if(H<Bottom || H>Top || A>Edge*FMath::Lerp(.22f,1.f,Dying))continue;
         auto& C=Next[Y*FieldX+X];C.bLit=true;
-        C.World=P.Unproject(GridOrigin+FVector2D((X-20+.5f)*Pitch,(Y-3+.5f)*Pitch),Depth);
-        if(Aero>0.f)
-        {
-            const float Upper=FMath::Square(FMath::Clamp((H-2.f)/26.f,0.f,1.f));
-            C.World+=(MotionLag(AeroVelocity)*(.055f*Upper)).GetClampedToMaxSize(32.f*FMath::Clamp(SizeScale,.15f,2.f)*Upper);
-        }
+        const FVector2D Offset((X-20+.5f)*Pitch,(Y-3+.5f)*Pitch);
+        // Same logical combustion front, rotated about the wick. Inverting
+        // the flow also inverts all its growth peaks and subsequent cuts.
+        const FVector2D Directed=Aero<=0.f?Offset:FlowSide*Offset.X+FlowAxis*Offset.Y;
+        C.World=P.Unproject(GridOrigin+Directed,Depth);
         // Advect heat independently of the advancing contour. It is not
         // a distance-to-center ring; irregular hot islands travel upwards.
         const float Flow=.62f*FMath::Sin(U*6.2f+H*.34f-Elapsed*7.7f+Phase)+
@@ -2761,7 +2783,7 @@ float UASTFireFreeFlameComponent::UpdatePointField(bool bCreate,const FVector& R
         const float S=FMath::Clamp(SizeScale,.08f,2.f);
         F.Side=P.Right;
         F.Velocity=FVector::UpVector*(32.f+Random(Z*91+FieldGeneration[Z]*77)*19.f)*S+
-            F.Side*(Centers[Z]*36.f*S)+Wind*.10f+MotionLag(AeroVelocity)*.14f;
+            F.Side*(Centers[Z]*36.f*S)+Wind*.10f+MotionLag(AeroVelocity)*.30f;
         for(int32 I:Removed)
         {
             const FVector Offset=PointField[I].World-F.Center;
@@ -2991,10 +3013,29 @@ float UASTFireFreeFlameComponent::UpdateConnectedSource(
     const float MaxRise=MaxHeight*ASTFireLife::FFireProjection::Reference/FMath::Max(10.f,OriginDepth*.70f);
     Lo.X-=MaxRise*.55f+Nominal*2.f;Hi.X+=MaxRise*.55f+Nominal*2.f;
     Lo.Y-=Nominal*2.f;Hi.Y+=MaxRise+Nominal*3.f;
-    float MaxAero=0.f;
-    for(const auto& T:Tongues)MaxAero=FMath::Max(MaxAero,MotionStrength(T.WorldVelocity));
-    // Reserve room only for the bounded bend, never for the detached trail.
-    if(MaxAero>0.f){const float Margin=MaxRise*.65f*MaxAero;Lo.X-=Margin;Hi.X+=Margin;Lo.Y-=Margin;Hi.Y+=Margin;}
+    // Reserve the complete directional transport envelope, including below
+    // the object. Do not enlarge the field to include detached fragments.
+    const FVector2D Gravity=Projection.Project(Origin+FVector::UpVector*20.f)-Projection.Project(Origin);
+    const FVector2D Up2=Gravity.GetSafeNormal();
+    const FVector2D UpAxis=Up2.IsNearlyZero()?FVector2D(0,1):Up2;
+    const FVector2D SideAxis(UpAxis.Y,-UpAxis.X);
+    FVector2D OwnerAxes[MaxTongues],OwnerSides[MaxTongues];
+    FVector2D ExtraLo=FVector2D::ZeroVector,ExtraHi=FVector2D::ZeroVector;
+    for(int32 I=0;I<Tongues.Num();++I)
+    {
+        const FVector Lag=MotionLag(Tongues[I].WorldVelocity);
+        OwnerAxes[I]=ASTFireLife::ScreenFlow(Projection,Origin,Lag,UpAxis);
+        OwnerSides[I]=Lag.IsNearlyZero()?SideAxis:
+            (OwnerAxes[I].IsNearlyZero()?SideAxis:FVector2D(OwnerAxes[I].Y,-OwnerAxes[I].X).GetSafeNormal());
+        if(Lag.IsNearlyZero())continue;
+        const FVector2D D=OwnerAxes[I]*MaxRise;
+        const FVector2D W(FMath::Abs(OwnerSides[I].X)*MaxRise*.8f,FMath::Abs(OwnerSides[I].Y)*MaxRise*.8f);
+        ExtraLo.X=FMath::Min(ExtraLo.X,D.X-W.X+MaxRise*.55f);
+        ExtraHi.X=FMath::Max(ExtraHi.X,D.X+W.X-MaxRise*.55f);
+        ExtraLo.Y=FMath::Min(ExtraLo.Y,D.Y-W.Y);
+        ExtraHi.Y=FMath::Max(ExtraHi.Y,D.Y+W.Y-MaxRise);
+    }
+    Lo+=ExtraLo;Hi+=ExtraHi;
     const float Required=FMath::Max(Nominal,FMath::Max(float((Hi.X-Lo.X)/(MaxXCells-2)),float((Hi.Y-Lo.Y)/(MaxYCells-2))));
     // Store a world-space grid spacing in the existing unused width cache.
     // Changing active surface cells may enlarge the envelope, but must
@@ -3045,10 +3086,6 @@ float UASTFireFreeFlameComponent::UpdateConnectedSource(
     // cooling front. Distinct phase regions shape its crest, but every
     // occupied cell belongs to the SAME field. No concentric outlines.
     const float WindSide=FMath::Clamp(float(FVector::DotProduct(Wind,Projection.Right))/180.f,-1.f,1.f);
-    const FVector2D Gravity=Projection.Project(Origin+FVector::UpVector*20.f)-Projection.Project(Origin);
-    const FVector2D Up2=Gravity.GetSafeNormal();
-    const FVector2D UpAxis=Up2.IsNearlyZero()?FVector2D(0,1):Up2;
-    const FVector2D SideAxis(UpAxis.Y,-UpAxis.X);
     TArray<float> Corrugation,Flow;Corrugation.SetNum(NX*NY);Flow.SetNum(NX*NY);
     for(int32 Y=0;Y<NY;++Y)for(int32 X=0;X<NX;++X)
     {
@@ -3069,15 +3106,10 @@ float UASTFireFreeFlameComponent::UpdateConnectedSource(
         for(int32 Step=0;Step<=FMath::CeilToInt(Crest) && Step<=64;++Step)
         {
             const float Rise=float(Step)/FMath::Max(1.f,Crest);
-            const float Side=Rise*float(Step)*(.32f*WindSide-.22f*Drift+
+            const float Aero=MotionStrength(Tongues[F.Owner].WorldVelocity);
+            const float Side=Rise*float(Step)*((.32f*WindSide-.22f*Drift)*(1.f-Aero)+
                 .24f*FMath::Sin(float(X)*.28f+float(Step)*.41f-Elapsed*5.2f+Phase));
-            FVector2D Offset=UpAxis*float(Step)+SideAxis*Side;
-            const FVector Lag=MotionLag(Tongues[F.Owner].WorldVelocity);
-            if(!Lag.IsNearlyZero())
-            {
-                const FVector2D ScreenLag(FVector::DotProduct(Lag,Projection.Right),FVector::DotProduct(Lag,Projection.Up));
-                Offset+=ScreenLag.GetSafeNormal()*float(Step)*(.65f*MotionStrength(Tongues[F.Owner].WorldVelocity)*Rise);
-            }
+            const FVector2D Offset=OwnerAxes[F.Owner]*float(Step)+OwnerSides[F.Owner]*Side;
             const int32 TX=X+FMath::RoundToInt(Offset.X),TY=Y+FMath::RoundToInt(Offset.Y);
             if(TX<0 || TX>=NX || TY<0 || TY>=NY)continue;
             const int32 I=TY*NX+TX;
@@ -3146,7 +3178,7 @@ float UASTFireFreeFlameComponent::UpdateConnectedSource(
             F.Life=.55f+.34f*FMath::Abs(Uniform(I*911+MeshCuts*37));
             F.Velocity=FVector::UpVector*(26.f+22.f*FMath::Abs(Uniform(MeshCuts*73)))*S+
                 F.Side*(FMath::Abs(Uniform(MeshCuts*71))-.5f)*36.f*S+Wind*.1f+
-                MotionLag(Tongues[I].WorldVelocity)*.14f;
+                MotionLag(Tongues[I].WorldVelocity)*.30f;
             const float D=Projection.Depth(F.Center);
             const FVector2D CP=Projection.Project(F.Center);
             for(int32 J:Group)
