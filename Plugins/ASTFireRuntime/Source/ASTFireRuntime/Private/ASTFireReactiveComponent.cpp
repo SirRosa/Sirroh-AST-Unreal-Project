@@ -1543,6 +1543,49 @@ float UASTFireReactiveComponent::ComputeBurnDuration() const
     return 2.f*FMath::Max(.1f,BaseBurnSeconds)*Factor;
 }
 
+FString UASTFireReactiveComponent::RunPropCharAudit(UClass* BoxClass,UClass* BarrelClass)
+{
+#if WITH_EDITOR
+    UWorld* World=UWorld::CreateWorld(EWorldType::Game,false);
+    if(!World||!BoxClass||!BarrelClass){if(World)World->DestroyWorld(false);return TEXT("FAIL:assets");}
+    bool bPass=true;
+    FString Details;
+    for(UClass* Class:{BoxClass,BarrelClass})
+    {
+        FActorSpawnParameters Spawn;
+        Spawn.SpawnCollisionHandlingOverride=ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+        AActor* Actor=World->SpawnActor<AActor>(Class,FVector(0,0,0),FRotator::ZeroRotator,Spawn);
+        auto* Mesh=Actor?Cast<UStaticMeshComponent>(Actor->GetRootComponent()):nullptr;
+        if(!Mesh){bPass=false;continue;}
+        auto* Original=Mesh->GetMaterial(0);
+        auto* OldOverlay=Mesh->GetOverlayMaterial(false,0);
+        auto* Fire=NewObject<UASTFireReactiveComponent>(Actor);
+        Actor->AddInstanceComponent(Fire);
+        Fire->bStartLit=false;Fire->Intensity=0.f;
+        Fire->bEnableProceduralFlames=true;Fire->bEnableCharring=true;
+        // Invoke material setup directly in a transient world; no map mutation.
+        Fire->CharProgress=.85f;
+        Fire->SetupSurfaceFire(Mesh);
+        const bool bSlot=Fire->bCharUsesPropSlot&&IsValid(Fire->FireSurfaceMID)&&Mesh->GetMaterial(0)==Fire->FireSurfaceMID;
+        const bool bOverlay=Mesh->GetOverlayMaterial(false,0)==OldOverlay;
+        float Progress=-1.f,Glow=-1.f;
+        const bool bParams=bSlot&&Fire->FireSurfaceMID->GetScalarParameterValue(FMaterialParameterInfo(TEXT("ASTPropCharProgress")),Progress)&&
+            Fire->FireSurfaceMID->GetScalarParameterValue(FMaterialParameterInfo(TEXT("ASTPropCharGlow")),Glow);
+        const bool bCold=bParams&&FMath::IsNearlyEqual(Progress,.85f)&&FMath::IsNearlyZero(Glow);
+        Fire->ReleaseSurfaceFire();
+        const bool bRestore=Mesh->GetMaterial(0)==Original&&Mesh->GetOverlayMaterial(false,0)==OldOverlay;
+        bPass&=bSlot&&bOverlay&&bCold&&bRestore;
+        Details+=FString::Printf(TEXT(";%s:slot=%d;overlay_untouched=%d;cold=%d;progress=%.2f;glow=%.2f;restore=%d"),
+            *Class->GetName(),int32(bSlot),int32(bOverlay),int32(bCold),Progress,Glow,int32(bRestore));
+        Actor->Destroy();
+    }
+    World->DestroyWorld(false);
+    return FString(bPass?TEXT("PASS:"):TEXT("FAIL:"))+Details;
+#else
+    return TEXT("EDITOR_ONLY");
+#endif
+}
+
 FString UASTFireReactiveComponent::RunBurnDurationAudit(USkeletalMesh* CharacterMesh)
 {
 #if WITH_EDITOR
