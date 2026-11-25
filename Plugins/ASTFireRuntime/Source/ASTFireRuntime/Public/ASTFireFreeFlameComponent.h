@@ -44,6 +44,9 @@ public:
     static FString RunCarryVisualAudit(UClass* BoxClass,UClass* BarrelClass);
 
     UFUNCTION(BlueprintCallable, Category="AST Fire|Diagnostics")
+    static FString RunMotionAudit(UMaterialInterface* TestMaterial);
+
+    UFUNCTION(BlueprintCallable, Category="AST Fire|Diagnostics")
     static FString RunFireV4Capture(UMaterialInterface* TestMaterial);
 
     UFUNCTION(BlueprintCallable, Category="AST Fire|Diagnostics")
@@ -307,6 +310,18 @@ private:
     int32 MeshCuts=0;
     int32 MeshTransferred=0;
     float SmokeAfterglowSeconds=0.f;
+    // Extra aerodynamic state is appended; existing lifecycle data is unchanged.
+    FVector AeroPreviousOrigin=FVector::ZeroVector;
+    FVector AeroVelocity=FVector::ZeroVector;
+    FVector AeroPreviousVelocity=FVector::ZeroVector;
+    float AeroImpulse=0.f;
+    float AeroSampleDt=0.f;
+    bool bAeroSample=false;
+    bool bAeroDiscontinuity=false;
+    void SampleAerodynamics(float Dt);
+    static float MotionStrength(const FVector& Velocity);
+    static FVector MotionLag(const FVector& Velocity);
+    FVector PointMotionOrigin() const;
     float UpdatePointField(bool bCreate,const FVector& Right);
     void RenderFieldFragments(float Pitch,TArray<FVector>& Verts,TArray<FVector2D>& UVs,
         TArray<FLinearColor>& Colors,TArray<int32>& Triangles);
