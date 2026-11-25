@@ -392,7 +392,17 @@ FString UASTFireIgnitionZoneComponent::RunContactAudit(UClass* BoxClass,UClass* 
         Poll(.05);
         Fire->TickComponent(1.f,LEVELTICK_All,&Fire->PrimaryComponentTick);
         const bool bOtherHolds=Fire->bStartLit&&FMath::IsNearlyZero(Fire->BurnElapsedSeconds);
+        // Source extinguishing releases the hold even before the next poll.
+        auto* SourceFire=NewObject<UASTFireReactiveComponent>(OtherZone->GetOwner());
+        OtherZone->GetOwner()->AddInstanceComponent(SourceFire);
+        SourceFire->bStartLit=true;SourceFire->Intensity=1.f;
+        OtherZone->bRequireSourceBurning=true;
+        const bool bSourceActive=Fire->HasActiveIgniter();
+        SourceFire->bStartLit=false;SourceFire->Intensity=0.f;
+        const bool bSourceOut=!Fire->HasActiveIgniter();
         OtherZone->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+        OtherZone->bRequireSourceBurning=false;
+        SourceFire->DestroyComponent();
         Poll(.05);
         Fire->TickComponent(1.f,LEVELTICK_All,&Fire->PrimaryComponentTick);
         const bool bReleased=Fire->bStartLit&&FMath::IsNearlyEqual(Fire->BurnElapsedSeconds,1.f);
@@ -415,7 +425,7 @@ FString UASTFireIgnitionZoneComponent::RunContactAudit(UClass* BoxClass,UClass* 
         const bool bCarriedEarly=!Fire->bStartLit;
         Poll(.051);
         const bool bCarriedIgnite=Fire->bStartLit;
-        bPass&=bOutside&&bEarly&&bReset&&bIgnited&&bHeld&&bNoDuplicate&&bTwo&&bOtherHolds&&bReleased&&bCarriedReentry&&bFullOutside&&bCarriedEarly&&bCarriedIgnite;
+        bPass&=bOutside&&bEarly&&bReset&&bIgnited&&bHeld&&bNoDuplicate&&bTwo&&bOtherHolds&&bSourceActive&&bSourceOut&&bReleased&&bCarriedReentry&&bFullOutside&&bCarriedEarly&&bCarriedIgnite;
         Details+=FString::Printf(TEXT(";%s:delay=%.2f;duration=%.2f;outside=%.2f;early=%d;reset=%d;ignited=%d;hold=%d;no_duplicate=%d;two=%d;other_holds=%d;release=%d;reentry=%d;full=%d;carried_delay=%d"),
             *Class->GetName(),Delay,Duration,Elapsed,int32(bEarly),int32(bReset),int32(bIgnited),int32(bHeld),int32(bNoDuplicate),int32(bTwo),int32(bOtherHolds),int32(bReleased),int32(bCarriedReentry),int32(bFullOutside),int32(bCarriedEarly&&bCarriedIgnite));
         Zone->ClearContacts();OtherZone->ClearContacts();
