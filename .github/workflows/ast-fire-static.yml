@@ -86,6 +86,7 @@ jobs:
           # V4 replaces their raster-specific assertions with a current contract.
           python -m py_compile Automation/ASTFire/setup_fire_v4.py
           python -m py_compile Automation/ASTFire/test_fire_v4.py
+          python -m py_compile Automation/ASTFire/verify_fire_v4_gpu.py
           python Automation/ASTFire/test_fire_v4.py
       - name: Parse PowerShell deployment script
         shell: pwsh
