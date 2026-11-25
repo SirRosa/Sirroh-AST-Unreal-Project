@@ -4,7 +4,7 @@ c=Path("Plugins/ASTFireRuntime/Source/ASTFireRuntime/Private/ASTFireFreeFlameCom
 for k in ("FlameBounds.GetSize()","FMath::Lerp(125.f,1000.f",
           "FMath::Lerp(35.f,85.f","SmokeFireTop+FVector::UpVector",
           "OverlapBlockingTestByChannel","SweepSingleByChannel",
-          "Hit.Normal.Z<-.45f","FVector::VectorPlaneProject",
+          "Normal.Z<-.45f","FVector::VectorPlaneProject",
           "ECC_Visibility","LineTraceSingleByChannel",
           "TObjectIterator<UPointLightComponent>","Spot->OuterConeAngle",
           "S.MaxRise-Height-2.f","if (!Slot) break;"):
