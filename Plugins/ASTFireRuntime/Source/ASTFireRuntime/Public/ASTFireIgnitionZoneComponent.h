@@ -10,8 +10,7 @@ class UPrimitiveComponent;
 
 /**
  * Standalone contact-ignition zone for BP_AST_FireSource_Igniter.
- * Only SERVER ignites actors. No damage, fuel, char, or map modifications.
- * Native overlap callbacks keep this inexpensive for stationary sources.
+ * Server-authoritative continuous contact heating and fuel replenishment.
  */
 UCLASS(ClassGroup=(ASTFire), meta=(BlueprintSpawnableComponent))
 class ASTFIRERUNTIME_API UASTFireIgnitionZoneComponent : public UBoxComponent
@@ -39,7 +38,7 @@ public:
         meta=(ClampMin="1", ClampMax="12"))
     int32 MaxDistributedFlames = 8;
 
-    /** Opt-in: also ignite actors overlapping at spawn (may include level geometry). */
+    /** Opt-in for initial native-only overlaps (e.g. static level geometry). Movable props and pawns heat normally. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="AST Fire|Contact")
     bool bIgniteInitialOverlaps = false;
 
@@ -49,6 +48,8 @@ public:
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="AST Fire|Contact")
     bool bRequireSourceBurning = true;
+
+    bool IsSustaining(const AActor* Target) const;
 
 protected:
     virtual void BeginPlay() override;
@@ -66,7 +67,13 @@ protected:
 private:
     void IgniteTarget(AActor* Target, const FVector& ContactPosition);
     void PollContactOverlaps();
+    void PollContactOverlapsAt(double Now);
+    bool IsHeatActive() const;
+    void ClearContacts();
+    static float ContactDelay(float SizeCm);
     FTimerHandle ContactPollTimer;
     bool bPrimingContacts = false;
     TSet<TWeakObjectPtr<AActor>> IgnitedDuringOverlap;
+    TMap<TWeakObjectPtr<AActor>,double> ContactStartedAt;
+    TSet<TWeakObjectPtr<AActor>> SuppressedInitialContacts;
 };
