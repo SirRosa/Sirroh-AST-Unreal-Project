@@ -45,19 +45,12 @@ jobs:
           python -m py_compile Automation/ASTFire/setup_stage10_lifecycle.py
           python -m py_compile Automation/ASTFire/verify_stage10_gpu.py
           python -m py_compile Automation/ASTFire/test_stage10_lifecycle.py
-          python Automation/ASTFire/test_stage10_lifecycle.py
           python -m py_compile Automation/ASTFire/test_stage14_mantle_neck.py
-          python Automation/ASTFire/test_stage14_mantle_neck.py
           python -m py_compile Automation/ASTFire/test_stage16_coverage_variance.py
-          python Automation/ASTFire/test_stage16_coverage_variance.py
           python -m py_compile Automation/ASTFire/test_stage17_tip_detachment.py
-          python Automation/ASTFire/test_stage17_tip_detachment.py
           python -m py_compile Automation/ASTFire/test_stage18_palette_plume.py
-          python Automation/ASTFire/test_stage18_palette_plume.py
           python -m py_compile Automation/ASTFire/test_stage19_live_silhouette.py
-          python Automation/ASTFire/test_stage19_live_silhouette.py
           python -m py_compile Automation/ASTFire/test_stage20_detached_billboard.py
-          python Automation/ASTFire/test_stage20_detached_billboard.py
           python -m py_compile Automation/ASTFire/test_stage21_burn_lifetime.py
           python Automation/ASTFire/test_stage21_burn_lifetime.py
           python -m py_compile Automation/ASTFire/setup_stage22_char.py
@@ -89,6 +82,11 @@ jobs:
           python Automation/ASTFire/test_stage33_density_smoke.py
           python -m py_compile Automation/ASTFire/verify_stage24_materials_gpu.py
           python Automation/ASTFire/test_stage4_source.py
+          # V3 visual snapshot tests above are syntax-checked for rollback history.
+          # V4 replaces their raster-specific assertions with a current contract.
+          python -m py_compile Automation/ASTFire/setup_fire_v4.py
+          python -m py_compile Automation/ASTFire/test_fire_v4.py
+          python Automation/ASTFire/test_fire_v4.py
       - name: Parse PowerShell deployment script
         shell: pwsh
         run: |
@@ -100,7 +98,8 @@ jobs:
             "Automation/ASTFire/deploy_stage8_windows.ps1",
             "Automation/ASTFire/deploy_stage9_windows.ps1",
             "Automation/ASTFire/deploy_stage10_windows.ps1",
-            "Automation/ASTFire/deploy_stage33_smoke_windows.ps1"
+            "Automation/ASTFire/deploy_stage33_smoke_windows.ps1",
+            "Automation/ASTFire/deploy_fire_v4_windows.ps1"
           )) {
             $tokens = $null
             $errors = $null
