@@ -24,19 +24,20 @@ for token in ("GetSkinnedVertexPosition","LineTraceComponent(","ConnectedRoots.A
               "AppendNeck(WorldA,WorldB,RadiusAt(V0),RadiusAt(V1),V0,V1)",
               "AppendNeck(BranchRoot,Mid,BranchRadius,", "EFlameLife::Bridging",
               "EFlameLife::Retracting","D.Position+=D.Velocity*Dt;",
-              "H.Add(0.f);","const float PixelPitch=UpdateConnectedSource",
-              "const float Pitch=FMath::Max(.35f,PixelPitch);",
+              "const float PixelPitch=UpdateConnectedSource",
+              "const float Pitch=FMath::Max(.1875f,PixelPitch);",
               "const float Support=R-D+Rim;", "Cell.Temperature=FMath::Clamp",
-              "CornerDepth(CX,CY)","Colors.Add(FLinearColor(C.Temperature,0.f,0.f,1.f))",
-              "const float V=(PY*CS+PX*SN)", "Triangles.Append(DetachedTris)",
-              "const float Flow=.64f*FMath::Sin","const float Shift=.28f*R*Flow",
-              "MaxXCells=56,MaxYCells=80", "RunFireV4Audit("):
+              "CornerDepth(CX,CY)","Colors.Add(FLinearColor(ASTFireLife::ToneCode(C.Temperature),0.f,0.f,1.f))",
+              "const float V=(PY*CS+PX*SN)", "Projection.Unproject(P,Depth)",
+              "const float Flow=.57f*FMath::Sin","const float Shift=.28f*R*Flow",
+              "MaxXCells=72,MaxYCells=104", "RunFireV4Audit("):
     assert token in c,token
 assert "floor(UV" not in m
 assert "MP_WORLD_POSITION_OFFSET" not in m
 assert 'connect_material_property(vertex,"A",u.MaterialProperty.MP_OPACITY_MASK)' in m
-for threshold in (".18,h",".34,h",".49,h",".65,h",".81,h"):
+for threshold in ("1.,h","2.,h","3.,h","4.,h","5.,h","6.,h"):
     assert threshold in m
+assert "float h=floor(saturate(C.r)*7.)" in m
 assert m.count("save_loaded_asset(")==1
 assert "run_smoke_audit(smoke)" in m and "run_fire_v4_audit(mat)" in m
 for token in ("FIRE_V4_ABI_IMPORTS_CHECKED", "FIRE_V4_ROLLBACK_COMPLETE",
@@ -45,12 +46,12 @@ for token in ("FIRE_V4_ABI_IMPORTS_CHECKED", "FIRE_V4_ROLLBACK_COMPLETE",
 assert "M_AST_FireSmoke.uasset" not in d
 # Raster pitch is square, power-of-two bounded and independent of UV stretch.
 def pitch(scale,w,h):
-    b=max(.5,min(6.,3*scale))
-    return b*2**ceil(log2(max(b,w/54,h/78)/b))
+    b=.1875
+    return b*2**ceil(log2(max(b,w/70,h/102)/b))
 for scale in (.15,1,2):
     for w,height in ((12,22),(100,170),(350,700)):
         p=pitch(scale,w,height)
-        assert ceil(w/p)+1<=56 and ceil(height/p)+1<=80
+        assert ceil(w/p)+1<=72 and ceil(height/p)+1<=104
 # Thermal islands move independently of geometric mask. Outside stays absent.
 def field(distance,r,v,flow,rim=0):
     cover=r-distance+rim>=0
@@ -70,5 +71,5 @@ for remaining in (.66,.75,.83):
         for age in (0,.25,.75):
             assert child*(1-age)>child*(1-age-.1)
 assert "Child.Width=FMath::Min" in c
-assert "Child.Lifetime=.26f + .48f" in c
+assert "Child.Lifetime=.19f + .32f" in c
 print("Fire v4 raster, independent heat, detached lifecycle, v3 smoke/spark/torch locks: PASS")

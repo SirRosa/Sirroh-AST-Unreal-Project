@@ -35,8 +35,8 @@ $sourcePlugin=Join-Path $source $plugin
 $livePlugin=Join-Path $ProjectRoot $plugin
 # Compare the exact locally deployed source to the accepted revision.
 $baseline=@{
- "$plugin\Source\ASTFireRuntime\Private\ASTFireFreeFlameComponent.cpp"='c55626cd37b551b8dae552c265bd893f69552e4d'
- "$plugin\Source\ASTFireRuntime\Public\ASTFireFreeFlameComponent.h"='2b4826ecbcefa7975406bd0f5e5e885f72d12731'
+ "$plugin\Source\ASTFireRuntime\Private\ASTFireFreeFlameComponent.cpp"='16af2c8653c72bba66508ff598fb157ff85d4a2d'
+ "$plugin\Source\ASTFireRuntime\Public\ASTFireFreeFlameComponent.h"='e4d980e5940a773065e7277300a35f0ea8190d6a'
 }
 foreach($rel in $baseline.Keys){
  $current=(& git -C $ProjectRoot hash-object ('--path='+$rel.Replace('\','/')) (Join-Path $ProjectRoot $rel)).Trim()

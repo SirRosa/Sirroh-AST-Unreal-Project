@@ -17,6 +17,9 @@ try:
         raise RuntimeError("Expected two-sided procedural mesh material")
     u.MaterialEditingLibrary.recompile_material(m)
     OUT["materials"].append(path)
+    OUT["capture"]=u.ASTFireFreeFlameComponent.run_fire_v4_capture(m)
+    if not OUT["capture"].startswith("PASS:"):
+        raise RuntimeError("GPU capture failed: "+OUT["capture"])
     OUT["status"]="FIRE_V4_GPU_GRAPH_CHECKED_SHADER_LOG_REQUIRED"
 except Exception as exc:
     OUT["errors"].append({"error":str(exc),"trace":traceback.format_exc()})

@@ -42,7 +42,7 @@ for key in (
 assert c.index("AdvanceSimulation(SimDt);")<c.index(
     "UpdateDetachedVortices(SimDt);")<c.index("UpdateSparks(SimDt);")
 assert "MaxDetached = 16;" in h
-assert "Triangles.Append(DetachedTris);" in c
+assert "Projection.Unproject(P,Depth)" in c
 assert 48*4==192 and 48*2==96
 # Reference particle count stays bounded even if the spawn debt is huge.
 def births(debt,dt,heat,energy):

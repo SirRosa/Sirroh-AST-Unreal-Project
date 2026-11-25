@@ -23,6 +23,11 @@
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "HAL/FileManager.h"
+#include "Engine/StaticMesh.h"
+#include "Components/SceneCaptureComponent2D.h"
+#include "Engine/TextureRenderTarget2D.h"
+#include "ImageUtils.h"
+#include "RenderingThread.h"
 
 namespace ASTFireLife
 {
@@ -1457,69 +1462,264 @@ FString UASTFireFreeFlameComponent::RunFireV4Audit(UMaterialInterface* TestMater
     if(!IsValid(TestMaterial)) return TEXT("FAIL:NO_MATERIAL");
     UWorld* World=UWorld::CreateWorld(EWorldType::Game,false);
     if(!World) return TEXT("FAIL:NO_WORLD");
-    bool bPass=true,bFragment=false,bCool=false,bSmall=false;
-    int32 MaxCells=0,MaxTones=0;
-    double Cost=0.;int32 Frames=0;
-    for(float Scale : {1.f,.15f})
+    bool bPass=true,bFragment=false,bCool=true,bSmall=false,bMesh=false,bMoving=false;
+    int32 MaxCells=0,MaxTones=0,FrameCount=0,StableFrames=0,GoodShape=0,Connected=0;
+    int32 HotPixels=0,AllPixels=0,FragmentPixels=0,PitchChanges=0;
+    int32 ChangedColors=0,CommonColors=0;
+    double AspectSum=0.,FillSum=0.,Cost=0.;
+    TArray<double> Costs;
+    FString Raster;
+    const FString Folder=FPaths::ProjectSavedDir()/TEXT("ChatGPT/NiagaraFire/FireV4");
+    IFileManager::Get().MakeDirectory(*Folder,true);
+    const auto NewFire=[&](float Scale,int32 Salt,bool bOnMesh)
     {
         AActor* Host=World->SpawnActor<AActor>();
-        if(!Host){bPass=false;continue;}
-        USceneComponent* Root=NewObject<USceneComponent>(Host);
-        Host->SetRootComponent(Root);
-        Root->RegisterComponent();
-        UASTFireFreeFlameComponent* Fire=NewObject<UASTFireFreeFlameComponent>(Host);
-        Fire->SetSizeScale(Scale);
-        Fire->SetSource(Root,TestMaterial,1729);
-        Fire->RegisterComponent();
-        bool bSeen=false;
-        for(int32 I=0;I<100;++I)
+        if(!Host)return static_cast<UASTFireFreeFlameComponent*>(nullptr);
+        USceneComponent* Root=nullptr;
+        if(bOnMesh)
         {
-            Fire->SetThermal(1.f,I>50?FVector(0,60,0):FVector::ZeroVector,.75f);
+            UStaticMeshComponent* Mesh=NewObject<UStaticMeshComponent>(Host);
+            Mesh->SetStaticMesh(LoadObject<UStaticMesh>(nullptr,TEXT("/Engine/BasicShapes/Cube.Cube")));
+            Mesh->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+            Mesh->SetCollisionResponseToAllChannels(ECR_Block);
+            Root=Mesh;
+        }
+        else Root=NewObject<USceneComponent>(Host);
+        Host->SetRootComponent(Root);Root->RegisterComponent();
+        UASTFireFreeFlameComponent* Fire=NewObject<UASTFireFreeFlameComponent>(Host);
+        Fire->SetSizeScale(Scale);Fire->SetSource(Root,TestMaterial,Salt);
+        Fire->RegisterComponent();
+        return Fire;
+    };
+    const auto Step=[&](UASTFireFreeFlameComponent* Fire,const FVector& Wind)
+    {
+        Fire->SetThermal(1.f,Wind,.75f);
+        Fire->AdvanceSimulation(.04f);
+        Fire->UpdateDetachedVortices(.04f);
+        Fire->UpdateGeometry(false);
+    };
+    for(int32 Case=0;Case<7;++Case)
+    {
+        const bool bOnMesh=Case==6;
+        const float Scale=Case==4?.15f:Case==5?1.8f:1.f;
+        UASTFireFreeFlameComponent* Fire=NewFire(Scale,1729+Case*911,bOnMesh);
+        if(!Fire){bPass=false;continue;}
+        AActor* Host=Fire->GetOwner();
+        bool bSeen=false;
+        float LastPitch=0.f;
+        TMap<FIntPoint,int32> Previous;
+        for(int32 I=0;I<120;++I)
+        {
+            // First 2 seconds are still air. Last 2 seconds move the source
+            // and apply wind, rather than testing a static preview only.
+            if(I>=72) Host->SetActorLocation(FVector(0,(I-72)*1.2f,0));
             const double Start=FPlatformTime::Seconds();
-            Fire->AdvanceSimulation(.04f);
-            Fire->UpdateDetachedVortices(.04f);
-            Fire->UpdateGeometry(false);
-            Cost+=FPlatformTime::Seconds()-Start;++Frames;
+            Step(Fire,I>60?FVector(0,90,0):FVector::ZeroVector);
+            const double Ms=(FPlatformTime::Seconds()-Start)*1000.;
+            Cost+=Ms;Costs.Add(Ms);++FrameCount;
             if(!IsValid(Fire->Render)){bPass=false;break;}
-            if(const FProcMeshSection* S=Fire->Render->GetProcMeshSection(1))
+            const float Pitch=Fire->FirePixelPitch;
+            if(Pitch<=0.f)continue;
+            if(I>25 && LastPitch>0.f && Pitch!=LastPitch)++PitchChanges;
+            LastPitch=Pitch;
+            const ASTFireLife::FFireProjection P(Fire->Source->GetComponentLocation(),World);
+            const FTransform T=Fire->Render->GetComponentTransform();
+            TMap<FIntPoint,int32> Main,DetachedPixels;
+            FIntPoint Lo(100000,100000),Hi(-100000,-100000);
+            for(int32 Section=0;Section<2;++Section)
             {
+                const FProcMeshSection* S=Fire->Render->GetProcMeshSection(Section);
+                if(!S)continue;
                 const int32 Count=S->ProcVertexBuffer.Num();
-                if(Count>0)
+                bPass &= Count%4==0 && S->ProcIndexBuffer.Num()==Count/4*6;
+                for(int32 J=0;J+3<Count;J+=4)
                 {
-                    bSeen=true;
-                    MaxCells=FMath::Max(MaxCells,Count/4);
-                    bPass &= Count%4==0 && S->ProcIndexBuffer.Num()==Count/4*6;
-                    TSet<int32> Tones;
-                    for(int32 J=0;J+3<Count;J+=4)
+                    const auto& V=S->ProcVertexBuffer;
+                    const int32 Tone=FMath::Clamp(int32(V[J].Color.R*7.f/255.f),0,6);
+                    bPass &= V[J].Color==V[J+1].Color && V[J].Color==V[J+2].Color &&
+                        V[J].Color==V[J+3].Color && V[J].Color.A==255;
+                    const FVector2D A=P.Project(T.TransformPosition(V[J].Position));
+                    const FVector2D B=P.Project(T.TransformPosition(V[J+3].Position));
+                    const FIntPoint Key(FMath::FloorToInt((A.X+B.X)*.5f/Pitch),
+                        FMath::FloorToInt((A.Y+B.Y)*.5f/Pitch));
+                    // Real projected corners must remain a square cell,
+                    // including depth varying on mesh flames.
+                    bPass &= FMath::Abs(FMath::Abs(float(B.X-A.X))-Pitch)<.03f*Pitch+.003f &&
+                        FMath::Abs(FMath::Abs(float(B.Y-A.Y))-Pitch)<.03f*Pitch+.003f;
+                    if(Section==1)
                     {
-                        const auto& V=S->ProcVertexBuffer;
-                        bPass &= V[J].Color==V[J+1].Color && V[J].Color==V[J+2].Color &&
-                            V[J].Color==V[J+3].Color;
-                        const int32 R=V[J].Color.R;
-                        Tones.Add((R>=46)+(R>=87)+(R>=125)+(R>=166)+(R>=207));
+                        Main.Add(Key,Tone);
+                        Lo.X=FMath::Min(Lo.X,Key.X);Lo.Y=FMath::Min(Lo.Y,Key.Y);
+                        Hi.X=FMath::Max(Hi.X,Key.X);Hi.Y=FMath::Max(Hi.Y,Key.Y);
                     }
-                    MaxTones=FMath::Max(MaxTones,Tones.Num());
+                    else DetachedPixels.Add(Key,Tone);
                 }
             }
-            if(const FProcMeshSection* S=Fire->Render->GetProcMeshSection(0))
-                bFragment |= S->ProcVertexBuffer.Num()>
-                    Fire->Tongues.Num()*(RingsPerTongue+BridgeRings)*2;
+            if(Main.IsEmpty())continue;
+            bSeen=true;
+            MaxCells=FMath::Max(MaxCells,Main.Num());
+            bFragment|=!DetachedPixels.IsEmpty();
+            if(bOnMesh)bMesh|=Fire->Tongues.Num()>1 && Main.Num()>20;
+            if(I>=80)bMoving|=Host->GetActorLocation().Y>5.f && Main.Num()>10;
+            TSet<int32> Tones;
+            for(const auto& Pair:Main)Tones.Add(Pair.Value);
+            MaxTones=FMath::Max(MaxTones,Tones.Num());
+            if(I>25 && I<60 && Case<4)
+            {
+                const int32 Width=Hi.X-Lo.X+1,Height=Hi.Y-Lo.Y+1;
+                const float Aspect=float(Width)/Height,Fill=float(Main.Num())/(Width*Height);
+                ++StableFrames;AspectSum+=Aspect;FillSum+=Fill;
+                GoodShape+=Aspect>=.33f && Aspect<=.95f && Fill>=.40f && Fill<=.86f;
+                TSet<FIntPoint> Visited;
+                int32 Largest=0;
+                const FIntPoint Neighbors[4]={FIntPoint(1,0),FIntPoint(-1,0),FIntPoint(0,1),FIntPoint(0,-1)};
+                for(const auto& Pair:Main)
+                {
+                    if(Visited.Contains(Pair.Key))continue;
+                    TArray<FIntPoint> Queue;Queue.Add(Pair.Key);Visited.Add(Pair.Key);
+                    for(int32 J=0;J<Queue.Num();++J)
+                        for(const FIntPoint& N:Neighbors)
+                        {
+                            const FIntPoint Q=Queue[J]+N;
+                            if(Main.Contains(Q) && !Visited.Contains(Q)){Visited.Add(Q);Queue.Add(Q);}
+                        }
+                    Largest=FMath::Max(Largest,Queue.Num());
+                }
+                Connected+=Largest>=Main.Num()*.85f;
+                for(const auto& Pair:Main)
+                {
+                    ++AllPixels;HotPixels+=Pair.Value==6;
+                    if(const int32* Old=Previous.Find(Pair.Key))
+                    {++CommonColors;ChangedColors+=*Old!=Pair.Value;}
+                }
+                FragmentPixels+=DetachedPixels.Num();
+            }
+            Previous=Main;
+            // Actual procedural mesh data, not a reimplementation of the
+            // shape. Store sampled frames to inspect reference likeness.
+            if(I>=28 && I<=88 && I%10==8)
+            {
+                FIntPoint L=Lo,U=Hi;
+                for(const auto& Pair:DetachedPixels)
+                {
+                    L.X=FMath::Min(L.X,Pair.Key.X);L.Y=FMath::Min(L.Y,Pair.Key.Y);
+                    U.X=FMath::Max(U.X,Pair.Key.X);U.Y=FMath::Max(U.Y,Pair.Key.Y);
+                }
+                Raster+=FString::Printf(TEXT("FRAME %d %d %.4f %d %d %d %d\n"),
+                    Case,I,Pitch,L.X,L.Y,U.X,U.Y);
+                for(int32 Y=U.Y;Y>=L.Y;--Y)
+                {
+                    for(int32 X=L.X;X<=U.X;++X)
+                    {
+                        const FIntPoint Q(X,Y);
+                        if(const int32* C=Main.Find(Q)) Raster.AppendChar(TCHAR('0'+*C));
+                        else if(const int32* C=DetachedPixels.Find(Q))Raster.AppendChar(TCHAR('a'+*C));
+                        else Raster.AppendChar(TCHAR('.'));
+                    }
+                    Raster.AppendChar(TCHAR('\n'));
+                }
+            }
         }
         bPass &= bSeen;
-        if(Scale<.2f) bSmall=bSeen;
-        Fire->SetThermal(0.f,FVector::ZeroVector,0.f);
-        Fire->UpdateGeometry(false);
-        const FProcMeshSection* Cooled=Fire->Render->GetProcMeshSection(1);
-        const bool bEmpty=!Cooled || Cooled->ProcVertexBuffer.IsEmpty();
-        bCool|=bEmpty;bPass&=bEmpty;
-        Fire->DestroyComponent();
-        Host->Destroy();
+        if(Case==4)bSmall=bSeen;
+        Fire->SetThermal(0.f,FVector::ZeroVector,0.f);Fire->UpdateGeometry(false);
+        for(int32 Section=0;Section<2;++Section)
+        {
+            const FProcMeshSection* Cooled=Fire->Render->GetProcMeshSection(Section);
+            bCool&=!Cooled || Cooled->ProcVertexBuffer.IsEmpty();
+        }
+        Fire->DestroyComponent();Host->Destroy();
     }
+    const bool bRaster=FFileHelper::SaveStringToFile(Raster,*(Folder/TEXT("actual_raster.txt")));
+    TArray<UASTFireFreeFlameComponent*> Crowd;
+    for(int32 I=0;I<20;++I)
+    {
+        if(UASTFireFreeFlameComponent* F=NewFire(1.f,811+I*97,false))
+            Crowd.Add(F);
+    }
+    double CrowdMs=0.;TArray<double> CrowdCosts;
+    for(int32 I=0;I<60;++I)
+    {
+        const double Start=FPlatformTime::Seconds();
+        for(auto* F:Crowd)Step(F,FVector::ZeroVector);
+        const double Ms=(FPlatformTime::Seconds()-Start)*1000.;
+        if(I>=25){CrowdMs+=Ms;CrowdCosts.Add(Ms);}
+    }
+    for(auto* F:Crowd){AActor* A=F->GetOwner();F->DestroyComponent();A->Destroy();}
     World->DestroyWorld(false);
-    bPass &= bFragment && bCool && bSmall && MaxTones>=3;
-    return FString::Printf(TEXT("%s:small=%d;fragment=%d;cool=%d;cells=%d;tones=%d;cpuMs=%.3f"),
-        bPass?TEXT("PASS"):TEXT("FAIL"),int32(bSmall),int32(bFragment),int32(bCool),
-        MaxCells,MaxTones,Cost*1000./FMath::Max(1,Frames));
+    Costs.Sort();CrowdCosts.Sort();
+    const float ShapeRate=float(GoodShape)/FMath::Max(1,StableFrames);
+    const float Connectivity=float(Connected)/FMath::Max(1,StableFrames);
+    const float HotRate=float(HotPixels)/FMath::Max(1,AllPixels);
+    const float ChangeRate=float(ChangedColors)/FMath::Max(1,CommonColors);
+    const float FragmentRate=float(FragmentPixels)/FMath::Max(1,AllPixels);
+    bPass &= bFragment && bCool && bSmall && bMesh && bMoving && bRaster &&
+        MaxTones==7 && ShapeRate>=.70f && Connectivity>=.80f &&
+        HotRate>=.025f && HotRate<=.26f && ChangeRate>.02f && FragmentRate<.20f &&
+        Crowd.Num()==20;
+    return FString::Printf(TEXT("%s:small=%d;fragment=%d;cool=%d;mesh=%d;moving=%d;raster=%d;cells=%d;tones=%d;shape=%.3f;connected=%.3f;aspect=%.3f;fill=%.3f;hot=%.3f;thermalChange=%.3f;detachedRatio=%.3f;pitchChanges=%d;cpuMs=%.3f;p95=%.3f;crowd20Ms=%.3f;crowdP95=%.3f"),
+        bPass?TEXT("PASS"):TEXT("FAIL"),int32(bSmall),int32(bFragment),int32(bCool),int32(bMesh),int32(bMoving),int32(bRaster),
+        MaxCells,MaxTones,ShapeRate,Connectivity,AspectSum/FMath::Max(1,StableFrames),
+        FillSum/FMath::Max(1,StableFrames),HotRate,ChangeRate,FragmentRate,PitchChanges,
+        Cost/FMath::Max(1,FrameCount),Costs.IsEmpty()?0.:Costs[FMath::Clamp(FMath::FloorToInt(Costs.Num()*.95f),0,Costs.Num()-1)],
+        CrowdMs/FMath::Max(1,CrowdCosts.Num()),CrowdCosts.IsEmpty()?0.:CrowdCosts[FMath::Clamp(FMath::FloorToInt(CrowdCosts.Num()*.95f),0,CrowdCosts.Num()-1)]);
+#else
+    return TEXT("EDITOR_ONLY");
+#endif
+}
+
+FString UASTFireFreeFlameComponent::RunFireV4Capture(UMaterialInterface* TestMaterial)
+{
+#if WITH_EDITOR
+    if(!IsValid(TestMaterial))return TEXT("FAIL:NO_MATERIAL");
+    UWorld* World=UWorld::CreateWorld(EWorldType::Game,false);
+    if(!World)return TEXT("FAIL:NO_WORLD");
+    AActor* Host=World->SpawnActor<AActor>();
+    AActor* Camera=World->SpawnActor<AActor>();
+    if(!Host || !Camera){World->DestroyWorld(false);return TEXT("FAIL:ACTORS");}
+    USceneComponent* Root=NewObject<USceneComponent>(Host);
+    Host->SetRootComponent(Root);Root->RegisterComponent();
+    UASTFireFreeFlameComponent* Fire=NewObject<UASTFireFreeFlameComponent>(Host);
+    Fire->SetSource(Root,TestMaterial,1729);Fire->RegisterComponent();
+    USceneCaptureComponent2D* Capture=NewObject<USceneCaptureComponent2D>(Camera);
+    Camera->SetRootComponent(Capture);
+    Capture->bCaptureEveryFrame=false;Capture->bCaptureOnMovement=false;
+    Capture->ProjectionType=ECameraProjectionMode::Perspective;
+    Capture->FOVAngle=18.f;
+    Capture->CaptureSource=SCS_FinalColorLDR;
+    Capture->ShowFlags.SetBloom(false);
+    Capture->ShowFlags.SetMotionBlur(false);
+    Capture->ShowFlags.SetTemporalAA(false);
+    Capture->ShowFlags.SetEyeAdaptation(false);
+    UTextureRenderTarget2D* RT=NewObject<UTextureRenderTarget2D>(Capture);
+    RT->RenderTargetFormat=RTF_RGBA8_SRGB;
+    RT->ClearColor=FLinearColor(.007f,.009f,.014f,1.f);
+    RT->InitAutoFormat(512,512);
+    RT->UpdateResourceImmediate(true);
+    Capture->TextureTarget=RT;
+    Capture->RegisterComponent();
+    Capture->SetWorldLocation(FVector(1000,0,0));
+    Capture->SetWorldRotation(FRotator(0,180,0));
+    const FString Folder=FPaths::ProjectSavedDir()/TEXT("ChatGPT/NiagaraFire/FireV4/GPU");
+    IFileManager::Get().MakeDirectory(*Folder,true);
+    int32 Saved=0;
+    for(int32 I=0;I<100;++I)
+    {
+        Fire->SetThermal(1.f,I>60?FVector(0,80,0):FVector::ZeroVector,.75f);
+        Fire->AdvanceSimulation(.04f);Fire->UpdateDetachedVortices(.04f);
+        Fire->UpdateGeometry(false);
+        if(I>=28 && I%10==8)
+        {
+            World->SendAllEndOfFrameUpdates();
+            Capture->CaptureScene();
+            FlushRenderingCommands();
+            const FString Name=Folder/FString::Printf(TEXT("Frame_%03d.png"),I);
+            TUniquePtr<FArchive> Ar(IFileManager::Get().CreateFileWriter(*Name));
+            if(Ar && FImageUtils::ExportRenderTarget2DAsPNG(RT,*Ar))++Saved;
+        }
+    }
+    Fire->DestroyComponent();Capture->DestroyComponent();World->DestroyWorld(false);
+    return FString::Printf(TEXT("%s:frames=%d"),Saved>=6?TEXT("PASS"):TEXT("FAIL"),Saved);
 #else
     return TEXT("EDITOR_ONLY");
 #endif
@@ -1734,7 +1934,7 @@ void UASTFireFreeFlameComponent::UpdateGeometry(bool bCreate)
         Render->UpdateMeshSection_LinearColor(
             2,SV,SN,SU,SC,SX);
 
-    // Section 1 was authored before this section; it contains the common
+    // Section 1 was authored before this section, it contains the common
     // flame field AND the narrowing split bridges.
 }
 
