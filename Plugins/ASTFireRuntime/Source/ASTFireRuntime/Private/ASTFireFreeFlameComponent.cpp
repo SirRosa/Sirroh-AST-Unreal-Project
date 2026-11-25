@@ -87,7 +87,8 @@ namespace ASTFireLife
     FVector FlowDirection(const FVector& Lag)
     {
         const FVector Flow=FVector::UpVector*180.f+Lag;
-        return Flow.IsNearlyZero(1.f)?FVector::ZeroVector:Flow.GetSafeNormal();
+        // Near cancellation the flame compresses smoothly before turning over.
+        return Flow.GetClampedToMaxSize(180.f)/180.f;
     }
 
     FVector2D ScreenFlow(const FFireProjection& P,const FVector& Origin,const FVector& Lag,
@@ -99,7 +100,8 @@ namespace ASTFireLife
         const FVector2D Projected=P.Project(Origin+Direction*20.f)-P.Project(Origin);
         // An axial flow should compress, not invent a sideways direction.
         const float ReferenceLength=20.f*FFireProjection::Reference/P.Depth(Origin);
-        return (Projected/FMath::Max(.01f,ReferenceLength)).GetClampedToMaxSize(1.);
+        const FVector2D V=Projected/FMath::Max(.01f,ReferenceLength);
+        return V/FMath::Max(1.,V.Size());
     }
 
     // Hidden torch wicks are explicit attachment points, not burnable surfaces.
@@ -2810,20 +2812,40 @@ float UASTFireFreeFlameComponent::UpdatePointField(bool bCreate,const FVector& R
     TArray<FVector> Verts,Normals;
     TArray<FVector2D> UVs;TArray<FLinearColor> Colors;
     TArray<FProcMeshTangent> Tangents;TArray<int32> Tris;
-    for(const auto& Cell:PointField)if(Cell.bLit)
+    // Resolve overlapping pixels in the rotated lattice only during motion.
+    TMap<FIntPoint,float> MovingPixels;
+    if(Aero>0.f)
+        for(const auto& Cell:PointField)if(Cell.bLit)
+        {
+            const FVector2D Q=P.Project(Cell.World);
+            float& Temperature=MovingPixels.FindOrAdd(FIntPoint(FMath::FloorToInt(Q.X/Pitch),FMath::FloorToInt(Q.Y/Pitch)));
+            Temperature=FMath::Max(Temperature,Cell.Temperature);
+        }
+    auto AddPixel=[&](const FVector2D& Lo,float Temperature)
     {
-        const FVector2D Pixel=P.Project(Cell.World);
-        const FVector2D Lo(FMath::FloorToDouble(Pixel.X/Pitch)*Pitch,FMath::FloorToDouble(Pixel.Y/Pitch)*Pitch);
         const int32 First=Verts.Num();
         for(int32 K=0;K<4;++K)
         {
             const FVector2D Q=Lo+FVector2D((K%2)*Pitch,(K/2)*Pitch);
             Verts.Add(Tr.InverseTransformPosition(P.Unproject(Q,Depth)));
             UVs.Add(FVector2D(K%2,K/2));Normals.Add(-P.Forward);
-            Colors.Add(FLinearColor(ASTFireLife::ToneCode(Cell.Temperature),0.f,0.f,1.f));
+            Colors.Add(FLinearColor(ASTFireLife::ToneCode(Temperature),0.f,0.f,1.f));
             Tangents.Add(FProcMeshTangent(1,0,0));
         }
         Tris.Append({First,First+2,First+1,First+1,First+2,First+3});
+    };
+    if(Aero>0.f)
+    {
+        for(const auto& Pair:MovingPixels)
+            AddPixel(FVector2D(Pair.Key.X*Pitch,Pair.Key.Y*Pitch),Pair.Value);
+    }
+    else
+    {
+        for(const auto& Cell:PointField)if(Cell.bLit)
+        {
+            const FVector2D Pixel=P.Project(Cell.World);
+            AddPixel(FVector2D(FMath::FloorToDouble(Pixel.X/Pitch)*Pitch,FMath::FloorToDouble(Pixel.Y/Pitch)*Pitch),Cell.Temperature);
+        }
     }
     const FProcMeshSection* Old=Render->GetProcMeshSection(1);
     if(Verts.IsEmpty())Render->ClearMeshSection(1);
@@ -3020,10 +3042,12 @@ float UASTFireFreeFlameComponent::UpdateConnectedSource(
     const FVector2D UpAxis=Up2.IsNearlyZero()?FVector2D(0,1):Up2;
     const FVector2D SideAxis(UpAxis.Y,-UpAxis.X);
     FVector2D OwnerAxes[MaxTongues],OwnerSides[MaxTongues];
+    float OwnerAero[MaxTongues]={};
     FVector2D ExtraLo=FVector2D::ZeroVector,ExtraHi=FVector2D::ZeroVector;
     for(int32 I=0;I<Tongues.Num();++I)
     {
         const FVector Lag=MotionLag(Tongues[I].WorldVelocity);
+        OwnerAero[I]=MotionStrength(Tongues[I].WorldVelocity);
         OwnerAxes[I]=ASTFireLife::ScreenFlow(Projection,Origin,Lag,UpAxis);
         OwnerSides[I]=Lag.IsNearlyZero()?SideAxis:
             (OwnerAxes[I].IsNearlyZero()?SideAxis:FVector2D(OwnerAxes[I].Y,-OwnerAxes[I].X).GetSafeNormal());
@@ -3106,7 +3130,7 @@ float UASTFireFreeFlameComponent::UpdateConnectedSource(
         for(int32 Step=0;Step<=FMath::CeilToInt(Crest) && Step<=64;++Step)
         {
             const float Rise=float(Step)/FMath::Max(1.f,Crest);
-            const float Aero=MotionStrength(Tongues[F.Owner].WorldVelocity);
+            const float Aero=OwnerAero[F.Owner];
             const float Side=Rise*float(Step)*((.32f*WindSide-.22f*Drift)*(1.f-Aero)+
                 .24f*FMath::Sin(float(X)*.28f+float(Step)*.41f-Elapsed*5.2f+Phase));
             const FVector2D Offset=OwnerAxes[F.Owner]*float(Step)+OwnerSides[F.Owner]*Side;
