@@ -15,7 +15,7 @@ def fnv(s):
     return f"{v:08x}"
 def region(a,b): return c[c.index(a):c.index(b,c.index(a))]
 # The hashes are pinned to accepted v3 7d0eee1049ffbcca7f25ed39811901667a362ba5, NOT recomputed from v4.
-for a,b,expected in [["void UASTFireFreeFlameComponent::UpdateSparks(","void UASTFireFreeFlameComponent::UpdateSmoke(","1408cade"],["void UASTFireFreeFlameComponent::UpdateSmoke(","FString UASTFireFreeFlameComponent::RunSmokeAudit(","f03b75c8"]]:
+for a,b,expected in [["void UASTFireFreeFlameComponent::UpdateSparks(","void UASTFireFreeFlameComponent::UpdateSmoke(","1408cade"],["    // Collision volume is also the exact support of visible density.","    if (bVisible && Heat>.10f && Active>0)","413ed2d7"],["// Perspective-correct density raster, with per-cell collision-safe depth.","FString UASTFireFreeFlameComponent::RunSmokeAudit(","ad9ffb29"]]:
     assert fnv(region(a,b))==expected, a
 assert fnv(r)=="930b76ee","burn/torch runtime changed"
 for token in ("GetTongueCount()", "SetSizeScale(", "RunSmokeAudit(", "RunFireV4Audit("):
@@ -82,3 +82,9 @@ assert "bInFront?Fade:0.f" in c
 assert "u.BlendMode.BLEND_TRANSLUCENT" in m
 assert 'u.MaterialProperty.MP_OPACITY)' in m
 assert "M_AST_FireSpark.uasset" in d
+
+# Emission changes authorized; collision transport, density raster and spark simulation remain locked.
+assert "Tongue.MaxLength*=Compactness;" in c
+assert "MassRatio<2.f" in c
+assert "ActiveArea+=T.CurrentWidth*T.CurrentLength;" in c
+assert "FMath::Lerp(1.f,1.38f,Abundance)" in c

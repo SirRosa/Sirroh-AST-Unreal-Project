@@ -268,9 +268,16 @@ void UASTFireFreeFlameComponent::ConfigureGeneration(FTongue& Tongue)
     Tongue.RebirthDelay=FMath::Lerp(.055f,.17f,Large)+.09f*Uniform(Salt+11);
     Tongue.MaxLength = (55.f + 100.f *
         FMath::Pow(Uniform(Salt + 2),1.22f)) * Tongue.Scale * SizeScale;
+    // Distributed surface combustion needs shorter flames per root, not
+    // character-height torches at every vertex. Small wicks retain their size.
+    const bool bPoint=ASTFireLife::IsPointSource(Source,!IgnitionPoints.IsEmpty());
+    const float Compactness=bPoint?FMath::Lerp(1.f,.72f,Large):
+        (Cast<USkeletalMeshComponent>(Source)?.43f:.62f);
+    Tongue.MaxLength*=Compactness;
     Tongue.BaseWidth = (15.f + 24.f *
         FMath::Pow(Uniform(Salt + 3),1.15f)) * Tongue.Scale * SizeScale;
-    // Exact ring cut: the upper 5/8 or 6/8 becomes the detached flame.
+    Tongue.BaseWidth*=bPoint?FMath::Lerp(1.f,.89f,Large):.76f;
+    // Exact ring cut; no independently spawned replacement sprite.
     Tongue.RemainingFraction = Large>.35f?(Uniform(Salt + 4)<.65f?.125f:.25f):.25f;
     Tongue.Phase = 6.283185f * Uniform(Salt + 5);
 }
@@ -648,11 +655,11 @@ FVector UASTFireFreeFlameComponent::TongueCenterAt(
     const bool bPoint=ASTFireLife::IsPointSource(Source,!IgnitionPoints.IsEmpty());
     const float Shape=(Curl+Curl2+Dance+TipHook)*S+Lean*V;
     const float Large=FMath::Clamp((SizeScale-.18f)/.82f,0.f,1.f);
-    const float MaxSide=FMath::Lerp(.24f,.34f,Large);
-    const float Side=FMath::Clamp(Shape,-L*MaxSide*V,L*MaxSide*V);
-    const FVector Drift=(Flow*V*V*.095f*S).GetClampedToMaxSize(L*.60f*V*V);
+    const float MaxSide=FMath::Lerp(.24f,.23f,Large);
+    const float Side=FMath::Clamp(Shape*(1.f-.24f*Large),-L*MaxSide*V,L*MaxSide*V);
+    const FVector Drift=(Flow*V*V*.095f*S).GetClampedToMaxSize(L*.45f*V*V);
     const FVector Radial=Tongue.Outward.IsNearlyZero()?FVector(FMath::Cos(Tongue.Seed),FMath::Sin(Tongue.Seed),0.f):Tongue.Outward;
-    const float Fan=bPoint?FMath::Lerp(.10f,.42f,Large):FMath::Lerp(.13f,.30f,Large);
+    const float Fan=bPoint?FMath::Lerp(.10f,.28f,Large):FMath::Lerp(.10f,.20f,Large);
     const float Lift=1.f-.09f*Large*FMath::Abs(float(FVector::DotProduct(Radial,Right)));
     // Distinct 3D trajectories, not camera-facing convergent tips.
     const FVector Out=Radial*(L*Fan*FMath::Pow(V,1.28f)*(.78f+.22f*FMath::Sin(Phase+Elapsed*2.f+V*4.f)));
@@ -717,16 +724,16 @@ int32 UASTFireFreeFlameComponent::EmitTip(
     Child.BirthHeat=bSnapshot?Tongue.DisplayHeat:Heat;
     Child.Age=0.f;
     const float Large=FMath::Clamp((SizeScale-.18f)/.82f,0.f,1.f);
-    Child.Lifetime=FMath::Lerp(.52f,.82f,Large)+FMath::Lerp(.25f,.34f,Large)*Uniform(Salt+3);
+    Child.Lifetime=FMath::Lerp(.52f,.71f,Large)+FMath::Lerp(.25f,.25f,Large)*Uniform(Salt+3);
     Child.Temperature=1.f;
     Child.Seed=Uniform(Salt+9)*102.f;
     Child.Right=Right;
-    const float Travel=FMath::Clamp(Length/90.f,.08f,1.8f);
+    const float Travel=FMath::Clamp(Length/90.f,.08f,1.25f);
     const FVector Radial=Tongue.Outward.IsNearlyZero()?FVector(FMath::Cos(Tongue.Seed),FMath::Sin(Tongue.Seed),0.f):Tongue.Outward;
     // The captured geometry is unchanged at birth. Velocity then carries it
     // away from the parent and other roots in world space, not toward camera.
-    Child.Velocity=FVector::UpVector*(48.f+42.f*Uniform(Salt+7))*Travel+
-        Radial*(FMath::Lerp(32.f,105.f,Large)*Travel)+
+    Child.Velocity=FVector::UpVector*(43.f+30.f*Uniform(Salt+7))*Travel+
+        Radial*(FMath::Lerp(32.f,76.f,Large)*Travel)+
         Flow*.18f-Tongue.WorldVelocity*.08f;
     Child.Velocity.Z=FMath::Max(12.f*Travel,float(Child.Velocity.Z));
     Child.bAlive=true;
@@ -746,8 +753,8 @@ void UASTFireFreeFlameComponent::AdvanceSimulation(float Dt)
         D.Age+=Dt;
         if(D.Age>=D.Lifetime){D.bAlive=false;continue;}
         const float Fade=ASTFireLife::ArcFade(D.Age,D.Lifetime);
-        const float Travel=FMath::Clamp(D.Length/65.f,.08f,1.8f);
-        D.Velocity+=FVector::UpVector*(155.f+170.f*(1.f-Fade))*Travel*Dt+
+        const float Travel=FMath::Clamp(D.Length/65.f,.08f,1.20f);
+        D.Velocity+=FVector::UpVector*(112.f+110.f*(1.f-Fade))*Travel*Dt+
             FVector(Wind.X,Wind.Y,0.f)*(.07f*Dt);
         D.Position+=D.Velocity*Dt;
         D.Temperature=FMath::Pow(Fade,.88f);
@@ -976,7 +983,7 @@ void UASTFireFreeFlameComponent::UpdateSmoke(float Dt)
     FVector Highest=GetOwner()->GetActorLocation();
     FVector HighestRoot=Highest;
     FBox RootBounds(ForceInit);
-    float Peak=-BIG_NUMBER,WidthSum=0.f,LengthSum=0.f;
+    float Peak=-BIG_NUMBER,WidthSum=0.f,LengthSum=0.f,ActiveArea=0.f;
     int32 Active=0;
     FVector TipRight=FVector::RightVector;
     if (const APlayerController* PC=World->GetFirstPlayerController())
@@ -999,6 +1006,7 @@ void UASTFireFreeFlameComponent::UpdateSmoke(float Dt)
         if (Tip.Z>Peak) { Peak=Tip.Z; Highest=Tip; HighestRoot=Root; }
         WidthSum+=FMath::Max(1.f,T.CurrentWidth);
         LengthSum+=T.CurrentLength;
+        ActiveArea+=T.CurrentWidth*T.CurrentLength;
         ++Active;
     }
     if (Active>0)
@@ -1008,14 +1016,19 @@ void UASTFireFreeFlameComponent::UpdateSmoke(float Dt)
         const float MeanLength=LengthSum/Active;
         const FVector RootSize=RootBounds.GetSize();
         const float Footprint=FMath::Max(RootSize.X,RootSize.Y);
-        const float Measured=FMath::Clamp(
-            (Width*1.4f+Footprint*.30f+MeanLength*.25f)*
+        // Sum the active burning area across roots. The former average
+        // assigned almost the same smoke to a candle and a burning body.
+        const float BaseSize=Width*1.4f+Footprint*.30f+MeanLength*.25f;
+        const float AreaSize=.84f*FMath::Sqrt(FMath::Max(0.f,ActiveArea))+
+            Footprint*.32f;
+        const float Measured=FMath::Clamp(FMath::Max(BaseSize,AreaSize)*
             FMath::Sqrt(FMath::Clamp(Heat,.02f,1.f)),8.f,280.f);
         SmokeFireSize=SmokeFireSize>0.f?
             FMath::FInterpTo(SmokeFireSize,Measured,Dt,1.8f):Measured;
         SmokeFireTop=Highest;
     }
     const float Scale=FMath::Clamp((SmokeFireSize-16.f)/220.f,0.f,1.f);
+    const float Abundance=ASTFireLife::SmoothStep((SmokeFireSize-24.f)/90.f);
 
     // Light cache: actual point/spot components, including BP lights.
     // Cache only the strongest nearby candidates, not a per-pixel world scan.
@@ -1145,8 +1158,8 @@ void UASTFireFreeFlameComponent::UpdateSmoke(float Dt)
     {
         // Small flames produce modest smoke. 10m is a cap, not a default.
         const float Rate=FMath::Lerp(4.2f,5.3f,Scale)*
-            FMath::Lerp(.72f,1.f,Heat);
-        SmokeSpawnDebt=FMath::Min(2.f,SmokeSpawnDebt+Dt*Rate);
+            FMath::Lerp(1.f,1.48f,Abundance)*FMath::Lerp(.72f,1.f,Heat);
+        SmokeSpawnDebt=FMath::Min(3.f,SmokeSpawnDebt+Dt*Rate);
         const int32 Born=FMath::FloorToInt(SmokeSpawnDebt);
         SmokeSpawnDebt-=Born;
         for (int32 I=0;I<Born;++I)
@@ -1162,12 +1175,13 @@ void UASTFireFreeFlameComponent::UpdateSmoke(float Dt)
             const float R=FMath::Abs(Uniform(Salt*7+441));
             const float J=FMath::Abs(Uniform(Salt*11+617));
             FSmoke& S=*Slot;
-            S.InitialRadius=FMath::Lerp(10.f,46.f,Scale)*(.90f+.20f*R);
+            S.InitialRadius=FMath::Lerp(10.f,46.f,Scale)*(.90f+.20f*R)*
+                FMath::Lerp(1.f,1.38f,Abundance);
             S.Radius=S.InitialRadius;
             S.MaxRise=FMath::Lerp(125.f,1000.f,FMath::Pow(Scale,1.25f))*
                 (.83f+.17f*J);
             S.RiseSpeed=FMath::Lerp(35.f,85.f,Scale)*(.94f+.12f*R);
-            S.Lifetime=FMath::Min(14.f,(S.MaxRise-S.Radius)/
+            S.Lifetime=FMath::Min(FMath::Min(14.f,float(MaxSmoke-2)/Rate),(S.MaxRise-S.Radius)/
                 S.RiseSpeed*(1.04f+.08f*J));
             S.Seed=Salt*.713f+Seed*.031f;
             // Bottom of carrier starts ABOVE the highest active tongue tip.
@@ -1492,6 +1506,47 @@ FString UASTFireFreeFlameComponent::RunSmokeAudit(UMaterialInterface* TestMateri
             Fire->DestroyComponent();
         }
     }
+    // Native emission test: identical controlled sources, different burning
+    // area. Measure actual live carriers and volume proxy, not only formulas.
+    float SmokeMass[2]={0.f,0.f};
+    int32 CarrierCount[2]={0,0};
+    for(int32 Case=0;Case<2;++Case)
+    {
+        AActor* Emitter=World->SpawnActor<AActor>();
+        if(!Emitter)continue;
+        USceneComponent* Root=NewObject<USceneComponent>(Emitter);
+        Emitter->SetRootComponent(Root);Root->RegisterComponent();
+        Root->SetWorldLocation(FVector(1400,Case*500,0));
+        auto* Fire=NewObject<UASTFireFreeFlameComponent>(Emitter);
+        Fire->SetSizeScale(Case==0?.15f:1.5f);
+        Fire->SetSource(Root,TestMaterial,317);
+        Fire->RegisterComponent();
+        Fire->SetFlamesVisible(true);
+        Fire->SetThermal(1.f,FVector::ZeroVector,1.f);
+        // Controlled active source envelope, independent of ignition delay.
+        for(FTongue& T:Fire->Tongues)
+        {
+            T.bActive=true;T.Age=1.f;T.CurrentLength=T.MaxLength;
+            T.CurrentWidth=T.BaseWidth;
+        }
+        for(int32 Frame=0;Frame<50;++Frame)
+        {
+            Fire->Elapsed+=.08f;
+            Fire->UpdateSmoke(.08f);
+        }
+        for(const FSmoke& Cloud:Fire->Smoke)
+            if(Cloud.bAlive)
+            {
+                ++CarrierCount[Case];
+                SmokeMass[Case]+=Cloud.Radius*Cloud.Radius*Cloud.Radius;
+            }
+        Fire->DestroyComponent();Emitter->Destroy();
+    }
+    const float MassRatio=SmokeMass[1]/FMath::Max(1.f,SmokeMass[0]);
+    if(CarrierCount[0]==0 || CarrierCount[1]<CarrierCount[0] || MassRatio<2.f)
+        Report=TEXT("FAIL:EMISSION_SCALE;")+Report;
+    Report+=FString::Printf(TEXT(";smallCarriers=%d;largeCarriers=%d;massRatio=%.2f"),
+        CarrierCount[0],CarrierCount[1],MassRatio);
     World->DestroyWorld(false);
     return Report;
 #else

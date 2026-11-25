@@ -8,8 +8,10 @@ def params(size,j=.5,r=.5):
     scale=max(0,min(1,(size-16)/220))
     height=(125+875*scale**1.25)*(.83+.17*j)
     speed=(35+50*scale)*(.94+.12*r)
-    radius=(10+36*scale)*(.9+.2*r)
-    life=min(14,(height-radius)/speed*(1.04+.08*j))
+    a=max(0,min(1,(size-24)/90)); a=a*a*(3-2*a)
+    radius=(10+36*scale)*(.9+.2*r)*(1+.38*a)
+    rate=(4.2+1.1*scale)*(1+.48*a)
+    life=min(14,70/rate,(height-radius)/speed*(1.04+.08*j))
     return height,speed,radius,life
 small=params(16); mid=params(110); large=params(280,1,1)
 assert 100<small[0]<150 and small[1]<40
@@ -20,7 +22,8 @@ for size in (8,16,30,100,200,280):
     H,v,r,t=params(size)
     assert 0<r<H<=1000 and 0<v<100 and t<=14
     # Average carrier spacing is smaller than the diameter at full heat.
-    rate=4.2+1.1*max(0,min(1,(size-16)/220))
+    a=max(0,min(1,(size-24)/90)); a=a*a*(3-2*a)
+    rate=(4.2+1.1*max(0,min(1,(size-16)/220)))*(1+.48*a)
     assert v/rate < 2*r
     assert rate*t<=72
 def alpha(age,life):
