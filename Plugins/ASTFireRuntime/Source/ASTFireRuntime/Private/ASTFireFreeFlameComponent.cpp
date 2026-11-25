@@ -195,12 +195,12 @@ void UASTFireFreeFlameComponent::ConfigureGeneration(FTongue& Tongue)
     // Preserve the approved growing/bridging/retracting timing. Only the
     // per-generation shape is diversified: some short/thin licks, some
     // long broad tongues, all within the same living source field.
-    Tongue.GrowSeconds = .48f + .76f * Uniform(Salt + 1);
+    Tongue.GrowSeconds = .27f + .79f * Uniform(Salt + 1);
     Tongue.MaxLength = (19.f + 158.f *
         FMath::Pow(Uniform(Salt + 2),1.34f)) * Tongue.Scale * SizeScale;
     Tongue.BaseWidth = (5.5f + 38.f *
         FMath::Pow(Uniform(Salt + 3),1.65f)) * Tongue.Scale * SizeScale;
-    Tongue.RemainingFraction = .30f + .27f * Uniform(Salt + 4);
+    Tongue.RemainingFraction = .66f + .17f * Uniform(Salt + 4);
     Tongue.Phase = 6.283185f * Uniform(Salt + 5);
 }
 
@@ -572,12 +572,12 @@ int32 UASTFireFreeFlameComponent::EmitTip(
     const int32 Salt=DetachCursor*137+Tongue.Generation*91;
     Child.bAlive=true;
     Child.Age=0.f;
-    Child.Lifetime=.52f + .68f*Uniform(Salt+3);
+    Child.Lifetime=.26f + .48f*Uniform(Salt+3);
     // Preserve phase timing. Match the visible detached mass to the
     // (1 - remaining fraction) of the mother tongue about to retract.
     Child.Length=Length*(1.f-Tongue.RemainingFraction)*
-        (.82f+.25f*Uniform(Salt+4));
-    Child.Width=Tongue.CurrentWidth*(.76f+.36f*Uniform(Salt+5));
+        (.72f+.24f*Uniform(Salt+4));
+    Child.Width=FMath::Min(Tongue.CurrentWidth*(.24f+.22f*Uniform(Salt+5)),Child.Length*.40f);
     // The detached piece starts at the EXACT current dancing curve tip,
     // otherwise introducing independent sway would break the approved bridge.
     FVector View=FVector::ForwardVector;
@@ -646,7 +646,7 @@ void UASTFireFreeFlameComponent::AdvanceSimulation(float Dt)
                 const FVector VisualBase=ConnectedRoots.IsValidIndex(TongueIndex)
                     ? ConnectedRoots[TongueIndex] : Base;
                 T.BridgedChild = EmitTip(T,VisualBase,T.SplitLength,Flow);
-                T.BridgeSeconds = .12f + Uniform(T.Generation*83+9)*.06f;
+                T.BridgeSeconds = .065f + Uniform(T.Generation*83+9)*.045f;
                 T.PhaseAge = 0.f;
                 T.Life = EFlameLife::Bridging;
             }
@@ -661,9 +661,9 @@ void UASTFireFreeFlameComponent::AdvanceSimulation(float Dt)
             {
                 T.Life = EFlameLife::Retracting;
                 T.PhaseAge = 0.f;
-                T.RetractSeconds = .16f + Uniform(T.Generation*101+12)*.11f;
+                T.RetractSeconds = .09f + Uniform(T.Generation*101+12)*.09f;
                 T.RetractTarget = T.SplitLength *
-                    FMath::Clamp(T.RemainingFraction,.30f,.60f);
+                    FMath::Clamp(T.RemainingFraction,.66f,.83f);
                 T.BridgedChild = INDEX_NONE;
             }
             break;
@@ -1438,8 +1438,8 @@ void UASTFireFreeFlameComponent::AddStrip(
         Verts.Add(RightPos);
         UVs.Add(FVector2D(0.f,V));
         UVs.Add(FVector2D(1.f,V));
-        Colors.Add(FLinearColor(Thermal,V,FMath::Frac(ShapeSeed*.017f),1.f));
-        Colors.Add(FLinearColor(Thermal,V,FMath::Frac(ShapeSeed*.017f),1.f));
+        Colors.Add(FLinearColor(Thermal,V,FMath::Frac(ShapeSeed*.017f),Thermal>.075f?1.f:0.f));
+        Colors.Add(FLinearColor(Thermal,V,FMath::Frac(ShapeSeed*.017f),Thermal>.075f?1.f:0.f));
     }
 }
 
@@ -1477,7 +1477,7 @@ void UASTFireFreeFlameComponent::UpdateGeometry(bool bCreate)
     // Calculate the continuous source FIRST. It also publishes the exact
     // per-tongue emergence positions on its front surface, in the same
     // camera basis and frame as the actual source geometry.
-    UpdateConnectedSource(bCreate, View, Right);
+    const float PixelPitch=UpdateConnectedSource(bCreate, View, Right);
 
     for (int32 I=0;I<Tongues.Num();++I)
     {
@@ -1529,106 +1529,72 @@ void UASTFireFreeFlameComponent::UpdateGeometry(bool bCreate)
             const float V=float(K)/float(BridgeRings-1);
             BC.Add(FMath::Lerp(C.Last(),BridgeEnd,V)+Right*
                 (bBridge?FMath::Sin(PI*V)*1.5f:0.f));
-            BW.Add(bBridge?Width*.31f*(1.f-BridgeAlpha)*
+            BW.Add(bBridge?Width*.12f*(1.f-BridgeAlpha)*
                 FMath::Sin(PI*(.08f+.84f*V)):.0f);
             BH.Add(bBridge?(.88f-.28f*V)*(1.f-BridgeAlpha):0.f);
         }
         AddStrip(BC,BW,BH,T.Seed,1.f,Right,Verts,UVs,Colors);
     }
 
-    // Stage18: detached fire must use the SAME radial hot-core/red-rim
-    // field as the continuous mantle. Stage17's TWO vertices per row
-    // could only interpolate two uniformly orange boundary temperatures;
-    // changing Child.Temperature alone could never fix this palette.
-    static constexpr int32 DetachedColumns=7;
+    // Fire v4: rotating shapes sampled on the same square raster as the
+    // living source. Spin changes the flame shape, not the pixel grid.
     const FTransform RenderTransform=Render->GetComponentTransform();
+    TArray<int32> DetachedTris;
     for (const FDetached& D:Detached)
     {
-        TArray<FVector> C;
-        TArray<float> W;
-        const float Age=D.bAlive
-            ? FMath::Clamp(D.Age/FMath::Max(.1f,D.Lifetime),0.f,1.f):1.f;
-        const float Fade=D.bAlive?1.f-Age:0.f;
-        const float SpinSpeed=3.3f+5.f*ASTFireLife::Hash(D.Seed*.37f);
-        const float Spin=D.Seed*.11f+D.Age*SpinSpeed;
-        const float Angle=FMath::Sin(Spin)*.75f;
-        // Perspective-correct billboard centered on THIS fragment, not
-        // the actor root. Project camera screen-right onto its view plane.
-        // Unlike world-up crossing, this remains stable directly overhead.
+        if (!D.bAlive) continue;
+        const float Age=FMath::Clamp(D.Age/FMath::Max(.1f,D.Lifetime),0.f,1.f);
+        const float Fade=1.f-Age;
+        const float Spin=D.Seed*.11f+D.Age*(3.3f+5.f*ASTFireLife::Hash(D.Seed*.37f));
+        const float Angle=FMath::Sin(Spin)*.85f;
         const FVector ToCamera=(CameraLocation-D.Position).GetSafeNormal();
-        const FVector BillboardView=ToCamera.IsNearlyZero()?View:ToCamera;
-        const FVector ProjectedRight=CameraRight-BillboardView*
-            FVector::DotProduct(CameraRight,BillboardView);
-        FVector BillboardRight=ProjectedRight.GetSafeNormal();
-        if (BillboardRight.IsNearlyZero())
-            BillboardRight=FVector::CrossProduct(
-                FVector::UpVector,BillboardView).GetSafeNormal();
-        if (BillboardRight.IsNearlyZero())
-            BillboardRight=FVector::CrossProduct(
-                FVector::ForwardVector,BillboardView).GetSafeNormal();
-        if (BillboardRight.IsNearlyZero())
-            BillboardRight=FVector::CrossProduct(
-                FVector::RightVector,BillboardView).GetSafeNormal();
-        const FVector BillboardUp=FVector::CrossProduct(
-            BillboardView,BillboardRight).GetSafeNormal();
-        // Keep the approved independent spin and irregular silhouette,
-        // but rotate in the actual camera-facing billboard plane.
-        const FVector LocalUp=(BillboardUp*FMath::Cos(Angle)+
-            BillboardRight*FMath::Sin(Angle)).GetSafeNormal();
-        const FVector LocalSide=(BillboardRight*FMath::Cos(Angle)-
-            BillboardUp*FMath::Sin(Angle)).GetSafeNormal();
-        for (int32 K=0;K<RingsPerDetached;++K)
+        const FVector N=ToCamera.IsNearlyZero()?View:ToCamera;
+        FVector Side=(CameraRight-N*FVector::DotProduct(CameraRight,N)).GetSafeNormal();
+        if(Side.IsNearlyZero()) Side=Right;
+        const FVector Up=FVector::CrossProduct(N,Side).GetSafeNormal();
+        const float L=D.Length*Fade;
+        const float W=D.Width*FMath::Pow(Fade,.72f);
+        const float Pitch=FMath::Max(.35f,PixelPitch);
+        const int32 Cells=FMath::Clamp(FMath::CeilToInt((L+W*2.f)/Pitch)+1,1,24);
+        // Anchor every fragment to the same projected origin, rather than
+        // scaling UVs with the fragment's shrinking bounding box.
+        const FVector Delta=D.Position-GetOwner()->GetActorLocation();
+        const float DX=FVector::DotProduct(Delta,Side);
+        const float DY=FVector::DotProduct(Delta,Up);
+        const float X0=FMath::FloorToFloat(DX/Pitch)*Pitch-DX;
+        const float Y0=FMath::FloorToFloat(DY/Pitch)*Pitch-DY;
+        const float CS=FMath::Cos(Angle),SN=FMath::Sin(Angle);
+        for(int32 Y=-Cells;Y<=Cells;++Y) for(int32 X=-Cells;X<=Cells;++X)
         {
-            const float V=float(K)/float(RingsPerDetached-1);
-            const float Curl=(FMath::Sin(V*9.8f+Spin)*.24f+
-                FMath::Sin(V*16.3f-Spin*.72f)*.13f)*
-                D.Width*FMath::Pow(V,1.2f)*Fade;
-            C.Add(D.Position+LocalUp*D.Length*V*Fade+
-                LocalSide*Curl);
-            const float Lobes=FMath::Clamp(1.f+
-                .31f*FMath::Sin(V*14.2f+Spin+D.Seed) +
-                .17f*FMath::Sin(V*24.4f-Spin*.54f),.43f,1.35f);
-            W.Add(D.Width*FMath::Pow(Fade,.72f)*
-                FMath::Sin(PI*(.08f+.88f*V))*Lobes);
-        }
-        // Seven columns provide real red edges, orange transition, and a
-        // yellow/white core. No extra material or independent sprite pass.
-        // Vertex colors now follow the same Cover/Core heat equation used
-        // by UpdateConnectedSource(), with identical 16-bit palette steps.
-        for(int32 K=0;K<RingsPerDetached;++K)
-        {
-            const float V=float(K)/float(RingsPerDetached-1);
-            const float Radius=FMath::Max(.001f,W[K]);
-            const float EdgeWidth=FMath::Max(4.f,Radius*.45f);
-            for(int32 X=0;X<DetachedColumns;++X)
+            const float PX=X0+(X+.5f)*Pitch,PY=Y0+(Y+.5f)*Pitch;
+            const float V=(PY*CS+PX*SN)/FMath::Max(.01f,L);
+            if(V<0.f || V>1.f) continue;
+            const float U=PX*CS-PY*SN;
+            const float Curl=W*.30f*FMath::Sin(V*6.8f+Spin)*V;
+            const float R=W*FMath::Pow(FMath::Max(0.f,FMath::Sin(PI*V)),.72f)*
+                (1.f-.46f*V)*(.86f+.14f*FMath::Sin(V*11.f+D.Seed));
+            if(FMath::Abs(U-Curl)>R) continue;
+            const float Core=1.f-FMath::Abs(U-Curl)/FMath::Max(.01f,R);
+            const float Thermal=FMath::Clamp(Heat*D.Temperature*
+                (.27f+.58f*Core+.11f*FMath::Sin(V*7.f-Spin))*
+                FMath::Pow(Fade,.55f),0.f,1.f);
+            const int32 First=Verts.Num();
+            for(int32 K=0;K<4;++K)
             {
-                const float U=float(X)/float(DetachedColumns-1);
-                const float Side=U*2.f-1.f;
-                const float DFromCenter=FMath::Abs(Side)*
-                    (Radius+EdgeWidth*.04f);
-                const float Cover=FMath::Clamp(1.f-
-                    (DFromCenter-Radius)/EdgeWidth,0.f,1.f);
-                const float Core=FMath::Clamp((Radius-DFromCenter)/
-                    FMath::Max(1.f,Radius),0.f,1.f);
-                const float LocalHeat=Cover*(.19f+
-                    .81f*FMath::Pow(Core,.56f))*(1.f-.19f*V);
-                const float Thermal=FMath::Clamp(
-                    Heat*D.Temperature*LocalHeat*
-                    FMath::Pow(Fade,.66f),0.f,1.f);
-                const FVector World=C[K]+LocalSide*
-                    (Side*(Radius+EdgeWidth*.04f));
+                const FVector World=D.Position+Side*(X0+(X+K%2)*Pitch)+
+                    Up*(Y0+(Y+K/2)*Pitch);
                 Verts.Add(RenderTransform.InverseTransformPosition(World));
-                UVs.Add(FVector2D(U,V));
-                Colors.Add(FLinearColor(Thermal,V,
-                    FMath::Frac(D.Seed*.017f),1.f));
+                UVs.Add(FVector2D(K%2,K/2));
+                Colors.Add(FLinearColor(Thermal,0.f,0.f,1.f));
             }
+            DetachedTris.Add(First);DetachedTris.Add(First+1);DetachedTris.Add(First+2);
+            DetachedTris.Add(First+1);DetachedTris.Add(First+3);DetachedTris.Add(First+2);
         }
     }
 
     TArray<int32> Triangles;
     const int32 StripCount=Tongues.Num()*2;
-    Triangles.Reserve((Tongues.Num()*(RingsPerTongue+BridgeRings-2))*6+
-        MaxDetached*(RingsPerDetached-1)*(DetachedColumns-1)*6);
+    Triangles.Reserve((Tongues.Num()*(RingsPerTongue+BridgeRings-2))*6+DetachedTris.Num());
     int32 Offset=0;
     for(int32 I=0;I<StripCount;++I)
     {
@@ -1641,33 +1607,12 @@ void UASTFireFreeFlameComponent::UpdateGeometry(bool bCreate)
         }
         Offset+=N*2;
     }
-    // Unlike the original two-column strip, each detached fragment
-    // has its own continuous, fixed-topology transverse heat gradient.
-    for(int32 I=0;I<MaxDetached;++I)
-    {
-        for(int32 K=0;K<RingsPerDetached-1;++K)
-            for(int32 X=0;X<DetachedColumns-1;++X)
-            {
-                const int32 A=Offset+K*DetachedColumns+X;
-                Triangles.Add(A);
-                Triangles.Add(A+1);
-                Triangles.Add(A+DetachedColumns);
-                Triangles.Add(A+1);
-                Triangles.Add(A+DetachedColumns+1);
-                Triangles.Add(A+DetachedColumns);
-            }
-        Offset+=RingsPerDetached*DetachedColumns;
-    }
-    check(Offset==Verts.Num());
+    Triangles.Append(DetachedTris);
     TArray<FVector> Normals;
     TArray<FProcMeshTangent> Tangents;
     Normals.Init(FVector::ForwardVector,Verts.Num());
     Tangents.Init(FProcMeshTangent(1,0,0),Verts.Num());
-    if (bCreate)
-        Render->CreateMeshSection_LinearColor(0,Verts,Triangles,Normals,UVs,
-            Colors,Tangents,false);
-    else
-        Render->UpdateMeshSection_LinearColor(0,Verts,Normals,UVs,Colors,Tangents);
+    Render->CreateMeshSection_LinearColor(0,Verts,Triangles,Normals,UVs,Colors,Tangents,false);
 
     // Stage30: distinct high-contrast hot pixels, fixed-size quad section 2.
     // Even dead particles contribute degenerate, fully masked geometry;
@@ -1849,10 +1794,10 @@ void UASTFireFreeFlameComponent::BuildSourceAnchors()
 // M_AST_FireTongue palette as the existing tongue/bridge geometry.
 // Mesh projection is sampled from CURRENT skinned vertices, so running,
 // sprinting, and limb movement deform the single shared source.
-void UASTFireFreeFlameComponent::UpdateConnectedSource(
+float UASTFireFreeFlameComponent::UpdateConnectedSource(
     bool bCreate,const FVector& View,const FVector& Right)
 {
-    if (!IsValid(Render)) return;
+    if (!IsValid(Render)) return 3.f;
     const FVector Up=FVector::UpVector;
     FVector Normal=FVector::CrossProduct(Right,Up).GetSafeNormal();
     if (Normal.IsNearlyZero()) Normal=View;
@@ -2059,30 +2004,18 @@ void UASTFireFreeFlameComponent::UpdateConnectedSource(
             ASTFireLife::SmoothStep(T.Age/FMath::Max(.1f,T.GrowSeconds)));
         auto RadiusAt=[&](float V)
         {
-            // Stage19: keep the anti-tentacle width floor, but remove the
-            // oversized balloon profile from Stage18. This affects the
-            // living source silhouette ONLY, never detached fragments.
-            const float PlumeWidth=FMath::Max(T.CurrentWidth,
-                T.CurrentLength*(.058f+.010f*
-                    ASTFireLife::Hash(T.Seed*.51f)));
-            // Place most volume in the lower third, retaining small moving
-            // asymmetry rather than a second broad upper oval.
-            const float BulgeA=.26f*FMath::Exp(-FMath::Square(
-                (V-(.28f+.04f*ASTFireLife::Hash(T.Seed*.31f)))/.18f));
-            const float BulgeB=.12f*FMath::Exp(-FMath::Square(
-                (V-(.46f+.03f*ASTFireLife::Hash(T.Seed*.71f)))/.16f));
-            const float Waist=.14f*FMath::Exp(-FMath::Square(
-                (V-.58f)/.09f));
-            const float UpperTaper=FMath::Lerp(1.f,.55f,
-                ASTFireLife::SmoothStep((V-.42f)/.40f));
-            const float MovingRim=.10f*FMath::Sin(
-                V*18.f+T.Seed*.37f+Elapsed*3.2f)+
-                .06f*FMath::Sin(V*31.f-T.Seed*.21f-Elapsed*4.8f);
-            const float Profile=FMath::Clamp(
-                (.88f+BulgeA+BulgeB-Waist+MovingRim)*UpperTaper,
-                .42f,1.28f);
-            return FMath::Max(0.f,PlumeWidth*
-                FMath::Pow(FMath::Max(0.f,1.f-V),.69f)*Profile);
+            // Narrow the lower envelope and let distinct, asymmetric
+            // tongues emerge above it. The physical dimensions stay intact
+            // so the accepted smoke's sizing is not retuned.
+            const float PlumeWidth=FMath::Clamp(T.CurrentWidth*.68f,
+                T.CurrentLength*.075f,T.CurrentLength*.30f);
+            const float Waist=.27f*FMath::Exp(-FMath::Square(
+                (V-(.55f+.12f*ASTFireLife::Hash(T.Seed*.71f)))/.12f));
+            const float RootBlend=.67f+.33f*ASTFireLife::SmoothStep(V/.16f);
+            const float Rim=.15f*FMath::Sin(V*13.f+Phase-Elapsed*6.1f)+
+                .08f*FMath::Sin(V*23.f+T.Seed+Elapsed*3.6f);
+            const float Profile=FMath::Clamp(RootBlend-Waist+Rim,.38f,1.13f);
+            return PlumeWidth*FMath::Pow(FMath::Max(0.f,1.f-V),.83f)*Profile;
         };
         FVector WorldA=TongueCenterAt(T,Root,NeckFractions[0],Right);
         for(int32 K=1;K<RingsPerTongue;++K)
@@ -2096,7 +2029,7 @@ void UASTFireFreeFlameComponent::UpdateConnectedSource(
         // Short swept lobes curve upward out of the SAME living plume,
         // rather than rigid horizontal antennae sticking off a thin shaft.
         const float ForkSeed=ASTFireLife::Hash(T.Seed*.173f);
-        const int32 ForkCount=ForkSeed>.87f?2:(ForkSeed>.20f?1:0);
+        const int32 ForkCount=ForkSeed>.72f?2:1;
         for(int32 Fork=0;Fork<ForkCount;++Fork)
         {
             const float Attach=.37f+.33f*
@@ -2106,13 +2039,13 @@ void UASTFireFreeFlameComponent::UpdateConnectedSource(
             const float Direction=(Fork==0?1.f:-1.f)*
                 (ASTFireLife::Hash(T.Seed*.73f)>.5f?1.f:-1.f);
             const FVector BranchRoot=TongueCenterAt(T,Root,Attach,Right);
-            const float Sway=FMath::Sin(Elapsed*3.7f+T.Seed+Fork)*3.4f;
+            const float Sway=FMath::Sin(Elapsed*5.3f+T.Seed+Fork)*Reach*.18f;
             const FVector Mid=BranchRoot+Up*Reach*.54f+
                 Right*Direction*Reach*.48f;
             const FVector Tip=BranchRoot+Up*Reach*1.15f+
                 Right*Direction*(Reach*.74f+Sway);
             const float BranchRadius=RadiusAt(Attach)*
-                (.59f+.16f*ASTFireLife::Hash(T.Seed*.38f+Fork));
+                (.70f+.18f*ASTFireLife::Hash(T.Seed*.38f+Fork));
             AppendNeck(BranchRoot,Mid,BranchRadius,
                 BranchRadius*.55f,Attach,Attach+.09f);
             AppendNeck(Mid,Tip,BranchRadius*.55f,
@@ -2139,8 +2072,8 @@ void UASTFireFreeFlameComponent::UpdateConnectedSource(
         FNeckSegment Link;
         Link.Start=Project(ConnectedRoots[I]);
         Link.End=Project(ConnectedRoots[Best]);
-        Link.StartRadius=FMath::Clamp(T.CurrentWidth*.58f,4.f,12.f);
-        Link.EndRadius=FMath::Clamp(Tongues[Best].CurrentWidth*.58f,4.f,12.f);
+        Link.StartRadius=FMath::Min(T.CurrentWidth*.38f,9.f*SizeScale);
+        Link.EndRadius=FMath::Min(Tongues[Best].CurrentWidth*.38f,9.f*SizeScale);
         Link.StartDepth=FVector::DotProduct(ConnectedRoots[I]-Origin,Normal);
         Link.EndDepth=FVector::DotProduct(ConnectedRoots[Best]-Origin,Normal);
         Link.StartV=0.f;
@@ -2151,148 +2084,127 @@ void UASTFireFreeFlameComponent::UpdateConnectedSource(
     {
         MinX=-24.f;MaxX=24.f;MinY=-24.f;MaxY=24.f;
     }
-    const float Extent=FMath::Max(20.f,FMath::Max(MaxX-MinX,MaxY-MinY));
-    const float Radius=FMath::Clamp(
-        Extent/(FMath::Sqrt(float(Samples.Num()))*1.5f),10.f,26.f);
-    const float Outer=FMath::Clamp(Radius*.85f,9.f,18.f);
-    const float Inner=FMath::Clamp(Radius*.65f,5.f,12.f);
-    const float Margin=Radius+Outer+12.f;
-    MinX-=Margin;MaxX+=Margin;MinY-=Margin;MaxY+=Margin;
-    HighestDepth+=3.f; // fallback only; depth follows nearest skin points
-
-    const int32 N=Samples.Num(); // depth-only skinned sample field
-    const int32 Width=SourceGridX+1,Height=SourceGridY+1;
-    TArray<FVector> Verts;
+    // Stable square pixels anchored to the source, not normalized UVs.
+    // Only expand the raster resolution step if the bounded grid would
+    // overflow. Same pitch returned to detached particles.
+    const float BasePitch=FMath::Clamp(3.f*SizeScale,.5f,6.f);
+    constexpr int32 MaxXCells=56,MaxYCells=80;
+    const float Required=FMath::Max(BasePitch,FMath::Max(
+        (MaxX-MinX)/(MaxXCells-2),(MaxY-MinY)/(MaxYCells-2)));
+    const float Pitch=BasePitch*FMath::Pow(2.f,
+        FMath::CeilToFloat(FMath::Log2(Required/BasePitch)));
+    MinX=FMath::FloorToFloat(MinX/Pitch)*Pitch;
+    MinY=FMath::FloorToFloat(MinY/Pitch)*Pitch;
+    const int32 NX=FMath::Clamp(FMath::CeilToInt((MaxX-MinX)/Pitch),1,MaxXCells);
+    const int32 NY=FMath::Clamp(FMath::CeilToInt((MaxY-MinY)/Pitch),1,MaxYCells);
+    struct FFireCell { float Depth=0.f,Temperature=0.f; bool bVisible=false; };
+    TArray<FFireCell> Cells;
+    Cells.SetNum(NX*NY);
+    for(int32 Y=0;Y<NY;++Y) for(int32 X=0;X<NX;++X)
+    {
+        const FVector2D P(MinX+(X+.5f)*Pitch,MinY+(Y+.5f)*Pitch);
+        FFireCell& Cell=Cells[Y*NX+X];
+        float BestD2[3]={BIG_NUMBER,BIG_NUMBER,BIG_NUMBER};
+        float BestDepth[3]={0.f,0.f,0.f};
+        for(int32 I=0;I<Samples.Num();++I)
+        {
+            const float D2=float(FVector2D::DistSquared(P,Samples[I]));
+            if(D2>=BestD2[2]) continue;
+            int32 Slot=2;
+            while(Slot>0 && D2<BestD2[Slot-1])
+            {
+                BestD2[Slot]=BestD2[Slot-1];
+                BestDepth[Slot]=BestDepth[Slot-1];
+                --Slot;
+            }
+            BestD2[Slot]=D2;BestDepth[Slot]=SampleDepths[I];
+        }
+        float Front=-BIG_NUMBER;
+        for(int32 I=0;I<3;++I) if(BestD2[I]<BIG_NUMBER*.5f)
+            Front=FMath::Max(Front,BestDepth[I]);
+        Cell.Depth=Front>-BIG_NUMBER*.5f?Front+5.f:HighestDepth+3.f;
+        float Cover=-BIG_NUMBER,Temperature=0.f,NeckDepth=-BIG_NUMBER;
+        // Advect broad thermal islands upwards in the common field; no
+        // independent per-UV noise or radial dark contour.
+        const float Scale=FMath::Max(.15f,SizeScale);
+        const float SX=float(P.X)/Scale,SY=float(P.Y)/Scale;
+        const float Flow=.64f*FMath::Sin(SX*.083f+SY*.062f-Elapsed*7.7f)+
+            .36f*FMath::Sin(SX*.13f-SY*.093f+Elapsed*11.2f+Seed*.21f);
+        const float Rim=Pitch*.45f*FMath::Sin(SX*.22f+SY*.19f-Elapsed*5.1f);
+        for(const FNeckSegment& Neck:Necks)
+        {
+            const float Reach=FMath::Max(Neck.StartRadius,Neck.EndRadius)+Pitch;
+            if(P.X<FMath::Min(Neck.Start.X,Neck.End.X)-Reach ||
+               P.X>FMath::Max(Neck.Start.X,Neck.End.X)+Reach ||
+               P.Y<FMath::Min(Neck.Start.Y,Neck.End.Y)-Reach ||
+               P.Y>FMath::Max(Neck.Start.Y,Neck.End.Y)+Reach) continue;
+            const FVector2D Axis=Neck.End-Neck.Start;
+            const float Along=FMath::Clamp(float(FVector2D::DotProduct(P-Neck.Start,Axis))/
+                FMath::Max(.001f,float(Axis.SizeSquared())),0.f,1.f);
+            const FVector2D Center=Neck.Start+Axis*Along;
+            const float R=FMath::Lerp(Neck.StartRadius,Neck.EndRadius,Along);
+            const float D=float((P-Center).Size());
+            const float Support=R-D+Rim;
+            if(Support<0.f) continue;
+            const float V=FMath::Lerp(Neck.StartV,Neck.EndV,Along);
+            const FVector2D Side=FVector2D(-Axis.Y,Axis.X).GetSafeNormal();
+            const float Shift=.28f*R*Flow;
+            const float Core=FMath::Clamp(1.f-
+                FMath::Abs(float(FVector2D::DotProduct(P-Center,Side))-Shift)/
+                FMath::Max(.25f,R),0.f,1.f);
+            const float H=FMath::Clamp(.40f+.46f*Core-.35f*V+.19f*Flow,0.f,1.f);
+            Temperature=FMath::Max(Temperature,H);
+            if(Support>Cover)
+            {
+                Cover=Support;
+                NeckDepth=FMath::Lerp(Neck.StartDepth,Neck.EndDepth,Along);
+            }
+        }
+        Cell.bVisible=Cover>=0.f && Heat>.015f;
+        Cell.Temperature=FMath::Clamp(Heat*Temperature,0.f,1.f);
+        if(Cell.bVisible) Cell.Depth=FMath::Max(Cell.Depth,NeckDepth+1.5f);
+    }
+    TArray<FVector> Verts,Normals;
     TArray<FVector2D> UVs;
     TArray<FLinearColor> Colors;
-    Verts.Reserve(Width*Height);
-    UVs.Reserve(Width*Height);
-    Colors.Reserve(Width*Height);
-    for(int32 Row=0;Row<Height;++Row)
-        for(int32 Col=0;Col<Width;++Col)
-        {
-            const float X=FMath::Lerp(MinX,MaxX,
-                float(Col)/float(SourceGridX));
-            const float Y=FMath::Lerp(MinY,MaxY,
-                float(Row)/float(SourceGridY));
-            const FVector2D P(X,Y);
-            // Two square roots per grid cell, NOT one per skin sample:
-            // ~100x cheaper than repeatedly evaluating distances at 25Hz.
-            // The silhouette is the living tongue union, not depth samples.
-            // Interpolate the depth of nearby animated mesh samples, rather
-            // than drawing a floating plane at the furthest vertex.
-            float BestD2[3]={BIG_NUMBER,BIG_NUMBER,BIG_NUMBER};
-            float BestDepth[3]={0.f,0.f,0.f};
-            for(int32 I=0;I<N;++I)
-            {
-                const float D2=float(FVector2D::DistSquared(P,Samples[I]));
-                if(D2<BestD2[2])
-                {
-                    int32 Slot=2;
-                    while(Slot>0 && D2<BestD2[Slot-1])
-                    {
-                        BestD2[Slot]=BestD2[Slot-1];
-                        BestDepth[Slot]=BestDepth[Slot-1];
-                        --Slot;
-                    }
-                    BestD2[Slot]=D2;
-                    BestDepth[Slot]=SampleDepths[I];
-                }
-            }
-            const float Flicker=.90f+.10f*
-                FMath::Sin(Elapsed*7.2f+X*.077f+Y*.039f);
-            // A signed capsule union includes all living tongue necks in
-            // the SAME mantle. Their geometry and the ribbon use the same
-            // TongueCenterAt curve, current length, wind and curl.
-            float NeckSupport=0.f;
-            float NeckDepth=0.f;
-            float StrokeU=.5f,StrokeV=.2f;
-            for(const FNeckSegment& Neck:Necks)
-            {
-                // Early cull keeps cost bounded for large animated meshes.
-                const float MaxNeckReach=FMath::Max(41.f,
-                    FMath::Max(Neck.StartRadius,Neck.EndRadius)+12.f);
-                if(P.X<FMath::Min(Neck.Start.X,Neck.End.X)-MaxNeckReach ||
-                   P.X>FMath::Max(Neck.Start.X,Neck.End.X)+MaxNeckReach ||
-                   P.Y<FMath::Min(Neck.Start.Y,Neck.End.Y)-MaxNeckReach ||
-                   P.Y>FMath::Max(Neck.Start.Y,Neck.End.Y)+MaxNeckReach)
-                    continue;
-                const FVector2D Axis=Neck.End-Neck.Start;
-                const float Along=FMath::Clamp(float(FVector2D::DotProduct(
-                    P-Neck.Start,Axis))/
-                    FMath::Max(1.f,float(Axis.SizeSquared())),0.f,1.f);
-                const FVector2D Center=Neck.Start+Axis*Along;
-                const float R=FMath::Lerp(Neck.StartRadius,Neck.EndRadius,Along);
-                const float FadeWidth=FMath::Max(4.f,R*.45f);
-                const float D2=float((P-Center).SizeSquared());
-                if(D2>FMath::Square(R+FadeWidth)) continue;
-                const float Cover=FMath::Clamp(1.f-
-                    (FMath::Sqrt(D2)-R)/FadeWidth,0.f,1.f);
-                const float V=FMath::Lerp(Neck.StartV,Neck.EndV,Along);
-                const float D=FMath::Sqrt(D2);
-                const float Core=FMath::Clamp((R-D)/
-                    FMath::Max(1.f,R),0.f,1.f);
-                const float Support=Cover*(.19f+
-                    .81f*FMath::Pow(Core,.56f))*(1.f-.19f*V);
-                if(Support>NeckSupport)
-                {
-                    NeckSupport=Support;
-                    NeckDepth=FMath::Lerp(
-                        Neck.StartDepth,Neck.EndDepth,Along);
-                    const FVector2D Side=FVector2D(-Axis.Y,Axis.X)
-                        .GetSafeNormal();
-                    StrokeU=FMath::Clamp(.5f+.47f*
-                        float(FVector2D::DotProduct(P-Center,Side))/
-                        FMath::Max(1.f,R),0.f,1.f);
-                    StrokeV=V;
-                }
-            }
-            const float Thermal=FMath::Clamp(
-                Heat*NeckSupport*Flicker,0.f,1.f);
-
-            // Use the same nearest-front-depth rule as ConnectedRoots so
-            // ribbon mouths and mantle pixels occupy a single depth surface.
-            float FrontDepth=-BIG_NUMBER;
-            for(int32 I=0;I<3;++I)
-                if(BestD2[I]<BIG_NUMBER*.5f)
-                    FrontDepth=FMath::Max(FrontDepth,BestDepth[I]);
-            float Depth=FrontDepth>-BIG_NUMBER*.5f
-                ? FrontDepth+5.f : HighestDepth;
-            // The hot neck has the SAME depth as the strip that will emerge
-            // from it: no hidden root on the opposite side of the character.
-            if(NeckSupport>.02f)
-                Depth=FMath::Max(Depth,NeckDepth+1.5f);
-            const FVector World=Origin+Right*X+Up*Y+Normal*Depth;
-            Verts.Add(RenderTransform.InverseTransformPosition(World));
-            // UV.x=.5 gives the same bright center as tongue ribbons;
-            // UV.y adds the exact same 16-bit stepped palette variation.
-            UVs.Add(FVector2D(StrokeU,StrokeV));
-            Colors.Add(FLinearColor(Thermal,StrokeV,FMath::Frac(
-                (Seed+Col*7+Row*13)*.017f),1.f));
-        }
-
-    TArray<int32> Tris;
-    if(bCreate)
-    {
-        Tris.Reserve(SourceGridX*SourceGridY*6);
-        for(int32 Y=0;Y<SourceGridY;++Y)
-            for(int32 X=0;X<SourceGridX;++X)
-            {
-                const int32 A=Y*Width+X;
-                Tris.Add(A);Tris.Add(A+Width);Tris.Add(A+1);
-                Tris.Add(A+1);Tris.Add(A+Width);Tris.Add(A+Width+1);
-            }
-    }
-    TArray<FVector> Normals;
-    Normals.Init(Normal,Verts.Num());
     TArray<FProcMeshTangent> Tangents;
-    Tangents.Init(FProcMeshTangent(1,0,0),Verts.Num());
-    if(bCreate)
-        Render->CreateMeshSection_LinearColor(
-            1,Verts,Tris,Normals,UVs,Colors,Tangents,false);
-    else
-        Render->UpdateMeshSection_LinearColor(
-            1,Verts,Normals,UVs,Colors,Tangents);
+    TArray<int32> Tris;
+    // Duplicate cell vertices for constant colour, but average the same
+    // corner depths across adjacent cells so the mesh has no cracks.
+    auto CornerDepth=[&](int32 X,int32 Y)
+    {
+        float Sum=0.f;int32 Count=0;
+        for(int32 DY=-1;DY<=0;++DY) for(int32 DX=-1;DX<=0;++DX)
+        {
+            const int32 CX=X+DX,CY=Y+DY;
+            if(CX<0||CX>=NX||CY<0||CY>=NY) continue;
+            const FFireCell& C=Cells[CY*NX+CX];
+            if(C.bVisible){Sum+=C.Depth;++Count;}
+        }
+        return Count>0?Sum/Count:HighestDepth+3.f;
+    };
+    for(int32 Y=0;Y<NY;++Y) for(int32 X=0;X<NX;++X)
+    {
+        const FFireCell& C=Cells[Y*NX+X];
+        if(!C.bVisible) continue;
+        const int32 First=Verts.Num();
+        for(int32 K=0;K<4;++K)
+        {
+            const int32 CX=X+K%2,CY=Y+K/2;
+            const FVector World=Origin+Right*(MinX+CX*Pitch)+
+                Up*(MinY+CY*Pitch)+Normal*CornerDepth(CX,CY);
+            Verts.Add(RenderTransform.InverseTransformPosition(World));
+            Normals.Add(Normal);UVs.Add(FVector2D(K%2,K/2));
+            Colors.Add(FLinearColor(C.Temperature,0.f,0.f,1.f));
+            Tangents.Add(FProcMeshTangent(1,0,0));
+        }
+        Tris.Add(First);Tris.Add(First+2);Tris.Add(First+1);
+        Tris.Add(First+1);Tris.Add(First+2);Tris.Add(First+3);
+    }
+    if(Verts.IsEmpty()) Render->ClearMeshSection(1);
+    else Render->CreateMeshSection_LinearColor(1,Verts,Tris,Normals,UVs,Colors,Tangents,false);
+    Render->SetMaterial(1,Material);
+    return Pitch;
 }
 
 void UASTFireFreeFlameComponent::TickComponent(

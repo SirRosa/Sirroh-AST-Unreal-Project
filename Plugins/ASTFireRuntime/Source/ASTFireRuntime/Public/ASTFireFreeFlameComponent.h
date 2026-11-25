@@ -156,7 +156,7 @@ private:
     void BuildAnchors();
     void RebuildClusters();
     void BuildSourceAnchors();
-    void UpdateConnectedSource(bool bCreate, const FVector& View,
+    float UpdateConnectedSource(bool bCreate, const FVector& View,
         const FVector& Right);
     FVector SampleRoot(const FTongue& Tongue) const;
     FVector TongueCenterAt(const FTongue& Tongue, const FVector& Base,
