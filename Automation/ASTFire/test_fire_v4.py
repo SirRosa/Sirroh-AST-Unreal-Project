@@ -22,7 +22,7 @@ for a,b,expected in [["void UASTFireFreeFlameComponent::UpdateSparks(","void UAS
 light_start=r.index("void UASTFireReactiveComponent::ConfigureFireLight(")
 light_end=r.index("void UASTFireReactiveComponent::RemoveGeneratedVisuals(",light_start)
 assert fnv(r[:light_start]+r[light_end:])=="3bfbdb36","unexpected non-light runtime change after approved poseable target adaptation"
-assert fnv(c[:c.index("\nbool UASTFireFreeFlameComponent::GetFireLightCenter(")])=="77f86c68","accepted fire rendering changed after approved skinned-type adaptation"
+assert fnv(c[:c.index("\nbool UASTFireFreeFlameComponent::GetFireLightCenter(")])=="137fd7ec","accepted fire rendering changed after approved skinned-type adaptation"
 for token in ("GetTongueCount()", "SetSizeScale(", "RunSmokeAudit(", "RunFireV4Audit("):
     assert token in h,token
 for token in ("GetSkinnedVertexPosition","LineTraceComponent(","ConnectedRoots.Add(",
@@ -121,7 +121,7 @@ assert 'const float Bottom=-2.5f+6.0f' in c
 assert 'const FVector2D Rotated(' in c
 
 # Accepted point effect is locked, including its actual transferred cells.
-assert fnv(region("float UASTFireFreeFlameComponent::UpdatePointField(","void UASTFireFreeFlameComponent::RenderFieldFragments("))=="76002343"
+assert fnv(region("float UASTFireFreeFlameComponent::UpdatePointField(","void UASTFireFreeFlameComponent::RenderFieldFragments("))=="28908830"
 assert "GetSkinnedVertexPosition(Skel,A.SkinnedVertexIndex" in c
 assert "if(X>=0 && X<NX && Y>=0 && Y<NY && Gas[Y*NX+X].Owner!=INDEX_NONE)continue;" in c
 assert "Group.Num()<2" in c
@@ -202,3 +202,10 @@ assert "CurrentPixels.Contains" in c and "FieldAge[Z]+=Dt*(1.f+Aero" in c
 assert "AeroSampleDt=Dt" in c
 motion=(root/"Private/ASTFireMotionAudit.cpp").read_text()
 assert "MoveCuts>StillCuts" in motion and "bTeleport" in motion and "bRotation" in motion
+
+# Directional transport, not merely a sideways offset to a vertical plume.
+assert "FVector::UpVector*180.f+Lag" in c
+assert "FlowSide*Offset.X+FlowAxis*Offset.Y" in c
+assert "OwnerAxes[F.Owner]*float(Step)+OwnerSides[F.Owner]*Side" in c
+assert "bDirected=Alignment>.60f&&Backward>3.f" in motion
+assert "GetProcMeshSection(1)" in motion and "OppositeBirths" in motion
