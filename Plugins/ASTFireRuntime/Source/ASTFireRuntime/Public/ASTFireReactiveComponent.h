@@ -223,6 +223,9 @@ public:
     static FString RunBurnDurationAudit(USkeletalMesh* CharacterMesh);
 
     UFUNCTION(BlueprintCallable, Category="AST Fire|Diagnostics")
+    static FString RunPropCharAudit(UClass* BoxClass,UClass* BarrelClass);
+
+    UFUNCTION(BlueprintCallable, Category="AST Fire|Diagnostics")
     static FString RunFireLightAudit();
 
     UFUNCTION(BlueprintCallable, Category="AST Fire|Diagnostics")
