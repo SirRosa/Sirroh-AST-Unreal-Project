@@ -67,5 +67,6 @@ private:
     void IgniteTarget(AActor* Target, const FVector& ContactPosition);
     void PollContactOverlaps();
     FTimerHandle ContactPollTimer;
+    bool bPrimingContacts = false;
     TSet<TWeakObjectPtr<AActor>> IgnitedDuringOverlap;
 };
