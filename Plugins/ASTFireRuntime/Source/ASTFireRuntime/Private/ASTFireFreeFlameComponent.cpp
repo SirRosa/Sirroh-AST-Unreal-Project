@@ -994,7 +994,7 @@ void UASTFireFreeFlameComponent::UpdateSparks(float Dt)
         S.Velocity+=(FVector::UpVector*12.f+
             (Wind*.035f).GetClampedToMaxSize(25.f)-
             S.Velocity*.48f)*Dt;
-        S.Velocity=S.Velocity.GetClampedToMaxSize(135.f);
+        S.Velocity=S.Velocity.GetClampedToMaxSize(200.f);
         S.DriftPosition+=S.Velocity*Dt;
         const float Offset=FMath::Sin(
             S.WavePhase+S.Age*S.WaveFrequency)-
@@ -1067,6 +1067,7 @@ void UASTFireFreeFlameComponent::UpdateSparks(float Dt)
             FVector::UpVector*8.f+
             (T.WorldVelocity*.045f+Wind*.025f).GetClampedToMaxSize(20.f);
         S.Velocity=S.Velocity.GetClampedToMaxSize(125.f);
+        S.Velocity+=(T.WorldVelocity*MotionStrength(T.WorldVelocity)*.12f).GetClampedToMaxSize(75.f);
         S.WaveSide=FVector::CrossProduct(
             Outward,CameraForward).GetSafeNormal();
         if (S.WaveSide.IsNearlyZero())
@@ -1358,6 +1359,9 @@ void UASTFireFreeFlameComponent::UpdateSmoke(float Dt)
             S.BaseZ=SmokeFireTop.Z;
             S.Velocity=FVector::UpVector*S.RiseSpeed*.75f+
                 Side*S.RiseSpeed*.08f;
+            // Only new smoke inherits some carrier momentum; older clouds
+            // keep world positions and the existing collision solver.
+            S.Velocity+=(AeroVelocity*MotionStrength(AeroVelocity)*.10f).GetClampedToMaxSize(90.f);
             S.Age=0.f;
             S.bAlive=true;
         }
