@@ -21,8 +21,8 @@ for a,b,expected in [["void UASTFireFreeFlameComponent::UpdateSparks(","void UAS
 # Pin all non-light runtime code to the deployed stage2 baseline (ec2a067).
 light_start=r.index("void UASTFireReactiveComponent::ConfigureFireLight(")
 light_end=r.index("void UASTFireReactiveComponent::RemoveGeneratedVisuals(",light_start)
-assert fnv(r[:light_start]+r[light_end:])=="65a92251","unexpected non-light runtime change"
-assert fnv(c[:c.index("\nbool UASTFireFreeFlameComponent::GetFireLightCenter(")])=="73dbf86a","accepted fire rendering changed"
+assert fnv(r[:light_start]+r[light_end:])=="d8fa767d","unexpected non-light runtime change after approved poseable target adaptation"
+assert fnv(c[:c.index("\nbool UASTFireFreeFlameComponent::GetFireLightCenter(")])=="cef9b3fc","accepted fire rendering changed after approved skinned-type adaptation"
 for token in ("GetTongueCount()", "SetSizeScale(", "RunSmokeAudit(", "RunFireV4Audit("):
     assert token in h,token
 for token in ("GetSkinnedVertexPosition","LineTraceComponent(","ConnectedRoots.Add(",
@@ -160,3 +160,9 @@ for size in (.05,.15,.25,1,4,8):
         assert 0<=peak<=1.65
 for dist in (.0,.25,.5,.75,.95,1.):
     assert 0<=(1-dist*dist)**4.5<=1
+
+assert 'Sirroh3DVisualMesh' in r and 'FindTargetComponent()==Rendered' in r
+assert 'Cast<USkinnedMeshComponent>(Source)' in c
+zone=(root/"Private/ASTFireIgnitionZoneComponent.cpp").read_text()
+assert "OverlapMultiByObjectType" in zone and "AllDynamicObjects" in zone
+assert "bNoDuplicate" in zone and "bReentry" in zone
