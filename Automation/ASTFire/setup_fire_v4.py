@@ -41,6 +41,12 @@ try:
     EDIT.recompile_material(mat)
     require(LIB.save_loaded_asset(mat,only_if_is_dirty=False),"Save failed")
     OUT["assets"].append(path)
+    OUT["fire_audit"]=u.ASTFireFreeFlameComponent.run_fire_v4_audit(mat)
+    smoke=LIB.load_asset("/Game/VFX/Fire/Materials/M_AST_FireSmoke")
+    require(smoke,"Smoke material missing")
+    OUT["smoke_audit"]=u.ASTFireFreeFlameComponent.run_smoke_audit(smoke)
+    require(OUT["fire_audit"].startswith("PASS:"),"Fire audit failed: "+OUT["fire_audit"])
+    require(OUT["smoke_audit"].startswith("PASS:"),"Smoke audit failed: "+OUT["smoke_audit"])
     OUT["status"]="FIRE_V4_MATERIAL_READY_VISUAL_PENDING"
 except Exception as exc:
     OUT["errors"].append({"error":str(exc),"trace":traceback.format_exc()})

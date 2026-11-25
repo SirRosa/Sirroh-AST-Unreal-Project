@@ -472,7 +472,7 @@ void UASTFireFreeFlameComponent::BuildAnchors()
             FTongue Root;
             const float Angle=I*2.399963f;
             Root.RestPosition=FVector(FMath::Cos(Angle)*13.f,
-                FMath::Sin(Angle)*13.f,0.f);
+                FMath::Sin(Angle)*13.f,0.f)*FMath::Min(1.f,SizeScale);
             Root.Seed = Uniform(I+501)*103.f;
             Root.Scale = .85f;
             Tongues.Add(Root);
@@ -561,7 +561,7 @@ FVector UASTFireFreeFlameComponent::TongueCenterAt(
             ASTFireLife::Hash(Tongue.Seed*.29f)*2.5f)+Tongue.Seed*.37f)
          +.34f*FMath::Sin(V*14.7f-Elapsed*4.6f+Phase));
     return Base+FVector::UpVector*Tongue.CurrentLength*V+
-        Flow*V*V*.095f+Right*(Curl+Curl2+Lean*V+Dance+TipHook);
+        Flow*V*V*.095f*FMath::Min(1.f,SizeScale)+Right*((Curl+Curl2+Dance+TipHook)*FMath::Min(1.f,SizeScale)+Lean*V);
 }
 
 int32 UASTFireFreeFlameComponent::EmitTip(
@@ -1395,6 +1395,80 @@ FString UASTFireFreeFlameComponent::RunSmokeAudit(UMaterialInterface* TestMateri
 
 // Applied AFTER the approved life simulation. The age, cooling, death,
 // buoyancy and state machine above remain byte-for-byte unchanged.
+FString UASTFireFreeFlameComponent::RunFireV4Audit(UMaterialInterface* TestMaterial)
+{
+#if WITH_EDITOR
+    if(!IsValid(TestMaterial)) return TEXT("FAIL:NO_MATERIAL");
+    UWorld* World=UWorld::CreateWorld(EWorldType::Game,false);
+    if(!World) return TEXT("FAIL:NO_WORLD");
+    bool bPass=true,bFragment=false,bCool=false,bSmall=false;
+    int32 MaxCells=0,MaxTones=0;
+    double Cost=0.;int32 Frames=0;
+    for(float Scale : {1.f,.15f})
+    {
+        AActor* Host=World->SpawnActor<AActor>();
+        if(!Host){bPass=false;continue;}
+        USceneComponent* Root=NewObject<USceneComponent>(Host);
+        Host->SetRootComponent(Root);
+        Root->RegisterComponent();
+        UASTFireFreeFlameComponent* Fire=NewObject<UASTFireFreeFlameComponent>(Host);
+        Fire->SetSizeScale(Scale);
+        Fire->SetSource(Root,TestMaterial,1729);
+        Fire->RegisterComponent();
+        bool bSeen=false;
+        for(int32 I=0;I<100;++I)
+        {
+            Fire->SetThermal(1.f,I>50?FVector(0,60,0):FVector::ZeroVector,.75f);
+            const double Start=FPlatformTime::Seconds();
+            Fire->AdvanceSimulation(.04f);
+            Fire->UpdateDetachedVortices(.04f);
+            Fire->UpdateGeometry(false);
+            Cost+=FPlatformTime::Seconds()-Start;++Frames;
+            if(!IsValid(Fire->Render)){bPass=false;break;}
+            if(const FProcMeshSection* S=Fire->Render->GetProcMeshSection(1))
+            {
+                const int32 Count=S->ProcVertexBuffer.Num();
+                if(Count>0)
+                {
+                    bSeen=true;
+                    MaxCells=FMath::Max(MaxCells,Count/4);
+                    bPass &= Count%4==0 && S->ProcIndexBuffer.Num()==Count/4*6;
+                    TSet<int32> Tones;
+                    for(int32 J=0;J+3<Count;J+=4)
+                    {
+                        const auto& V=S->ProcVertexBuffer;
+                        bPass &= V[J].Color==V[J+1].Color && V[J].Color==V[J+2].Color &&
+                            V[J].Color==V[J+3].Color;
+                        const int32 R=V[J].Color.R;
+                        Tones.Add((R>=46)+(R>=87)+(R>=125)+(R>=166)+(R>=207));
+                    }
+                    MaxTones=FMath::Max(MaxTones,Tones.Num());
+                }
+            }
+            if(const FProcMeshSection* S=Fire->Render->GetProcMeshSection(0))
+                bFragment |= S->ProcVertexBuffer.Num()>
+                    Fire->Tongues.Num()*(RingsPerTongue+BridgeRings)*2;
+        }
+        bPass &= bSeen;
+        if(Scale<.2f) bSmall=bSeen;
+        Fire->SetThermal(0.f,FVector::ZeroVector,0.f);
+        Fire->UpdateGeometry(false);
+        const FProcMeshSection* Cooled=Fire->Render->GetProcMeshSection(1);
+        const bool bEmpty=!Cooled || Cooled->ProcVertexBuffer.IsEmpty();
+        bCool|=bEmpty;bPass&=bEmpty;
+        Fire->DestroyComponent();
+        Host->Destroy();
+    }
+    World->DestroyWorld(false);
+    bPass &= bFragment && bCool && bSmall && MaxTones>=3;
+    return FString::Printf(TEXT("%s:small=%d;fragment=%d;cool=%d;cells=%d;tones=%d;cpuMs=%.3f"),
+        bPass?TEXT("PASS"):TEXT("FAIL"),int32(bSmall),int32(bFragment),int32(bCool),
+        MaxCells,MaxTones,Cost*1000./FMath::Max(1,Frames));
+#else
+    return TEXT("EDITOR_ONLY");
+#endif
+}
+
 void UASTFireFreeFlameComponent::UpdateDetachedVortices(float Dt)
 {
     for(FDetached& D:Detached)
@@ -1985,7 +2059,7 @@ float UASTFireFreeFlameComponent::UpdateConnectedSource(
         Neck.StartV=V0;
         Neck.EndV=V1;
         Necks.Add(Neck);
-        const float Extent=FMath::Max(Neck.StartRadius,Neck.EndRadius)+12.f;
+        const float Extent=FMath::Max(Neck.StartRadius,Neck.EndRadius)+12.f*FMath::Min(1.f,SizeScale);
         MinX=FMath::Min(MinX,FMath::Min(float(Neck.Start.X),
             float(Neck.End.X))-Extent);
         MaxX=FMath::Max(MaxX,FMath::Max(float(Neck.Start.X),
@@ -2060,7 +2134,7 @@ float UASTFireFreeFlameComponent::UpdateConnectedSource(
         const FTongue& T=Tongues[I];
         if(!T.bActive || T.Age<0.f) continue;
         int32 Best=INDEX_NONE;
-        float BestDist=FMath::Square(75.f);
+        float BestDist=FMath::Square(75.f*FMath::Min(1.f,SizeScale));
         for(int32 J=0;J<I;++J)
         {
             if(!Tongues[J].bActive || Tongues[J].Age<0.f)continue;

@@ -35,6 +35,9 @@ public:
     UFUNCTION(BlueprintCallable, Category="AST Fire|Diagnostics")
     static FString RunSmokeAudit(UMaterialInterface* TestMaterial);
 
+    UFUNCTION(BlueprintCallable, Category="AST Fire|Diagnostics")
+    static FString RunFireV4Audit(UMaterialInterface* TestMaterial);
+
 protected:
     virtual void OnRegister() override;
     virtual void OnUnregister() override;
