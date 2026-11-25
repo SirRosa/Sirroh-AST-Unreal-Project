@@ -338,4 +338,8 @@ private:
     float FireLightLumens=0.f;
     float FireLightKelvin=2000.f;
     bool bFireLightReady=false;
+    // Carry-prop charring uses the opaque material slot, not a translucent overlay.
+    bool bCharUsesPropSlot=false;
+    UPROPERTY(Transient)
+    TObjectPtr<UMaterialInterface> PreviousCharPropMaterial=nullptr;
 };
