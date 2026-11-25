@@ -4,6 +4,9 @@
 #include "GameFramework/Actor.h"
 #include "Components/PrimitiveComponent.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Components/StaticMeshComponent.h"
+#include "GameFramework/Pawn.h"
+#include "Engine/OverlapResult.h"
 #include "Engine/World.h"
 
 UASTFireIgnitionZoneComponent::UASTFireIgnitionZoneComponent()
@@ -35,6 +38,11 @@ void UASTFireIgnitionZoneComponent::BeginPlay()
     SetHiddenInGame(true);
     SetCollisionEnabled(ECollisionEnabled::QueryOnly);
     UpdateOverlaps();
+    // Native notifications require GenerateOverlapEvents on BOTH components.
+    // Carry props deliberately disable them; query actual collision shapes instead.
+    if(GetOwner() && GetOwner()->HasAuthority() && GetWorld())
+        GetWorld()->GetTimerManager().SetTimer(ContactPollTimer,this,
+            &UASTFireIgnitionZoneComponent::PollContactOverlaps,.05f,true);
 
     if (GetOwner() && GetOwner()->GetNetMode() != NM_Client && bIgniteInitialOverlaps)
     {
@@ -54,6 +62,7 @@ void UASTFireIgnitionZoneComponent::EndPlay(const EEndPlayReason::Type EndPlayRe
         this, &UASTFireIgnitionZoneComponent::HandleBeginOverlap);
     OnComponentEndOverlap.RemoveDynamic(
         this, &UASTFireIgnitionZoneComponent::HandleEndOverlap);
+    if(GetWorld())GetWorld()->GetTimerManager().ClearTimer(ContactPollTimer);
     IgnitedDuringOverlap.Reset();
     Super::EndPlay(EndPlayReason);
 }
@@ -80,11 +89,51 @@ void UASTFireIgnitionZoneComponent::HandleEndOverlap(
     UPrimitiveComponent* OtherComponent, int32 OtherBodyIndex)
 {
     if (!IsValid(OtherActor)) return;
-    // Multi-component actors can still overlap with other body parts.
-    TArray<AActor*> StillTouching;
-    GetOverlappingActors(StillTouching);
-    if (!StillTouching.Contains(OtherActor))
-        IgnitedDuringOverlap.Remove(TWeakObjectPtr<AActor>(OtherActor));
+    // Poll reconciles native and explicit contacts together: an end event
+    // from one primitive must not reset an actor whose other body still touches.
+}
+
+void UASTFireIgnitionZoneComponent::PollContactOverlaps()
+{
+    AActor* Owner=GetOwner();
+    UWorld* World=GetWorld();
+    if(!IsValid(Owner)||!Owner->HasAuthority()||!World)return;
+    TSet<TWeakObjectPtr<AActor>> Touching;
+    TArray<AActor*> Native;
+    GetOverlappingActors(Native);
+    for(AActor* Actor:Native)
+        if(IsValid(Actor)&&Actor!=Owner)Touching.Add(Actor);
+
+    FCollisionQueryParams Query(SCENE_QUERY_STAT(ASTFireContact),false,Owner);
+    const FCollisionObjectQueryParams Objects(FCollisionObjectQueryParams::AllDynamicObjects);
+    TArray<FOverlapResult> Hits;
+    World->OverlapMultiByObjectType(Hits,GetComponentLocation(),GetComponentQuat(),
+        Objects,FCollisionShape::MakeBox(GetScaledBoxExtent()),Query);
+    for(const FOverlapResult& Hit:Hits)
+    {
+        AActor* Actor=Hit.GetActor();
+        UPrimitiveComponent* Body=Hit.GetComponent();
+        if(!IsValid(Actor)||Actor==Owner||!IsValid(Body))continue;
+        // Exclude generated FX, trigger volumes and static level architecture.
+        // Pawns can be represented by their capsule, even with hidden skin.
+        const bool bPawn=Actor->IsA<APawn>();
+        const bool bMesh=Body->IsA<UStaticMeshComponent>()||Body->IsA<USkinnedMeshComponent>();
+        const bool bPhysical=Body->IsSimulatingPhysics()||
+            (bMesh&&Body->Mobility==EComponentMobility::Movable&&Body->IsVisible()&&!Body->bHiddenInGame);
+        if(!bPawn&&!bPhysical)continue;
+        const TWeakObjectPtr<AActor> Key(Actor);
+        Touching.Add(Key);
+        FVector Contact=Body->Bounds.Origin;
+        FVector Closest;
+        if(Body->GetClosestPointOnCollision(GetComponentLocation(),Closest)>=0.f)
+            Contact=Closest;
+        IgniteTarget(Actor,Contact);
+    }
+    // Also retry native contacts if the source was not lit on entry.
+    for(AActor* Actor:Native)
+        if(IsValid(Actor))IgniteTarget(Actor,Actor->GetActorLocation());
+    for(auto It=IgnitedDuringOverlap.CreateIterator();It;++It)
+        if(!It->IsValid()||!Touching.Contains(*It))It.RemoveCurrent();
 }
 
 void UASTFireIgnitionZoneComponent::IgniteTarget(
@@ -117,7 +166,7 @@ void UASTFireIgnitionZoneComponent::IgniteTarget(
     if (LongestDimension >= 220.0f) Points = 6;
     if (LongestDimension >= 500.0f) Points = 8;
     if (LongestDimension >= 950.0f) Points = 12;
-    if (Target->FindComponentByClass<USkeletalMeshComponent>())
+    if (Target->FindComponentByClass<USkinnedMeshComponent>())
         Points = FMath::Max(Points, 7);
     Points = FMath::Clamp(Points, 1, FMath::Clamp(MaxDistributedFlames, 1, 12));
 
