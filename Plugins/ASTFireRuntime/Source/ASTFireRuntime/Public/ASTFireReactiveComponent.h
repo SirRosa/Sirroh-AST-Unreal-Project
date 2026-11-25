@@ -6,6 +6,8 @@
 #include "Engine/NetSerialization.h"
 #include "ASTFireReactiveComponent.generated.h"
 
+class UASTFireIgnitionZoneComponent;
+
 class AActor;
 class APawn;
 class UNiagaraSystem;
@@ -256,6 +258,11 @@ protected:
         UPrimitiveComponent* OtherComp, int32 OtherBodyIndex);
 
 private:
+    friend class UASTFireIgnitionZoneComponent;
+    static USceneComponent* ResolveTargetComponent(AActor* Owner,FName PreferredMeshComponentName);
+    static float MeasureFuelSize(const USceneComponent* Target,float FallbackCm);
+    bool HasActiveIgniter();
+    void SetIgniterContact(UASTFireIgnitionZoneComponent* Zone,bool bTouching);
     void InitializeFire();
     void RemoveGeneratedVisuals();
     void SetupSurfaceFire(USceneComponent* Parent);
@@ -345,4 +352,6 @@ private:
     bool bCharUsesPropSlot=false;
     UPROPERTY(Transient)
     TObjectPtr<UMaterialInterface> PreviousCharPropMaterial=nullptr;
+    // Server-only weak contacts; appended to preserve existing field offsets.
+    TSet<TWeakObjectPtr<UASTFireIgnitionZoneComponent>> ActiveIgniters;
 };
