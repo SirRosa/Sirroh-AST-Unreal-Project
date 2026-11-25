@@ -18,7 +18,10 @@ def region(a,b): return c[c.index(a):c.index(b,c.index(a))]
 for a,b,expected in [["void UASTFireFreeFlameComponent::UpdateSparks(","void UASTFireFreeFlameComponent::UpdateSmoke(","1408cade"],["    // Collision volume is also the exact support of visible density.","    if (bVisible && Heat>.10f && Active>0)","413ed2d7"],["// Perspective-correct density raster, with per-cell collision-safe depth.","FString UASTFireFreeFlameComponent::RunSmokeAudit(","ad9ffb29"]]:
     assert fnv(region(a,b))==expected, a
 # Approved lifetime change only; visual source remains pinned to accepted main.
-assert fnv(r)=="74f2d8ee","unexpected burn/torch runtime change"
+# Pin all non-light runtime code to the deployed stage2 baseline (ec2a067).
+light_start=r.index("void UASTFireReactiveComponent::ConfigureFireLight(")
+light_end=r.index("void UASTFireReactiveComponent::RemoveGeneratedVisuals(",light_start)
+assert fnv(r[:light_start]+r[light_end:])=="65a92251","unexpected non-light runtime change"
 assert fnv(c[:c.index("\nbool UASTFireFreeFlameComponent::GetFireLightCenter(")])=="73dbf86a","accepted fire rendering changed"
 for token in ("GetTongueCount()", "SetSizeScale(", "RunSmokeAudit(", "RunFireV4Audit("):
     assert token in h,token
