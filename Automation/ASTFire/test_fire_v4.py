@@ -21,7 +21,7 @@ for a,b,expected in [["void UASTFireFreeFlameComponent::UpdateSparks(","void UAS
 # Pin all non-light runtime code to the deployed stage2 baseline (ec2a067).
 light_start=r.index("void UASTFireReactiveComponent::ConfigureFireLight(")
 light_end=r.index("void UASTFireReactiveComponent::RemoveGeneratedVisuals(",light_start)
-assert fnv(r[:light_start]+r[light_end:])=="e640b570","unexpected non-light runtime change after approved poseable target adaptation"
+assert fnv(r[:light_start]+r[light_end:])=="3bfbdb36","unexpected non-light runtime change after approved poseable target adaptation"
 assert fnv(c[:c.index("\nbool UASTFireFreeFlameComponent::GetFireLightCenter(")])=="94a582ea","accepted fire rendering changed after approved skinned-type adaptation"
 for token in ("GetTongueCount()", "SetSizeScale(", "RunSmokeAudit(", "RunFireV4Audit("):
     assert token in h,token
@@ -188,3 +188,9 @@ assert "ContactStartedAt.FindOrAdd" in zone and "Now-Started+1.e-6>=ContactDelay
 assert "1.5f*FMath::Sqrt(FMath::Max(1.f,SizeCm/50.f))" in zone
 assert "bFullOutside" in zone and "bOtherHolds" in zone and "bSourceOut" in zone
 assert "if(HasActiveIgniter())" in r and "else BurnElapsedSeconds += DeltaTime;" in r
+
+wood=(root/"Private/ASTFireWoodEnvironment.h").read_text()
+assert "/Game/ZL_retroCaves/Meshes/decos/" in wood and 'Contains(TEXT("Wood")' in wood
+assert "UInstancedStaticMeshComponent" in wood and "AStaticMeshActor" in wood
+assert "ASTFireWood::IsWoodTarget" in zone and "NearbyWood" in zone
+assert "(bCarry||bWood)" in r
