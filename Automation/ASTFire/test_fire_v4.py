@@ -21,7 +21,7 @@ for a,b,expected in [["void UASTFireFreeFlameComponent::UpdateSparks(","void UAS
 # Pin all non-light runtime code to the deployed stage2 baseline (ec2a067).
 light_start=r.index("void UASTFireReactiveComponent::ConfigureFireLight(")
 light_end=r.index("void UASTFireReactiveComponent::RemoveGeneratedVisuals(",light_start)
-assert fnv(r[:light_start]+r[light_end:])=="55913922","unexpected non-light runtime change after approved poseable target adaptation"
+assert fnv(r[:light_start]+r[light_end:])=="bbea9c56","unexpected non-light runtime change after approved poseable target adaptation"
 assert fnv(c[:c.index("\nbool UASTFireFreeFlameComponent::GetFireLightCenter(")])=="94a582ea","accepted fire rendering changed after approved skinned-type adaptation"
 for token in ("GetTongueCount()", "SetSizeScale(", "RunSmokeAudit(", "RunFireV4Audit("):
     assert token in h,token
@@ -177,3 +177,5 @@ assert "return 2.f*FMath::Max(.1f,BaseBurnSeconds)*Factor;" in r
 assert "RunCarryVisualAudit" in c and "Low<Peak" in c
 assert "SmokeGridMaxX = 128" in h and "SmokeGridMaxY = 256" in h
 assert "const float Dying=FMath::SmoothStep" in c
+
+assert "ASTPropCharGlow" in r and "RunPropCharAudit" in r and "PreviousCharPropMaterial" in r
