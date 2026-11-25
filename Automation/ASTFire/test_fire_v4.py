@@ -77,7 +77,7 @@ print("Fire v4 raster, independent heat, detached lifecycle, v3 smoke/spark/torc
 # Verified directly in installed UE 5.8 World.h.
 assert 'World->SendAllEndOfFrameUpdates();' in c
 assert 'FragmentTone=DetachedPixels.Find(Q)' in c
-assert 'const float PlumeCenter=BodyCenter(Z)' in c
+assert 'Row.Center=BodyCenter(Row.Z)' in c
 
 assert 'for(int32 Y=Y0;Y<=Y1;++Y)' in c
 assert 'bHiddenWick=Case==7' in c

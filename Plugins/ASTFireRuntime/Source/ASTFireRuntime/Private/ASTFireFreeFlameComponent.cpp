@@ -1885,7 +1885,10 @@ void UASTFireFreeFlameComponent::UpdateGeometry(bool bCreate)
     TArray<FProcMeshTangent> Tangents;
     Normals.Init(-Projection.Forward,Verts.Num());
     Tangents.Init(FProcMeshTangent(1,0,0),Verts.Num());
-    if(Verts.IsEmpty()) Render->ClearMeshSection(0);
+    const FProcMeshSection* OldFragments=Render->GetProcMeshSection(0);
+    if(Verts.IsEmpty()){if(OldFragments && !OldFragments->ProcVertexBuffer.IsEmpty())Render->ClearMeshSection(0);}
+    else if(OldFragments && OldFragments->ProcVertexBuffer.Num()==Verts.Num())
+        Render->UpdateMeshSection_LinearColor(0,Verts,Normals,UVs,Colors,Tangents);
     else Render->CreateMeshSection_LinearColor(0,Verts,Triangles,Normals,UVs,Colors,Tangents,false,false);
     Render->SetMaterial(0,Material);
 
@@ -2423,6 +2426,26 @@ float UASTFireFreeFlameComponent::UpdateConnectedSource(
     struct FFireCell { float Depth=0.f,Temperature=0.f,Cover=-BIG_NUMBER,NeckDepth=-BIG_NUMBER,Flow=0.f,Rim=0.f; bool bVisible=false; };
     TArray<FFireCell> Cells;
     Cells.SetNum(NX*NY);
+    struct FFireRow { float Z,Center,Width,HotOffset,HotY,Cool; };
+    TArray<FFireRow> Rows;Rows.SetNum(NY);
+    for(int32 Y=0;Y<NY;++Y)
+    {
+        FFireRow& Row=Rows[Y];
+        Row.Z=float(MinY+(Y+.5f)*Pitch-RootCenter.Y)/FMath::Max(.1f,H);
+        Row.Center=BodyCenter(Row.Z);
+        const float V=FMath::Clamp((Row.Z+.055f)/.885f,0.f,1.f);
+        Row.Width=1.04f*FMath::Sqrt(FMath::Max(0.f,1.f-FMath::Square((V-.30f)/.73f)))*
+            (1.f-.38f*FMath::Pow(V,1.5f));
+        Row.Width*=.90f+.12f*FMath::Sin(V*14.f-Elapsed*5.f+SeedPhase)+
+            .08f*FMath::Sin(V*23.f+Elapsed*3.f+SeedPhase*1.7f);
+        Row.Width*=FMath::Pow(FMath::Clamp((Row.Z+.055f)/.14f,0.f,1.f),.62f);
+        Row.Width*=1.f-.68f*ASTFireLife::SmoothStep((V-.78f)/.22f);
+        Row.HotOffset=Row.Center+.12f*FMath::Sin(Row.Z*10.f-Elapsed*7.f+SeedPhase);
+        Row.HotY=FMath::Square((Row.Z-.24f)/.34f);
+        Row.Cool=.21f+.12f*(1.f-FMath::Clamp(Row.Z,0.f,1.f))-
+            .17f*FMath::Max(0.f,Row.Z-.52f)/.48f-
+            .12f*(1.f-ASTFireLife::SmoothStep((Row.Z+.055f)/.13f));
+    }
     for(int32 Y=0;Y<NY;++Y) for(int32 X=0;X<NX;++X)
     {
         const FVector2D P(MinX+(X+.5f)*Pitch,MinY+(Y+.5f)*Pitch);
@@ -2430,9 +2453,9 @@ float UASTFireFreeFlameComponent::UpdateConnectedSource(
         // Coherent fields at fixed physical frequencies, rather than
         // a per-tongue concentric shader. No noise in vertex interpolation.
         float& Cover=Cell.Cover;
-        const float Z=float(P.Y-RootCenter.Y)/FMath::Max(.1f,H);
+        const FFireRow& Row=Rows[Y];
+        const float Z=Row.Z;
         const float XN=float(P.X-RootCenter.X)/FMath::Max(.1f,W);
-        const float PlumeCenter=BodyCenter(Z);
         Cell.Flow=.57f*FMath::Sin(XN*4.1f+Z*15.f-Elapsed*9.f+SeedPhase)+
             .27f*FMath::Sin(XN*8.f-Z*22.f+Elapsed*10.f+SeedPhase*.8f)+
             .16f*FMath::Sin(XN*13.f+Z*31.f-Elapsed*12.f+SeedPhase*1.4f);
@@ -2440,15 +2463,8 @@ float UASTFireFreeFlameComponent::UpdateConnectedSource(
             .25f*FMath::Sin(XN*21.f-Z*33.f+Elapsed*9.f));
         if(bPoint)
         {
-            const float V=FMath::Clamp((Z+.055f)/.885f,0.f,1.f);
-            float Width=1.04f*FMath::Sqrt(FMath::Max(0.f,1.f-FMath::Square((V-.30f)/.73f)))*
-                (1.f-.38f*FMath::Pow(V,1.5f));
-            Width*=.90f+.12f*FMath::Sin(V*14.f-Elapsed*5.f+SeedPhase)+
-                .08f*FMath::Sin(V*23.f+Elapsed*3.f+SeedPhase*1.7f);
-            Width*=FMath::Pow(FMath::Clamp((Z+.055f)/.14f,0.f,1.f),.62f);
-            Width*=1.f-.68f*ASTFireLife::SmoothStep((V-.78f)/.22f);
             if(Z>=-.055f && Z<=.83f)
-                Cover=(Width-FMath::Abs(XN-PlumeCenter))*W+Rim;
+                Cover=(Row.Width-FMath::Abs(XN-Row.Center))*W+Rim;
             Cell.NeckDepth=-WickDepth+Bias;
         }
     }
@@ -2498,22 +2514,18 @@ float UASTFireFreeFlameComponent::UpdateConnectedSource(
         FFireCell& Cell=Cells[Y*NX+X];
         const float Cover=Cell.Cover,NeckDepth=Cell.NeckDepth,Flow=Cell.Flow;
         float& Temperature=Cell.Temperature;
-        const float Z=(MinY+(Y+.5f)*Pitch-RootCenter.Y)/FMath::Max(.1f,H);
+        const FFireRow& Row=Rows[Y];
         const float XN=(MinX+(X+.5f)*Pitch-RootCenter.X)/FMath::Max(.1f,W);
-        const float PlumeCenter=BodyCenter(Z);
         Cell.bVisible=Cover>=0.f && Heat>.015f;
         if(!Cell.bVisible) continue;
         if(bPoint)
         {
             // Warm core stays in the lower gas while cold lobes roll above.
             // Thermal islands travel independently through the field.
-            const float DX=XN-PlumeCenter-.12f*FMath::Sin(Z*10.f-Elapsed*7.f+SeedPhase);
-            const float Central=FMath::Exp(-FMath::Square(DX/.49f)-FMath::Square((Z-.24f)/.34f));
-            float T=.21f+.60f*Central+.12f*(1.f-FMath::Clamp(Z,0.f,1.f))+
-                .15f*Flow+.012f*FMath::Clamp(Cover/Pitch,0.f,4.f);
-            T-=.17f*FMath::Max(0.f,Z-.52f)/.48f;
+            const float DX=XN-Row.HotOffset;
+            const float Central=FMath::Exp(-FMath::Square(DX/.49f)-Row.HotY);
+            float T=Row.Cool+.60f*Central+.15f*Flow+.012f*FMath::Clamp(Cover/Pitch,0.f,4.f);
             T-=.08f*FMath::Clamp((1.5f-Cover/Pitch)/1.5f,0.f,1.f);
-            T-=.12f*(1.f-ASTFireLife::SmoothStep((Z+.055f)/.13f));
             Temperature=T;
         }
         Cell.Temperature=FMath::Clamp(Heat*Temperature,0.f,1.f);
@@ -2576,7 +2588,10 @@ float UASTFireFreeFlameComponent::UpdateConnectedSource(
         Tris.Add(First);Tris.Add(First+2);Tris.Add(First+1);
         Tris.Add(First+1);Tris.Add(First+2);Tris.Add(First+3);
     }
-    if(Verts.IsEmpty()) Render->ClearMeshSection(1);
+    const FProcMeshSection* OldBody=Render->GetProcMeshSection(1);
+    if(Verts.IsEmpty()){if(OldBody && !OldBody->ProcVertexBuffer.IsEmpty())Render->ClearMeshSection(1);}
+    else if(OldBody && OldBody->ProcVertexBuffer.Num()==Verts.Num())
+        Render->UpdateMeshSection_LinearColor(1,Verts,Normals,UVs,Colors,Tangents);
     else Render->CreateMeshSection_LinearColor(1,Verts,Tris,Normals,UVs,Colors,Tangents,false,false);
     Render->SetMaterial(1,Material);
     return Pitch;
