@@ -66,8 +66,8 @@ try:
     registry=u.AssetRegistryHelpers.get_asset_registry()
     mesh_assets=registry.get_assets_by_class(u.TopLevelAssetPath("/Script/Engine","SkeletalMesh"),True)
     names=("skm_manny","skm_quinn","sk_mannequin","skm_manny_simple","skm_quinn_simple")
-    candidates=[a for a in mesh_assets if str(a.asset_name).lower() in names]
-    candidates.sort(key=lambda a:(not str(a.package_name).startswith("/Game/"), names.index(str(a.asset_name).lower()),str(a.package_name)))
+    candidates=[a for a in mesh_assets if str(a.asset_name).lower() in names or any(v in str(a.asset_name).lower() for v in ('manny','quinn','mannequin'))]
+    candidates.sort(key=lambda a:(not str(a.package_name).startswith('/Game/'), names.index(str(a.asset_name).lower()) if str(a.asset_name).lower() in names else len(names),str(a.package_name)))
     require(candidates,"No mannequin skeletal mesh found for mandatory regression test")
     skin=candidates[0].get_asset()
     OUT["surface_audit"]=u.ASTFireFreeFlameComponent.run_fire_surface_audit(mat,skin)

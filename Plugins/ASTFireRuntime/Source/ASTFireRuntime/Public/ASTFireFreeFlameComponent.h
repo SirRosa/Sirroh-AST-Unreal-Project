@@ -6,6 +6,7 @@
 #include "ASTFireFreeFlameComponent.generated.h"
 
 class USceneComponent;
+class USkeletalMesh;
 class UProceduralMeshComponent;
 class UMaterialInterface;
 class UMaterialInstanceDynamic;

@@ -1925,6 +1925,7 @@ FString UASTFireFreeFlameComponent::RunFireSurfaceAudit(UMaterialInterface* Test
     if(!Host){World->DestroyWorld(false);return TEXT("FAIL:NO_HOST");}
     USkeletalMeshComponent* Skin=NewObject<USkeletalMeshComponent>(Host);
     Host->SetRootComponent(Skin);Skin->SetSkeletalMesh(Mesh);Skin->RegisterComponent();
+    Skin->RefreshBoneTransforms();
     auto* Fire=NewObject<UASTFireFreeFlameComponent>(Host);
     Fire->SetSource(Skin,TestMaterial,4811);Fire->RegisterComponent();
     int32 Samples=0,Covered=0,ValidFrames=0;
