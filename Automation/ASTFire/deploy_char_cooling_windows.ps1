@@ -43,6 +43,8 @@ $baseline=@{
 }
 $material=Join-Path $ProjectRoot 'Content\VFX\Fire\Materials\M_AST_FireCharProp.uasset'
 if(!(Test-Path $material)){throw 'Generated prop material missing'}
+$caveMaterial=Join-Path $ProjectRoot 'Content\VFX\Fire\Materials\M_AST_FireCharCaveProp.uasset'
+if(!(Test-Path $caveMaterial)){throw 'Generated cave prop material missing'}
 foreach($rel in $baseline.Keys){
  $current=(& git -C $ProjectRoot hash-object ('--path='+$rel.Replace('\','/')) (Join-Path $ProjectRoot $rel)).Trim()
  if($LASTEXITCODE -ne 0 -or $baseline[$rel] -notcontains $current){throw ('Local source changed '+$rel+' '+$current)}
