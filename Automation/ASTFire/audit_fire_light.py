@@ -29,9 +29,10 @@ try:
     out["prop_char"]=u.ASTFireReactiveComponent.run_prop_char_audit(box,barrel)
     out["burn"]=u.ASTFireReactiveComponent.run_burn_duration_audit(skin)
     out["fire"]=u.ASTFireFreeFlameComponent.run_fire_v4_audit(mat)
+    out["motion"]=u.ASTFireFreeFlameComponent.run_motion_audit(mat)
     out["smoke"]=u.ASTFireFreeFlameComponent.run_smoke_audit(smoke)
     out["surface"]=u.ASTFireFreeFlameComponent.run_fire_surface_audit(mat,skin,False)
-    if not all(out[k].startswith("PASS:") for k in ("light","contact","wood","carry_visual","prop_char","burn","fire","smoke","surface")):
+    if not all(out[k].startswith("PASS:") for k in ("light","contact","wood","carry_visual","prop_char","burn","fire","motion","smoke","surface")):
         raise RuntimeError("Native audit failed")
     out["status"]="PASS"
 except Exception as exc:
