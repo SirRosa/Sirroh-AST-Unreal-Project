@@ -276,6 +276,7 @@ private:
     {
         TArray<FFieldFlake> Cells;
         FVector Center=FVector::ZeroVector,Velocity=FVector::ZeroVector;
+        FVector Side=FVector::RightVector;
         float Age=0.f,Life=1.f;
         int32 Serial=0;
     };

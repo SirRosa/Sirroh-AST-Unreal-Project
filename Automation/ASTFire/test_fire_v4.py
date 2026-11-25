@@ -110,3 +110,7 @@ assert "Ridge=FMath::Max(Ridge,Heights[I]*Shape)" in c
 
 assert 'OldField[J].bLit && !Single->PointField[J].bLit' in c
 assert 'FVector::DistSquared(OldField[J].World,Restored)<.0001f' in c
+
+assert 'FirePixelPitch=Desired;' in c
+assert 'const float Bottom=-2.5f+6.0f' in c
+assert 'const FVector2D Rotated(' in c

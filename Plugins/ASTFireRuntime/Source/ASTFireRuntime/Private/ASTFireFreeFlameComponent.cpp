@@ -2449,8 +2449,9 @@ float UASTFireFreeFlameComponent::UpdatePointField(bool bCreate,const FVector& R
     const float Depth=FMath::Max(10.f,P.Depth(Origin)-FMath::Clamp(SizeScale*2.f,.2f,3.f));
     const FTransform Tr=Render->GetComponentTransform();
     const float Desired=FMath::Max(.1875f,2.55f*SizeScale*ASTFireLife::FFireProjection::Reference/Depth);
-    if(FirePixelPitch<=0.f || Desired>FirePixelPitch*1.45f || Desired<FirePixelPitch*.67f)
-        FirePixelPitch=.1875f*FMath::Pow(2.f,FMath::RoundToFloat(FMath::Log2(Desired/.1875f)));
+    // The logical field has a fixed number of cells. Its physical width
+    // must not double when the camera crosses a power-of-two pitch boundary.
+    FirePixelPitch=Desired;
     const float Pitch=FirePixelPitch;
     const FVector2D Projected=P.Project(Origin);
     const FVector2D GridOrigin(FMath::FloorToDouble(Projected.X/Pitch)*Pitch,
@@ -2474,7 +2475,8 @@ float UASTFireFreeFlameComponent::UpdatePointField(bool bCreate,const FVector& R
         F.Age+=Dt;
         if(F.Age>=F.Life){FieldFragments.RemoveAtSwap(I);continue;}
         const float S=FMath::Clamp(SizeScale,.08f,2.f);
-        F.Velocity+=FVector::UpVector*(85.f+100.f*F.Age/F.Life)*S*Dt+Wind*.035f*Dt;
+        F.Velocity+=(FVector::UpVector*(62.f+65.f*F.Age/F.Life)+
+            F.Side*(32.f*FMath::Sin(F.Age*8.f+F.Serial*1.71f)))*S*Dt+Wind*.035f*Dt;
         F.Center+=F.Velocity*Dt;
     }
     if(Heat<.015f)
@@ -2505,7 +2507,7 @@ float UASTFireFreeFlameComponent::UpdatePointField(bool bCreate,const FVector& R
         const float Progress=ASTFireLife::SmoothStep((FieldAge[Z]-R)/G);
         Centers[Z]=- .80f+.40f*Z+.07f*FMath::Sin(Elapsed*3.7f+Z*2.9f+Seed*.01f);
         Widths[Z]=.24f+.15f*Random(NextSalt+222);
-        Heights[Z]=(11.f+12.f*Random(NextSalt+121))*Progress;
+        Heights[Z]=(9.f+11.f*Random(NextSalt+121))*Progress;
     }
     const float WindSide=FMath::Clamp(float(FVector::DotProduct(Wind,P.Right))/180.f,-1.f,1.f);
     const float Phase=Seed*.017f;
@@ -2514,19 +2516,19 @@ float UASTFireFreeFlameComponent::UpdatePointField(bool bCreate,const FVector& R
     {
         const float H=float(Y)-3.f;
         const float Z=FMath::Clamp(H/30.f,0.f,1.f);
-        const float Warp=Z*(.10f*FMath::Sin(H*.43f-Elapsed*6.f+Phase)+
-            .065f*FMath::Sin(H*.87f-Elapsed*9.f+Phase*1.7f)+WindSide*.32f);
+        const float Warp=Z*(.18f*FMath::Sin(H*.43f-Elapsed*6.f+Phase)+
+            .10f*FMath::Sin(H*.87f-Elapsed*9.f+Phase*1.7f)+WindSide*.32f);
         const float U=(float(X)-19.5f)/13.f-Warp;
         const float A=FMath::Abs(U);
         // Lower edge is uneven and comparatively flat, not a disk.
-        const float Bottom=-1.4f+2.6f*FMath::Pow(A,2.5f)+
+        const float Bottom=-2.5f+6.0f*FMath::Pow(A,2.4f)+
             .8f*FMath::Sin(U*13.f+Elapsed*4.f+Phase);
-        const float BaseHeight=(7.f+1.4f*FMath::Sin(U*10.f-Elapsed*5.f+Phase))*
-            FMath::Clamp((1.12f-A)/.32f,0.f,1.f);
+        const float BaseHeight=(10.f+1.6f*FMath::Sin(U*10.f-Elapsed*5.f+Phase))*
+            FMath::Clamp((1.14f-A)/.36f,0.f,1.f);
         float Ridge=0.f;
         for(int32 I=0;I<FieldZones;++I)
         {
-            const float D=U-Centers[I];
+            const float D=U-Centers[I]-.13f*Z*FMath::Sin(Elapsed*4.7f+I*2.5f+Phase+H*.21f);
             const float W=Widths[I]*(D>0.f?.83f:1.18f);
             // Pointed, irregular advancing fronts, NOT radial distance
             // from a rounded tongue. A broad valley separates peaks.
@@ -2536,7 +2538,7 @@ float UASTFireFreeFlameComponent::UpdatePointField(bool bCreate,const FVector& R
         const float Detail=1.2f*FMath::Sin(U*29.f+H*.55f-Elapsed*8.f+Phase)+
             .75f*FMath::Sin(U*51.f-H*.92f+Elapsed*11.f);
         const float Top=BaseHeight+Ridge+Detail;
-        const float Edge=1.01f-.12f*Z+.10f*FMath::Sin(H*.53f-Elapsed*6.f+Phase)+
+        const float Edge=1.04f-.04f*Z+.10f*FMath::Sin(H*.53f-Elapsed*6.f+Phase)+
             .045f*FMath::Sin(H*1.31f+Elapsed*8.f);
         if(H<Bottom || H>Top || A>Edge)continue;
         auto& C=Next[Y*FieldX+X];C.bLit=true;
@@ -2547,8 +2549,9 @@ float UASTFireFreeFlameComponent::UpdatePointField(bool bCreate,const FVector& R
             .38f*FMath::Sin(U*14.1f-H*.63f+Elapsed*10.8f+Phase);
         const float Interior=FMath::Clamp((Edge-A)*3.2f,0.f,1.f);
         const float Rim=FMath::Clamp((Top-H)*.25f,0.f,1.f);
-        C.Temperature=Heat*FMath::Clamp(.24f+.54f*Interior*Rim+.15f*Flow-.27f*Z+
-            .15f*FMath::Exp(-FMath::Square((H-5.f)/5.f)),0.f,1.f);
+        C.Temperature=Heat*FMath::Clamp(.16f+.59f*Interior*Rim*
+            FMath::Clamp((H-Bottom)*.36f,0.f,1.f)+.16f*Flow-.19f*Z+
+            .10f*FMath::Exp(-FMath::Square((H-5.f)/5.f)),0.f,1.f);
     }
     // Transfer exactly the cells that were visible in the preceding field
     // but have been lost by a local cut. No separately generated shape.
@@ -2574,8 +2577,9 @@ float UASTFireFreeFlameComponent::UpdatePointField(bool bCreate,const FVector& R
         auto& F=FieldFragments.AddDefaulted_GetRef();
         F.Center=Center/Removed.Num();F.Serial=FieldSplitCount+1;F.Life=.66f+.31f*Random(Z*37+FieldGeneration[Z]*811);
         const float S=FMath::Clamp(SizeScale,.08f,2.f);
-        F.Velocity=FVector::UpVector*(38.f+Random(Z*91+FieldGeneration[Z]*77)*27.f)*S+
-            P.Right*(Centers[Z]*36.f*S)+Wind*.10f;
+        F.Side=P.Right;
+        F.Velocity=FVector::UpVector*(32.f+Random(Z*91+FieldGeneration[Z]*77)*19.f)*S+
+            F.Side*(Centers[Z]*36.f*S)+Wind*.10f;
         for(int32 I:Removed)
         {
             const FVector Offset=PointField[I].World-F.Center;
@@ -2640,10 +2644,13 @@ void UASTFireFreeFlameComponent::RenderFieldFragments(float Pitch,TArray<FVector
         if(FVector::DotProduct(F.Center-P.Cam,P.Forward)<=10.f)continue;
         const FVector2D Center=P.Project(F.Center);
         const float Scale=ASTFireLife::FFireProjection::Reference/Depth;
+        const float Angle=.50f*F.Age*FMath::Sin(F.Age*5.f+F.Serial*1.71f);
+        const float CS=FMath::Cos(Angle),SN=FMath::Sin(Angle);
         TMap<FIntPoint,float> Pixels;
         for(const auto& C:F.Cells)
         {
-            const FVector2D Q=Center+C.Offset*(Scale*Shrink);
+            const FVector2D Rotated(C.Offset.X*CS-C.Offset.Y*SN,C.Offset.X*SN+C.Offset.Y*CS);
+            const FVector2D Q=Center+Rotated*(Scale*Shrink);
             const FIntPoint K(FMath::FloorToInt(Q.X/Pitch),FMath::FloorToInt(Q.Y/Pitch));
             float& Temperature=Pixels.FindOrAdd(K);
             Temperature=FMath::Max(Temperature,C.Temperature*FMath::Pow(Fade,.83f));
