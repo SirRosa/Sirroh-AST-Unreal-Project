@@ -27,6 +27,10 @@
 #include "RenderingThread.h"
 #include "Misc/Paths.h"
 #include "HAL/FileManager.h"
+#if WITH_EDITOR
+#include "AssetCompilingManager.h"
+#include "ShaderCompiler.h"
+#endif
 
 namespace ASTFire
 {
@@ -1327,24 +1331,28 @@ FString UASTFireReactiveComponent::RunFireLightCapture(UClass* TorchClass)
     const FVector Wick=Parent->GetComponentTransform().TransformPosition(Fire->PointOffset);
     auto* Mesh=NewObject<UStaticMeshComponent>(Wall);
     Mesh->SetStaticMesh(LoadObject<UStaticMesh>(nullptr,TEXT("/Engine/BasicShapes/Cube.Cube")));
-    Wall->SetRootComponent(Mesh);Mesh->SetMobility(EComponentMobility::Movable);
+    Wall->SetRootComponent(Mesh);Wall->AddInstanceComponent(Mesh);Mesh->SetMobility(EComponentMobility::Movable);
     Mesh->RegisterComponent();Mesh->SetWorldScale3D(FVector(.15f,8.f,6.f));
     Mesh->SetWorldLocation(Wick+FVector(-55.f,0,0));
     if(auto* Mat=LoadObject<UMaterialInterface>(nullptr,TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial")))
         Mesh->SetMaterial(0,Mat);
     auto* Capture=NewObject<USceneCaptureComponent2D>(Camera);
-    Camera->SetRootComponent(Capture);
+    Camera->SetRootComponent(Capture);Camera->AddInstanceComponent(Capture);
     Capture->bCaptureEveryFrame=false;Capture->bCaptureOnMovement=false;
-    Capture->ProjectionType=ECameraProjectionMode::Orthographic;
-    Capture->OrthoWidth=800.f;Capture->CaptureSource=SCS_FinalColorLDR;
+    Capture->bAlwaysPersistRenderingState=true;
+    // Perspective is the known-working scene-capture path; the exposure
+    // itself is identical to the gameplay camera. Avoid auto ortho clipping.
+    Capture->ProjectionType=ECameraProjectionMode::Perspective;
+    Capture->FOVAngle=43.6f;Capture->CaptureSource=SCS_FinalColorLDR;
     auto& PP=Capture->PostProcessSettings;
     PP.bOverride_AutoExposureMethod=true;PP.AutoExposureMethod=AEM_Manual;
     PP.bOverride_AutoExposureApplyPhysicalCameraExposure=true;PP.AutoExposureApplyPhysicalCameraExposure=false;
     PP.bOverride_AutoExposureBias=true;PP.AutoExposureBias=0.f;
     Capture->PostProcessBlendWeight=1.f;
     Capture->ShowFlags.SetTemporalAA(false);Capture->ShowFlags.SetMotionBlur(false);
+    Capture->ShowFlags.SetLighting(true);Capture->ShowFlags.SetEyeAdaptation(true);
     auto* RT=NewObject<UTextureRenderTarget2D>(Capture);
-    RT->RenderTargetFormat=RTF_RGBA8_SRGB;RT->InitAutoFormat(512,512);
+    RT->RenderTargetFormat=RTF_RGBA8_SRGB;RT->ClearColor=FLinearColor(.007f,.009f,.014f,1.f);RT->InitAutoFormat(512,512);
     RT->UpdateResourceImmediate(true);Capture->TextureTarget=RT;Capture->RegisterComponent();
     Capture->SetWorldLocation(Wick+FVector(1000,0,-45.f));Capture->SetWorldRotation(FRotator(0,180,0));
     for(int32 I=0;I<35;++I)
@@ -1356,13 +1364,23 @@ FString UASTFireReactiveComponent::RunFireLightCapture(UClass* TorchClass)
             static_cast<UActorComponent*>(Fire->FreeFlames.Get())->TickComponent(.04f,LEVELTICK_All,&Fire->FreeFlames->PrimaryComponentTick);
         }
     }
+    // Newly loaded actual torch and wall assets may still be compiling in
+    // commandlets; do not capture their missing shader/render proxies.
+    FAssetCompilingManager::Get().FinishAllCompilation();
+    if(GShaderCompilingManager)GShaderCompilingManager->FinishAllCompilation();
+    World->UpdateWorldComponents(false,false);
+    World->SendAllEndOfFrameUpdates();FlushRenderingCommands();
     const float Peak=Fire->Light->Intensity;
     const float Radius=Fire->Light->AttenuationRadius;
     const FString Folder=FPaths::ProjectSavedDir()/TEXT("ChatGPT/NiagaraFire/FireV4/LightingGPU");
     IFileManager::Get().MakeDirectory(*Folder,true);
     auto Frame=[&](const TCHAR* Name,TArray<FColor>& Pixels)
     {
-        World->SendAllEndOfFrameUpdates();Capture->CaptureScene();FlushRenderingCommands();
+        // Warm up the view state and deferred light proxies before readback.
+        for(int32 I=0;I<3;++I)
+        {
+            World->SendAllEndOfFrameUpdates();Capture->CaptureScene();FlushRenderingCommands();
+        }
         FTextureRenderTargetResource* Resource=RT->GameThread_GetRenderTargetResource();
         if(!Resource||!Resource->ReadPixels(Pixels))return false;
         TUniquePtr<FArchive> Ar(IFileManager::Get().CreateFileWriter(*(Folder/Name)));

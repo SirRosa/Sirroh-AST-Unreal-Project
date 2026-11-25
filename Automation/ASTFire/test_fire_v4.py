@@ -18,7 +18,7 @@ def region(a,b): return c[c.index(a):c.index(b,c.index(a))]
 for a,b,expected in [["void UASTFireFreeFlameComponent::UpdateSparks(","void UASTFireFreeFlameComponent::UpdateSmoke(","1408cade"],["    // Collision volume is also the exact support of visible density.","    if (bVisible && Heat>.10f && Active>0)","413ed2d7"],["// Perspective-correct density raster, with per-cell collision-safe depth.","FString UASTFireFreeFlameComponent::RunSmokeAudit(","ad9ffb29"]]:
     assert fnv(region(a,b))==expected, a
 # Approved lifetime change only; visual source remains pinned to accepted main.
-assert fnv(r)=="3e9088a3","unexpected burn/torch runtime change"
+assert fnv(r)=="74f2d8ee","unexpected burn/torch runtime change"
 assert fnv(c[:c.index("\nbool UASTFireFreeFlameComponent::GetFireLightCenter(")])=="73dbf86a","accepted fire rendering changed"
 for token in ("GetTongueCount()", "SetSizeScale(", "RunSmokeAudit(", "RunFireV4Audit("):
     assert token in h,token
