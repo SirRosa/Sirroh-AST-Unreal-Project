@@ -15,14 +15,14 @@ def fnv(s):
     return f"{v:08x}"
 def region(a,b): return c[c.index(a):c.index(b,c.index(a))]
 # The hashes are pinned to accepted v3 7d0eee1049ffbcca7f25ed39811901667a362ba5, NOT recomputed from v4.
-for a,b,expected in [["void UASTFireFreeFlameComponent::UpdateSparks(","void UASTFireFreeFlameComponent::UpdateSmoke(","1408cade"],["    // Collision volume is also the exact support of visible density.","    if (bVisible && Heat>.10f && Active>0)","413ed2d7"],["// Perspective-correct density raster, with per-cell collision-safe depth.","FString UASTFireFreeFlameComponent::RunSmokeAudit(","ad9ffb29"]]:
+for a,b,expected in [["void UASTFireFreeFlameComponent::UpdateSparks(","void UASTFireFreeFlameComponent::UpdateSmoke(","1408cade"],["    // Collision volume is also the exact support of visible density.","    const bool bSmolder=","413ed2d7"],["// Perspective-correct density raster, with per-cell collision-safe depth.","FString UASTFireFreeFlameComponent::RunSmokeAudit(","ad9ffb29"]]:
     assert fnv(region(a,b))==expected, a
 # Approved lifetime change only; visual source remains pinned to accepted main.
 # Pin all non-light runtime code to the deployed stage2 baseline (ec2a067).
 light_start=r.index("void UASTFireReactiveComponent::ConfigureFireLight(")
 light_end=r.index("void UASTFireReactiveComponent::RemoveGeneratedVisuals(",light_start)
-assert fnv(r[:light_start]+r[light_end:])=="d8fa767d","unexpected non-light runtime change after approved poseable target adaptation"
-assert fnv(c[:c.index("\nbool UASTFireFreeFlameComponent::GetFireLightCenter(")])=="cef9b3fc","accepted fire rendering changed after approved skinned-type adaptation"
+assert fnv(r[:light_start]+r[light_end:])=="55913922","unexpected non-light runtime change after approved poseable target adaptation"
+assert fnv(c[:c.index("\nbool UASTFireFreeFlameComponent::GetFireLightCenter(")])=="94a582ea","accepted fire rendering changed after approved skinned-type adaptation"
 for token in ("GetTongueCount()", "SetSizeScale(", "RunSmokeAudit(", "RunFireV4Audit("):
     assert token in h,token
 for token in ("GetSkinnedVertexPosition","LineTraceComponent(","ConnectedRoots.Add(",
@@ -33,7 +33,7 @@ for token in ("GetSkinnedVertexPosition","LineTraceComponent(","ConnectedRoots.A
               "const float Edge=F.Strength", "Cell.Temperature=Hot*Heat",
               "Colors.Add(FLinearColor(ASTFireLife::ToneCode(Cell.Temperature),0.f,0.f,1.f))",
               "Projection.Unproject(P,Cell.Depth)", "RenderFieldFragments(Pitch,Verts,UVs,Colors,Triangles)",
-              "MaxXCells=72", "RunFireV4Audit("):
+              "MaxXCells=144", "RunFireV4Audit("):
     assert token in c,token
 assert "floor(UV" not in m
 assert "MP_WORLD_POSITION_OFFSET" not in m
@@ -121,7 +121,7 @@ assert 'const float Bottom=-2.5f+6.0f' in c
 assert 'const FVector2D Rotated(' in c
 
 # Accepted point effect is locked, including its actual transferred cells.
-assert fnv(region("float UASTFireFreeFlameComponent::UpdatePointField(","void UASTFireFreeFlameComponent::RenderFieldFragments("))=="823258f0"
+assert fnv(region("float UASTFireFreeFlameComponent::UpdatePointField(","void UASTFireFreeFlameComponent::RenderFieldFragments("))=="82461965"
 assert "GetSkinnedVertexPosition(Skel,A.SkinnedVertexIndex" in c
 assert "if(X>=0 && X<NX && Y>=0 && Y<NY && Gas[Y*NX+X].Owner!=INDEX_NONE)continue;" in c
 assert "Group.Num()<2" in c
@@ -168,3 +168,12 @@ assert "OverlapMultiByObjectType" in zone and "AllObjects" in zone
 assert "bNoDuplicate" in zone and "bCarriedReentry" in zone
 
 assert "SirrohCarryProp" in zone and "Separated(FVector::CrossProduct" in zone
+
+# User-requested burn polish: palette indices must never be sRGB-encoded.
+assert "UpdateMeshSection_LinearColor(1,Verts,Normals,UVs,Colors,Tangents,false)" in c
+assert "UpdateMeshSection_LinearColor(0,Verts,Normals,UVs,Colors,Tangents,false)" in c
+assert "SmokeAfterglowSeconds=3.f" in c and "bSmolder" in c
+assert "return 2.f*FMath::Max(.1f,BaseBurnSeconds)*Factor;" in r
+assert "RunCarryVisualAudit" in c and "Low<Peak" in c
+assert "SmokeGridMaxX = 128" in h and "SmokeGridMaxY = 256" in h
+assert "const float Dying=FMath::SmoothStep" in c
