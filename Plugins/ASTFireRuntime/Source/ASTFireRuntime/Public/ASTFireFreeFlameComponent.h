@@ -226,4 +226,8 @@ private:
     bool bGenerated = false;
     bool bVisible = true;
     bool bClusterMapUploaded = false;
+    // Appended to preserve offsets of existing fields used by game modules.
+    float FirePixelPitch=0.f;
+    float FireVisualHeight=0.f;
+    float FireVisualWidth=0.f;
 };

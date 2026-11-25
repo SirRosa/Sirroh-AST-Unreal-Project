@@ -23,17 +23,19 @@ try:
     pin.set_editor_property("input_name",u.Name("C"))
     color.set_editor_property("inputs",[pin])
     color.set_editor_property("output_type",u.CustomMaterialOutputType.CMOT_FLOAT3)
-    # Linear RGB converted from the reference sRGB palette. No artificial
-    # dark border or local UV-based radial mask. Geometry owns the pixels.
+    # Exact seven colours sampled from the supplied reference, linearized.
+    # The vertex red channel stores a discrete tone index. No interpolation
+    # across a cell and no dependency on independently stretched UVs.
     color.set_editor_property("code",(
-        "float h=saturate(C.r);"
-        "float3 c=float3(.181,.019,.040);"
-        "c=lerp(c,float3(.392,.045,.032),step(.18,h));"
-        "c=lerp(c,float3(.638,.109,.036),step(.34,h));"
-        "c=lerp(c,float3(.807,.305,.061),step(.49,h));"
-        "c=lerp(c,float3(.839,.533,.156),step(.65,h));"
-        "c=lerp(c,float3(.888,.723,.445),step(.81,h));"
-        "return c*1.25;"
+        "float h=floor(saturate(C.r)*7.);"
+        "float3 c=float3(0.052861,0.012286,0.030713);"
+        "c=lerp(c,float3(0.177888,0.017642,0.039546),step(1.,h));"
+        "c=lerp(c,float3(0.376262,0.029557,0.029557),step(2.,h));"
+        "c=lerp(c,float3(0.623960,0.095307,0.045186),step(3.,h));"
+        "c=lerp(c,float3(0.701102,0.238398,0.048172),step(4.,h));"
+        "c=lerp(c,float3(0.806952,0.533276,0.162029),step(5.,h));"
+        "c=lerp(c,float3(0.799103,0.665387,0.450786),step(6.,h));"
+        "return c;"
     ))
     require(EDIT.connect_material_expressions(vertex,"",color,"C"),"Color input")
     require(EDIT.connect_material_property(color,"",u.MaterialProperty.MP_EMISSIVE_COLOR),"Emissive")
