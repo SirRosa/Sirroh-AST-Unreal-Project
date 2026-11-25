@@ -15,14 +15,14 @@ def fnv(s):
     return f"{v:08x}"
 def region(a,b): return c[c.index(a):c.index(b,c.index(a))]
 # The hashes are pinned to accepted v3 7d0eee1049ffbcca7f25ed39811901667a362ba5, NOT recomputed from v4.
-for a,b,expected in [["void UASTFireFreeFlameComponent::UpdateSparks(","void UASTFireFreeFlameComponent::UpdateSmoke(","1408cade"],["    // Collision volume is also the exact support of visible density.","    const bool bSmolder=","413ed2d7"],["// Perspective-correct density raster, with per-cell collision-safe depth.","FString UASTFireFreeFlameComponent::RunSmokeAudit(","ad9ffb29"]]:
+for a,b,expected in [["void UASTFireFreeFlameComponent::UpdateSparks(","void UASTFireFreeFlameComponent::UpdateSmoke(","60b0e801"],["    // Collision volume is also the exact support of visible density.","    const bool bSmolder=","413ed2d7"],["// Perspective-correct density raster, with per-cell collision-safe depth.","FString UASTFireFreeFlameComponent::RunSmokeAudit(","ad9ffb29"]]:
     assert fnv(region(a,b))==expected, a
 # Approved lifetime change only; visual source remains pinned to accepted main.
 # Pin all non-light runtime code to the deployed stage2 baseline (ec2a067).
 light_start=r.index("void UASTFireReactiveComponent::ConfigureFireLight(")
 light_end=r.index("void UASTFireReactiveComponent::RemoveGeneratedVisuals(",light_start)
 assert fnv(r[:light_start]+r[light_end:])=="3bfbdb36","unexpected non-light runtime change after approved poseable target adaptation"
-assert fnv(c[:c.index("\nbool UASTFireFreeFlameComponent::GetFireLightCenter(")])=="94a582ea","accepted fire rendering changed after approved skinned-type adaptation"
+assert fnv(c[:c.index("\nbool UASTFireFreeFlameComponent::GetFireLightCenter(")])=="77f86c68","accepted fire rendering changed after approved skinned-type adaptation"
 for token in ("GetTongueCount()", "SetSizeScale(", "RunSmokeAudit(", "RunFireV4Audit("):
     assert token in h,token
 for token in ("GetSkinnedVertexPosition","LineTraceComponent(","ConnectedRoots.Add(",
@@ -121,7 +121,7 @@ assert 'const float Bottom=-2.5f+6.0f' in c
 assert 'const FVector2D Rotated(' in c
 
 # Accepted point effect is locked, including its actual transferred cells.
-assert fnv(region("float UASTFireFreeFlameComponent::UpdatePointField(","void UASTFireFreeFlameComponent::RenderFieldFragments("))=="82461965"
+assert fnv(region("float UASTFireFreeFlameComponent::UpdatePointField(","void UASTFireFreeFlameComponent::RenderFieldFragments("))=="76002343"
 assert "GetSkinnedVertexPosition(Skel,A.SkinnedVertexIndex" in c
 assert "if(X>=0 && X<NX && Y>=0 && Y<NY && Gas[Y*NX+X].Owner!=INDEX_NONE)continue;" in c
 assert "Group.Num()<2" in c
@@ -194,3 +194,11 @@ assert "/Game/ZL_retroCaves/Meshes/decos/" in wood and 'Contains(TEXT("Wood")' i
 assert "UInstancedStaticMeshComponent" in wood and "AStaticMeshActor" in wood
 assert "ASTFireWood::IsWoodTarget" in zone and "NearbyWood" in zone
 assert "(bCarry||bWood)" in r
+
+# Motion-only changes: preserve real transferred cells and retain a hard low-speed deadband.
+assert "float(Velocity.Size())-160.f" in c and "SampleAerodynamics(Dt)" in c
+assert "bAeroDiscontinuity" in c and "MotionLag(Tongues[I].WorldVelocity)" in c
+assert "CurrentPixels.Contains" in c and "FieldAge[Z]+=Dt*(1.f+Aero" in c
+assert "AeroSampleDt=Dt" in c
+motion=(root/"Private/ASTFireMotionAudit.cpp").read_text()
+assert "MoveCuts>StillCuts" in motion and "bTeleport" in motion and "bRotation" in motion
