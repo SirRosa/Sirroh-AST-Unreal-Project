@@ -10,6 +10,7 @@
 #include "GameFramework/Pawn.h"
 #include "Engine/OverlapResult.h"
 #include "Engine/World.h"
+#include "EngineUtils.h"
 
 UASTFireIgnitionZoneComponent::UASTFireIgnitionZoneComponent()
 {
@@ -112,33 +113,82 @@ void UASTFireIgnitionZoneComponent::PollContactOverlaps()
     for(AActor* Actor:Native)
         if(IsValid(Actor)&&Actor!=Owner)Touching.Add(Actor);
 
+    const FVector ZoneCenter=GetComponentLocation();
+    const FQuat ZoneRotation=GetComponentQuat();
+    const FVector ZoneExtent=GetScaledBoxExtent();
+    const FCollisionShape Shape=FCollisionShape::MakeBox(ZoneExtent);
+    auto RecordContact=[&](AActor* Actor,UPrimitiveComponent* Body)
+    {
+        const TWeakObjectPtr<AActor> Key(Actor);
+        Touching.Add(Key);
+        if(bPrimingContacts){IgnitedDuringOverlap.Add(Key);return;}
+        if(IgnitedDuringOverlap.Contains(Key))return;
+        FVector Contact=Body->Bounds.GetBox().GetClosestPointTo(ZoneCenter);
+        FVector Closest;
+        if(Body->GetCollisionEnabled()!=ECollisionEnabled::NoCollision &&
+            Body->GetClosestPointOnCollision(ZoneCenter,Closest)>0.f)
+            Contact=Closest;
+        IgniteTarget(Actor,Contact);
+    };
     FCollisionQueryParams Query(SCENE_QUERY_STAT(ASTFireContact),false,Owner);
     // Include custom physics object channels; reject static architecture below.
     const FCollisionObjectQueryParams Objects(FCollisionObjectQueryParams::AllObjects);
     TArray<FOverlapResult> Hits;
-    World->OverlapMultiByObjectType(Hits,GetComponentLocation(),GetComponentQuat(),
-        Objects,FCollisionShape::MakeBox(GetScaledBoxExtent()),Query);
+    World->OverlapMultiByObjectType(Hits,ZoneCenter,ZoneRotation,Objects,Shape,Query);
     for(const FOverlapResult& Hit:Hits)
     {
         AActor* Actor=Hit.GetActor();
         UPrimitiveComponent* Body=Hit.GetComponent();
         if(!IsValid(Actor)||Actor==Owner||!IsValid(Body))continue;
-        // Exclude generated FX, trigger volumes and static level architecture.
-        // Pawns can be represented by their capsule, even with hidden skin.
         const bool bPawn=Actor->IsA<APawn>();
         const bool bMesh=Body->IsA<UStaticMeshComponent>()||Body->IsA<USkinnedMeshComponent>();
         const bool bPhysical=Body->IsSimulatingPhysics()||
             (bMesh&&Body->GetMobility()==EComponentMobility::Movable&&Body->IsVisible()&&!Body->bHiddenInGame);
         if(!bPawn&&!bPhysical)continue;
-        const TWeakObjectPtr<AActor> Key(Actor);
-        Touching.Add(Key);
-        if(bPrimingContacts){IgnitedDuringOverlap.Add(Key);continue;}
-        if(IgnitedDuringOverlap.Contains(Key))continue;
-        FVector Contact=Body->Bounds.Origin;
-        FVector Closest;
-        if(Body->GetClosestPointOnCollision(GetComponentLocation(),Closest)>0.f)
-            Contact=Closest;
-        IgniteTarget(Actor,Contact);
+        RecordContact(Actor,Body);
+    }
+
+    // AST carry props deliberately disable overlap notifications, and while
+    // held they disable collision altogether. A world scene query cannot
+    // reliably discover such bodies. Iterate only the project's carry-prop
+    // class (never all actors), and use its actual rotating visible mesh.
+    if(UClass* CarryClass=FindObject<UClass>(nullptr,TEXT("/Script/Sirroh_Reimagineg_v3.SirrohCarryProp")))
+    {
+        for(TActorIterator<AActor> It(World,CarryClass);It;++It)
+        {
+            AActor* Actor=*It;
+            if(!IsValid(Actor)||Actor==Owner||Actor->IsHidden()||Touching.Contains(Actor))continue;
+            auto* Body=Cast<UStaticMeshComponent>(Actor->GetRootComponent());
+            if(!IsValid(Body)||!Body->IsRegistered()||!Body->IsVisible()||Body->bHiddenInGame||!Body->GetStaticMesh())continue;
+            const FBox Local=Body->GetStaticMesh()->GetBoundingBox();
+            const FTransform& Transform=Body->GetComponentTransform();
+            const FVector Center=Transform.TransformPosition(Local.GetCenter());
+            const FVector Extent=Local.GetExtent()*Transform.GetScale3D().GetAbs();
+            // Cheap broad phase before the 15 separating-axis tests.
+            if(FVector::DistSquared(Center,ZoneCenter)>FMath::Square(Extent.Size()+ZoneExtent.Size()))continue;
+            const FQuat Rotation=Transform.GetRotation();
+            const FVector A[3]={ZoneRotation.GetAxisX(),ZoneRotation.GetAxisY(),ZoneRotation.GetAxisZ()};
+            const FVector B[3]={Rotation.GetAxisX(),Rotation.GetAxisY(),Rotation.GetAxisZ()};
+            const FVector Delta=Center-ZoneCenter;
+            auto Separated=[&](const FVector& Axis)
+            {
+                if(Axis.SizeSquared()<1.e-10)return false;
+                double RA=0.,RB=0.;
+                for(int32 I=0;I<3;++I)
+                {
+                    RA+=ZoneExtent[I]*FMath::Abs(FVector::DotProduct(A[I],Axis));
+                    RB+=Extent[I]*FMath::Abs(FVector::DotProduct(B[I],Axis));
+                }
+                return FMath::Abs(FVector::DotProduct(Delta,Axis))>RA+RB+.001;
+            };
+            bool bSeparated=false;
+            for(int32 I=0;I<3&&!bSeparated;++I)
+                bSeparated=Separated(A[I])||Separated(B[I]);
+            for(int32 I=0;I<3&&!bSeparated;++I)
+                for(int32 J=0;J<3&&!bSeparated;++J)
+                    bSeparated=Separated(FVector::CrossProduct(A[I],B[J]));
+            if(!bSeparated)RecordContact(Actor,Body);
+        }
     }
     // Also retry native contacts if the source was not lit on entry.
     if(!bPrimingContacts)for(AActor* Actor:Native)
@@ -191,15 +241,13 @@ void UASTFireIgnitionZoneComponent::IgniteTarget(
     }
 }
 
-FString UASTFireIgnitionZoneComponent::RunContactAudit()
+FString UASTFireIgnitionZoneComponent::RunContactAudit(UClass* BoxClass,UClass* BarrelClass)
 {
 #if WITH_EDITOR
     UWorld* World=UWorld::CreateWorld(EWorldType::Game,false);
-    UStaticMesh* Cube=LoadObject<UStaticMesh>(nullptr,TEXT("/Engine/BasicShapes/Cube.Cube"));
-    if(!World||!Cube){if(World)World->DestroyWorld(false);return TEXT("FAIL:world/assets");}
+    if(!World||!BoxClass||!BarrelClass){if(World)World->DestroyWorld(false);return TEXT("FAIL:world/assets");}
     AActor* Source=World->SpawnActor<AActor>();
-    AActor* Prop=World->SpawnActor<AActor>();
-    if(!Source||!Prop){World->DestroyWorld(false);return TEXT("FAIL:actors");}
+    if(!Source){World->DestroyWorld(false);return TEXT("FAIL:source");}
     auto* Zone=NewObject<UASTFireIgnitionZoneComponent>(Source);
     Source->AddInstanceComponent(Zone);
     Source->SetRootComponent(Zone);
@@ -210,49 +258,50 @@ FString UASTFireIgnitionZoneComponent::RunContactAudit()
     Zone->SetMobility(EComponentMobility::Movable);
     Zone->RegisterComponent();
     Zone->bRequireSourceBurning=false;
-    auto* Body=NewObject<UStaticMeshComponent>(Prop);
-    Body->SetStaticMesh(Cube);
-    Body->SetMobility(EComponentMobility::Movable);
-    Body->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
-    Body->SetCollisionObjectType(ECC_WorldDynamic);
-    Body->SetCollisionResponseToAllChannels(ECR_Block);
-    Body->SetGenerateOverlapEvents(false);
-    Prop->AddInstanceComponent(Body);
-    Prop->SetRootComponent(Body);Body->RegisterComponent();
-    auto* Fire=NewObject<UASTFireReactiveComponent>(Prop);
-    Prop->AddInstanceComponent(Fire);
-    Fire->bStartLit=false;Fire->Intensity=0.f;
-    Fire->bEnableProceduralFlames=false;Fire->bEnableFlameCards=false;
-    Fire->bEnableNiagara=false;Fire->bEnableSurfaceFire=false;
-    Fire->RegisterComponent();
-    Body->SetWorldLocation(FVector(400,0,0),false,nullptr,ETeleportType::TeleportPhysics);
-    Zone->PollContactOverlaps();
-    const bool bOutside=!UASTFireBlueprintLibrary::IsActorBurning(Prop);
-    Body->SetWorldLocation(FVector::ZeroVector,false,nullptr,ETeleportType::TeleportPhysics);
-    Zone->PollContactOverlaps();
-    const bool bIgnited=UASTFireBlueprintLibrary::IsActorBurning(Prop);
-    FCollisionQueryParams DebugQuery(SCENE_QUERY_STAT(ASTFireContactAudit),false,Source);
-    FCollisionObjectQueryParams DebugObjects(FCollisionObjectQueryParams::AllObjects);
-    TArray<FOverlapResult> DebugHits;
-    World->OverlapMultiByObjectType(DebugHits,Zone->GetComponentLocation(),Zone->GetComponentQuat(),
-        DebugObjects,FCollisionShape::MakeBox(Zone->GetScaledBoxExtent()),DebugQuery);
-    const int32 DebugCount=DebugHits.Num();
-    bool bBodyHit=false;
-    for(const FOverlapResult& Hit:DebugHits)bBodyHit|=Hit.GetComponent()==Body;
-    const float BoundsSize=float(Prop->GetComponentsBoundingBox(true).GetSize().GetMax());
-    const bool bAuthority=Source->HasAuthority();
-    UASTFireBlueprintLibrary::ExtinguishActor(Prop);
-    Zone->PollContactOverlaps();
-    const bool bNoDuplicate=!UASTFireBlueprintLibrary::IsActorBurning(Prop);
-    Body->SetWorldLocation(FVector(400,0,0),false,nullptr,ETeleportType::TeleportPhysics);
-    Zone->PollContactOverlaps();
-    Body->SetWorldLocation(FVector::ZeroVector,false,nullptr,ETeleportType::TeleportPhysics);
-    Zone->PollContactOverlaps();
-    const bool bReentry=UASTFireBlueprintLibrary::IsActorBurning(Prop);
+    bool bPass=true;
+    FString Details;
+    for(UClass* Class:{BoxClass,BarrelClass})
+    {
+        FActorSpawnParameters Spawn;
+        Spawn.SpawnCollisionHandlingOverride=ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+        AActor* Prop=World->SpawnActor<AActor>(Class,FVector(1000,0,0),FRotator::ZeroRotator,Spawn);
+        auto* Body=Prop?Cast<UStaticMeshComponent>(Prop->GetRootComponent()):nullptr;
+        if(!Body||!Body->GetStaticMesh()){bPass=false;Details+=TEXT(";missing_prop_mesh");continue;}
+        Body->SetGenerateOverlapEvents(false);
+        Body->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+        auto* Fire=NewObject<UASTFireReactiveComponent>(Prop);
+        Prop->AddInstanceComponent(Fire);
+        Fire->bStartLit=false;Fire->Intensity=0.f;
+        Fire->bEnableProceduralFlames=false;Fire->bEnableFlameCards=false;
+        Fire->bEnableNiagara=false;Fire->bEnableSurfaceFire=false;
+        Fire->RegisterComponent();
+        auto Move=[&](const FVector& Point,const FRotator& Rotation)
+        {
+            // Place the actual mesh center rather than assuming its pivot.
+            Body->SetWorldRotation(Rotation,false,nullptr,ETeleportType::TeleportPhysics);
+            const FVector Offset=Body->GetComponentTransform().TransformVector(Body->GetStaticMesh()->GetBoundingBox().GetCenter());
+            Body->SetWorldLocation(Point-Offset,false,nullptr,ETeleportType::TeleportPhysics);
+            Zone->PollContactOverlaps();
+        };
+        Move(FVector(1000,0,0),FRotator::ZeroRotator);
+        const bool bOutside=!UASTFireBlueprintLibrary::IsActorBurning(Prop);
+        Move(FVector::ZeroVector,FRotator(23,40,17));
+        const bool bIgnited=UASTFireBlueprintLibrary::IsActorBurning(Prop);
+        UASTFireBlueprintLibrary::ExtinguishActor(Prop);
+        Zone->PollContactOverlaps();
+        const bool bNoDuplicate=!UASTFireBlueprintLibrary::IsActorBurning(Prop);
+        Move(FVector(1000,0,0),FRotator::ZeroRotator);
+        // Match the collision-disabled carried state, with a different pose.
+        Body->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+        Move(FVector::ZeroVector,FRotator(65,12,40));
+        const bool bCarriedReentry=UASTFireBlueprintLibrary::IsActorBurning(Prop);
+        bPass&=bOutside&&bIgnited&&bNoDuplicate&&bCarriedReentry;
+        Details+=FString::Printf(TEXT(";%s:outside=%d;no_overlap_events=%d;no_duplicate=%d;reentry=%d"),
+            *Class->GetName(),int32(bOutside),int32(bIgnited),int32(bNoDuplicate),int32(bCarriedReentry));
+        Prop->Destroy();
+    }
     World->DestroyWorld(false);
-    return FString::Printf(TEXT("%s:outside=%d;no_overlap_events=%d;no_duplicate=%d;reentry=%d;query_hits=%d;body_hit=%d;bounds=%.1f;authority=%d"),
-        bOutside&&bIgnited&&bNoDuplicate&&bReentry?TEXT("PASS"):TEXT("FAIL"),
-        int32(bOutside),int32(bIgnited),int32(bNoDuplicate),int32(bReentry),DebugCount,int32(bBodyHit),BoundsSize,int32(bAuthority));
+    return FString(bPass?TEXT("PASS"):TEXT("FAIL"))+Details;
 #else
     return TEXT("EDITOR_ONLY");
 #endif
