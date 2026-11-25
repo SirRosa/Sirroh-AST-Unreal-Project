@@ -145,8 +145,9 @@ assert "RunFireLightAudit()" in r
 # Manual-exposure regression: a bounded smooth kernel, not an unbounded hot spot.
 assert "Light->SetLightFalloffExponent(4.5f)" in r
 assert "FMath::Min(1.65f" in r
-assert "SweepSingleByObjectType" in r and "ASTFireLightCameraOffset" in r
-assert "Light->SetWorldLocation(RenderCenter)" in r
+assert "ASTFireLightCameraOffset" not in r and "ASTFireCharacterFill" not in r
+assert "Light->SetWorldLocation(FireLightCenter)" in r
+assert "Light->ComponentTags.AddUnique(ASTFire::FireLightTag)" in r
 assert "Radius>Fire->LightRadius*1.8f" in r
 assert "ClipRate<.01f" in r and "Near>Far+1.f" in r
 assert "RunFireLightCapture(UClass* TorchClass)" in r
