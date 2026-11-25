@@ -294,7 +294,7 @@ void UASTFireFreeFlameComponent::ConfigureGeneration(FTongue& Tongue)
     // character-height torches at every vertex. Small wicks retain their size.
     const bool bPoint=ASTFireLife::IsPointSource(Source,!IgnitionPoints.IsEmpty());
     const float Compactness=bPoint?FMath::Lerp(1.f,.72f,Large):
-        (Cast<USkeletalMeshComponent>(Source)?.43f:.62f);
+        (Cast<USkinnedMeshComponent>(Source)?.43f:.62f);
     Tongue.MaxLength*=Compactness;
     // At normal size a lobe is broad and short, not a tall thin ribbon.
     Tongue.MaxLength*=bPoint?FMath::Lerp(1.f,.74f,Large):.76f;
@@ -405,7 +405,7 @@ void UASTFireFreeFlameComponent::BuildAnchors()
     // One narrow wick; broad fire has multiple independent outward axes.
     int32 DesiredCount = SizeScale<.22f?2:SizeScale<.55f?3:SizeScale<1.4f?5:6;
     const bool bPoint=ASTFireLife::IsPointSource(Source,!IgnitionPoints.IsEmpty());
-    if (!bPoint && Cast<USkeletalMeshComponent>(Source))
+    if (!bPoint && Cast<USkinnedMeshComponent>(Source))
     {
         // A whole character needs head/torso/arms/legs, not 3 foot roots.
         DesiredCount = 6 + FMath::RoundToInt(Uniform(731) * 2.f);
@@ -421,9 +421,9 @@ void UASTFireFreeFlameComponent::BuildAnchors()
     }
     DesiredCount = FMath::Clamp(DesiredCount, 2, MaxTongues);
 
-    if (const USkeletalMeshComponent* Skeletal = bPoint?nullptr:Cast<USkeletalMeshComponent>(Source))
+    if (const USkinnedMeshComponent* Skeletal = bPoint?nullptr:Cast<USkinnedMeshComponent>(Source))
     {
-        USkeletalMesh* Asset = Skeletal->GetSkeletalMeshAsset();
+        USkeletalMesh* Asset = Cast<USkeletalMesh>(Skeletal->GetSkinnedAsset());
         FSkeletalMeshRenderData* Data = Asset ? Asset->GetResourceForRendering() : nullptr;
         if (Data && Data->LODRenderData.Num() > 0)
         {
@@ -614,9 +614,9 @@ FVector UASTFireFreeFlameComponent::SampleRoot(const FTongue& Root) const
     if (!IsValid(Source)) return FVector::ZeroVector;
     if (Root.SkinnedVertexIndex!=INDEX_NONE)
     {
-        if (USkeletalMeshComponent* Skeletal=Cast<USkeletalMeshComponent>(Source))
+        if (USkinnedMeshComponent* Skeletal=Cast<USkinnedMeshComponent>(Source))
         {
-            USkeletalMesh* Asset=Skeletal->GetSkeletalMeshAsset();
+            USkeletalMesh* Asset=Cast<USkeletalMesh>(Skeletal->GetSkinnedAsset());
             FSkeletalMeshRenderData* Data=Asset?Asset->GetResourceForRendering():nullptr;
             if (Data && Data->LODRenderData.Num()>0)
             {
@@ -2330,9 +2330,9 @@ void UASTFireFreeFlameComponent::BuildSourceAnchors()
     for (const FTongue& T:Tongues)
         Add(T.RestPosition,T.SkinnedVertexIndex);
 
-    if (USkeletalMeshComponent* Skel=Cast<USkeletalMeshComponent>(Source))
+    if (USkinnedMeshComponent* Skel=Cast<USkinnedMeshComponent>(Source))
     {
-        USkeletalMesh* Asset=Skel->GetSkeletalMeshAsset();
+        USkeletalMesh* Asset=Cast<USkeletalMesh>(Skel->GetSkinnedAsset());
         FSkeletalMeshRenderData* Data=Asset?Asset->GetResourceForRendering():nullptr;
         if (Data && Data->LODRenderData.Num()>0)
         {
@@ -2711,11 +2711,11 @@ float UASTFireFreeFlameComponent::UpdateConnectedSource(
         MeshPrevious.Reset();Render->ClearMeshSection(1);
         return FMath::Max(.1875f,FirePixelPitch);
     }
-    USkeletalMeshComponent* Skel=Cast<USkeletalMeshComponent>(Source);
+    USkinnedMeshComponent* Skel=Cast<USkinnedMeshComponent>(Source);
     const FSkeletalMeshLODRenderData* Lod=nullptr;
     FSkinWeightVertexBuffer* Weights=nullptr;
     if(Skel)
-        if(USkeletalMesh* Asset=Skel->GetSkeletalMeshAsset())
+        if(USkeletalMesh* Asset=Cast<USkeletalMesh>(Skel->GetSkinnedAsset()))
             if(FSkeletalMeshRenderData* Data=Asset->GetResourceForRendering())
                 if(Data->LODRenderData.Num()>0)
                 {Lod=&Data->LODRenderData[0];Weights=const_cast<FSkeletalMeshLODRenderData*>(Lod)->GetSkinWeightVertexBuffer();}
