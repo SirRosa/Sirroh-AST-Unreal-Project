@@ -303,6 +303,7 @@ private:
     float MeshFieldClock=-1.f;
     int32 MeshCuts=0;
     int32 MeshTransferred=0;
+    float SmokeAfterglowSeconds=0.f;
     float UpdatePointField(bool bCreate,const FVector& Right);
     void RenderFieldFragments(float Pitch,TArray<FVector>& Verts,TArray<FVector2D>& UVs,
         TArray<FLinearColor>& Colors,TArray<int32>& Triangles);
