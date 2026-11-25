@@ -22,7 +22,7 @@ public:
     UASTFireIgnitionZoneComponent();
 
     UFUNCTION(BlueprintCallable, Category="AST Fire|Audit")
-    static FString RunContactAudit();
+    static FString RunContactAudit(UClass* BoxClass,UClass* BarrelClass);
 
     // Editable zone size/offset; applied on BeginPlay, NEVER on the CDO.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="AST Fire|Contact")
