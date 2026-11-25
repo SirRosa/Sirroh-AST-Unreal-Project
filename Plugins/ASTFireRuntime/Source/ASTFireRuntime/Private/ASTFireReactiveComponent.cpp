@@ -820,16 +820,22 @@ void UASTFireReactiveComponent::SetupSurfaceFire(USceneComponent* Parent)
         (!bEnableProceduralFlames && !bEnableSurfaceFire)) return;
     UMeshComponent* Mesh = Cast<UMeshComponent>(Parent);
     if (!IsValid(Mesh) || !Mesh->IsVisible()) return;
-    // Only the verified GASPALS prop material uses this route. Keep character
-    // materials and every other mesh's accepted overlay path unchanged.
-    if(bCharOverlay && Cast<UStaticMeshComponent>(Mesh) && Mesh->GetNumMaterials()>=1)
+    // Only verified carry-prop materials use this route. Other meshes,
+    // including the player's poseable mesh, retain their existing overlay.
+    const UClass* CarryClass=FindObject<UClass>(nullptr,TEXT("/Script/Sirroh_Reimagineg_v3.SirrohCarryProp"));
+    if(bCharOverlay && CarryClass && GetOwner()->IsA(CarryClass) && Cast<UStaticMeshComponent>(Mesh) && Mesh->GetNumMaterials()>=1)
     {
         UMaterialInterface* Original=Mesh->GetMaterial(0);
         const UMaterial* Base=Original?Original->GetMaterial():nullptr;
-        if(Base && Base->GetPathName()==TEXT("/GASPALS/Systems/EquipmentSystem/Assets/Materials/M_Prop.M_Prop"))
+        const FString BasePath=GetPathNameSafe(Base);
+        const TCHAR* Variant=nullptr;
+        if(BasePath==TEXT("/GASPALS/Systems/EquipmentSystem/Assets/Materials/M_Prop.M_Prop"))
+            Variant=TEXT("/Game/VFX/Fire/Materials/M_AST_FireCharProp.M_AST_FireCharProp");
+        else if(BasePath==TEXT("/Game/ZL_retroCaves/Materials/mat_cave_decos.mat_cave_decos"))
+            Variant=TEXT("/Game/VFX/Fire/Materials/M_AST_FireCharCaveProp.M_AST_FireCharCaveProp");
+        if(Variant)
         {
-            UMaterialInterface* PropChar=LoadObject<UMaterialInterface>(nullptr,
-                TEXT("/Game/VFX/Fire/Materials/M_AST_FireCharProp.M_AST_FireCharProp"));
+            UMaterialInterface* PropChar=LoadObject<UMaterialInterface>(nullptr,Variant);
             if(PropChar)
             {
                 FireSurfaceMID=UMaterialInstanceDynamic::Create(PropChar,this);
