@@ -1353,7 +1353,7 @@ FString UASTFireReactiveComponent::RunFireLightCapture(UClass* TorchClass)
         if(IsValid(Fire->FreeFlames))
         {
             Fire->FreeFlames->SetThermal(1.f,FVector::ZeroVector,.7f);
-            Fire->FreeFlames->TickComponent(.04f,LEVELTICK_All,&Fire->FreeFlames->PrimaryComponentTick);
+            static_cast<UActorComponent*>(Fire->FreeFlames.Get())->TickComponent(.04f,LEVELTICK_All,&Fire->FreeFlames->PrimaryComponentTick);
         }
     }
     const float Peak=Fire->Light->Intensity;
