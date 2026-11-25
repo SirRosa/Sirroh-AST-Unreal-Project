@@ -146,7 +146,10 @@ void UASTFireFreeFlameComponent::SetSource(
 void UASTFireFreeFlameComponent::SetThermal(
     float InHeat, const FVector& InWorldWind, float InEnergy)
 {
-    Heat = FMath::Clamp(InHeat, 0.f, 1.f);
+    const float NewHeat=FMath::Clamp(InHeat,0.f,1.f);
+    if(bGenerated && Heat>.10f && NewHeat<=.10f && SmokeFireSize>8.f)SmokeAfterglowSeconds=3.f;
+    if(NewHeat>.10f)SmokeAfterglowSeconds=0.f;
+    Heat=NewHeat;
     Wind = InWorldWind.GetClampedToMaxSize(1800.f);
     Energy = FMath::Clamp(InEnergy, .02f, 1.25f);
 }
@@ -270,6 +273,7 @@ void UASTFireFreeFlameComponent::OnUnregister()
     SparkSpawnDebt = 0.f;
     Smoke.Reset();
     SmokeSpawnDebt = 0.f;
+    SmokeAfterglowSeconds=0.f;
     SmokeLightScanDebt = 0.f;
     SmokeSimDebt = 0.f;
     SmokeFireSize = 0.f;
@@ -1213,11 +1217,14 @@ void UASTFireFreeFlameComponent::UpdateSmoke(float Dt)
         if(S.Radius<3.f) { S.Position=Previous; S.Radius=Radius; }
     }
 
-    if ((bVisible && Heat>.10f && Active>0) || (Heat<.10f && Heat>.005f && SmokeFireSize>8.f))
+    const bool bSmolder=SmokeAfterglowSeconds>0.f;
+    const float Tail=FMath::Clamp(SmokeAfterglowSeconds/3.f,0.f,1.f);
+    SmokeAfterglowSeconds=FMath::Max(0.f,SmokeAfterglowSeconds-Dt);
+    if ((bVisible && Heat>.10f && Active>0) || bSmolder)
     {
         // Small flames produce modest smoke. 10m is a cap, not a default.
         const float Rate=FMath::Lerp(4.2f,8.5f,Scale)*
-            FMath::Lerp(1.f,1.48f,Abundance)*FMath::Lerp(.72f,1.f,Heat);
+            FMath::Lerp(1.f,1.48f,Abundance)*FMath::Lerp(.72f,1.f,Heat)*(bSmolder?.35f*Tail:1.f);
         SmokeSpawnDebt=FMath::Min(3.f,SmokeSpawnDebt+Dt*Rate);
         const int32 Born=FMath::FloorToInt(SmokeSpawnDebt);
         SmokeSpawnDebt-=Born;
@@ -1240,7 +1247,7 @@ void UASTFireFreeFlameComponent::UpdateSmoke(float Dt)
             S.MaxRise=FMath::Lerp(125.f,1000.f,FMath::Pow(Scale,1.25f))*
                 (.83f+.17f*J);
             S.RiseSpeed=FMath::Lerp(35.f,85.f,Scale)*(.94f+.12f*R);
-            S.Lifetime=FMath::Min(FMath::Min(14.f,float(MaxSmoke-2)/Rate),(S.MaxRise-S.Radius)/
+            S.Lifetime=FMath::Min(FMath::Min(14.f,float(MaxSmoke-2)/FMath::Max(.01f,Rate)),(S.MaxRise-S.Radius)/
                 S.RiseSpeed*(1.04f+.08f*J));
             S.Seed=Salt*.713f+Seed*.031f;
             // Bottom of carrier starts ABOVE the highest active tongue tip.
@@ -2325,7 +2332,7 @@ void UASTFireFreeFlameComponent::UpdateGeometry(bool bCreate)
     }
     else
         Render->UpdateMeshSection_LinearColor(
-            2,SV,SN,SU,SC,SX);
+            2,SV,SN,SU,SC,SX,false);
 
     // Section 1 was authored before this section, it contains the common
     // flame field AND the narrowing split bridges.
@@ -3035,7 +3042,7 @@ void UASTFireFreeFlameComponent::TickComponent(
     bool bHasSmoke=false;
     for (const FSmoke& S:Smoke)
         if (S.bAlive) { bHasSmoke=true; break; }
-    if ((!bVisible || Heat<.005f) && !bHasSparks && !bHasSmoke && FieldFragments.IsEmpty())
+    if ((!bVisible || Heat<.005f) && !bHasSparks && !bHasSmoke && FieldFragments.IsEmpty() && SmokeAfterglowSeconds<=0.f)
     {
         // No active fire or embers: skip expensive field reconstruction.
         VisualEnergy=FMath::FInterpTo(VisualEnergy,0.f,Dt,6.f);
