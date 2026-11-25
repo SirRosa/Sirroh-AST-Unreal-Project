@@ -112,7 +112,8 @@ def main():
             "normal_palette":[mean(f["palette"][i] for f in normal) for i in range(7)],
             "frames":stats,
             "point_sheet":sheet([f for f in frames if f["case"]<4],out/"actual_point_contact.png"),
-            "scale_mesh_sheet":sheet([f for f in frames if f["case"]>=4],out/"actual_scale_mesh_contact.png")}
+            "scale_mesh_sheet":sheet([f for f in frames if 4<=f["case"]<8],out/"actual_scale_mesh_contact.png"),
+            "single_cycle_sheet":sheet([f for f in frames if f["case"]==8 and f["frame"]%4==0],out/"actual_single_cycle.png",scale=3)}
     (out/"actual_raster_report.json").write_text(json.dumps(report,indent=2))
     print(json.dumps({k:v for k,v in report.items() if k not in ("frames","reference")},indent=2))
 if __name__=="__main__":

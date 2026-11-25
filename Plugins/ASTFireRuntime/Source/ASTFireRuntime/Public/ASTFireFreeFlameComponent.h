@@ -112,6 +112,12 @@ private:
         EFlameLife Life = EFlameLife::Growing;
         int32 Generation = 0;
         bool bActive = true;
+        FVector DisplayArc[RingsPerTongue]{};
+        float DisplayRadius[RingsPerTongue]{};
+        float DisplayClock=0.f;
+        float DisplayHeat=1.f;
+        int32 DisplayGeneration=INDEX_NONE;
+        bool bDisplayedPinch=false;
     };
     struct FDetached
     {

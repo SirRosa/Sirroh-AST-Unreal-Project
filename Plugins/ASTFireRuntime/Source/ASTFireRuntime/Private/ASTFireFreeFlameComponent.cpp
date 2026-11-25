@@ -686,22 +686,23 @@ int32 UASTFireFreeFlameComponent::EmitTip(
     FVector Right=FVector::CrossProduct(FVector::UpVector,View).GetSafeNormal();
     if(Right.IsNearlyZero())Right=FVector::RightVector;
     const int32 Cut=FMath::Clamp(FMath::RoundToInt(Tongue.RemainingFraction*(RingsPerTongue-1)),1,RingsPerTongue-2);
-    Child.Position=TongueCenterAt(Tongue,Base,float(Cut)/(RingsPerTongue-1),Right);
+    const bool bSnapshot=Tongue.bDisplayedPinch && Tongue.DisplayGeneration==Tongue.Generation;
+    Child.Position=bSnapshot?Tongue.DisplayArc[Cut]:TongueCenterAt(Tongue,Base,float(Cut)/(RingsPerTongue-1),Right);
     Child.ArcCount=RingsPerTongue-Cut;
     Child.Width=0.f;
     for(int32 K=0;K<Child.ArcCount;++K)
     {
         const float V=float(Cut+K)/(RingsPerTongue-1);
         Child.SourceV[K]=V;
-        Child.Arc[K]=TongueCenterAt(Tongue,Base,V,Right)-Child.Position;
-        Child.Radius[K]=TongueRadiusAt(Tongue,V);
+        Child.Arc[K]=(bSnapshot?Tongue.DisplayArc[Cut+K]:TongueCenterAt(Tongue,Base,V,Right))-Child.Position;
+        Child.Radius[K]=bSnapshot?Tongue.DisplayRadius[Cut+K]:TongueRadiusAt(Tongue,V);
         Child.Width=FMath::Max(Child.Width,Child.Radius[K]);
     }
     Child.Length=Length*(1.f-Tongue.RemainingFraction);
     Child.ParentGeneration=Tongue.Generation;
-    Child.BirthClock=Elapsed;
+    Child.BirthClock=bSnapshot?Tongue.DisplayClock:Elapsed;
     Child.BirthPhase=Tongue.Seed+Tongue.Phase;
-    Child.BirthHeat=Heat;
+    Child.BirthHeat=bSnapshot?Tongue.DisplayHeat:Heat;
     Child.Age=0.f;
     Child.Lifetime=.30f+.34f*Uniform(Salt+3);
     Child.Temperature=1.f;
@@ -766,8 +767,9 @@ void UASTFireFreeFlameComponent::AdvanceSimulation(float Dt)
         else
         {
             // Pinch only. The upper arc does not retract toward the root.
+            const bool bCutReady=T.bDisplayedPinch && T.DisplayGeneration==T.Generation;
             T.PhaseAge=FMath::Min(T.BridgeSeconds,T.PhaseAge+Dt);
-            if(T.PhaseAge>=T.BridgeSeconds)
+            if(T.PhaseAge>=T.BridgeSeconds && bCutReady)
             {
                 const FVector Flow=(Wind-T.WorldVelocity*.65f).GetClampedToMaxSize(1600.f);
                 // Correct previous render root for the carrier's movement.
@@ -786,6 +788,7 @@ void UASTFireFreeFlameComponent::AdvanceSimulation(float Dt)
                     T.CurrentLength=T.RestartLength;
                     T.PreviousWidth=T.CurrentWidth=FMath::Min(T.CurrentWidth,T.BaseWidth*.64f);
                     T.BridgedChild=INDEX_NONE;
+                    T.bDisplayedPinch=false;
                     T.Life = EFlameLife::Growing;
                 }
             }
@@ -1676,7 +1679,6 @@ FString UASTFireFreeFlameComponent::RunFireV4Audit(UMaterialInterface* TestMater
         {
             const FTongue Old=Single->Tongues[0];
             const TArray<FDetached> Before=Single->Detached;
-            const FVector OldRoot=Single->ConnectedRoots.IsValidIndex(0)?Single->ConnectedRoots[0]:Single->SampleRoot(Old);
             Step(Single,FVector::ZeroVector);
             const FTongue& New=Single->Tongues[0];
             if(New.Generation==Old.Generation && Old.Life==EFlameLife::Growing)
@@ -1688,16 +1690,18 @@ FString UASTFireFreeFlameComponent::RunFireV4Audit(UMaterialInterface* TestMater
                 ++Splits;
                 MaxResetRatio=FMath::Max(MaxResetRatio,New.CurrentLength/FMath::Max(.01f,Old.SplitLength));
                 bool bFound=false;
-                FTongue AtCut=Old;AtCut.PhaseAge=AtCut.BridgeSeconds;
+                bCycle&=Old.bDisplayedPinch && Old.DisplayGeneration==Old.Generation;
                 for(const FDetached& D:Single->Detached)
                     if(D.bAlive && D.Age==0.f && D.ParentGeneration==Old.Generation)
                     {
                         bFound=true;
                         for(int32 K=0;K<D.ArcCount;++K)
                         {
-                            const FVector Expected=Single->TongueCenterAt(AtCut,OldRoot,D.SourceV[K],D.Right);
+                            const int32 Ring=FMath::RoundToInt(D.SourceV[K]*(RingsPerTongue-1));
+                            const FVector Expected=Old.DisplayArc[Ring];
                             MaxTransferError=FMath::Max(MaxTransferError,float(FVector::Dist(Expected,D.Position+D.Arc[K])));
-                            bCycle&=FMath::Abs(D.Radius[K]-Single->TongueRadiusAt(AtCut,D.SourceV[K]))<.01f;
+                            bCycle&=FMath::Abs(D.Radius[K]-Old.DisplayRadius[Ring])<.01f &&
+                                D.BirthClock==Old.DisplayClock && D.BirthHeat==Old.DisplayHeat;
                         }
                         bCycle&=D.SourceV[0]==Old.RemainingFraction && D.SourceV[D.ArcCount-1]==1.f;
                     }
@@ -1953,6 +1957,7 @@ void UASTFireFreeFlameComponent::UpdateGeometry(bool bCreate)
         }
         const int32 X0=FMath::FloorToInt(Lo.X/Pitch),Y0=FMath::FloorToInt(Lo.Y/Pitch);
         const int32 X1=FMath::CeilToInt(Hi.X/Pitch),Y1=FMath::CeilToInt(Hi.Y/Pitch);
+        if(X1-X0>160 || Y1-Y0>200)continue; // near-plane safety bound
         for(int32 Y=Y0;Y<Y1;++Y)for(int32 X=X0;X<X1;++X)
         {
             const FVector2D Sample((X+.5f)*Pitch,(Y+.5f)*Pitch);
@@ -2374,7 +2379,7 @@ float UASTFireFreeFlameComponent::UpdateConnectedSource(
     int32 Living=0;
     for(int32 I=0;I<Tongues.Num();++I)
     {
-        const FTongue& T=Tongues[I];
+        FTongue& T=Tongues[I];
         if(!T.bActive || T.Age<0.f || Heat<.015f)continue;
         ++Living;
         const FVector Root=ConnectedRoots[I];
@@ -2383,12 +2388,19 @@ float UASTFireFreeFlameComponent::UpdateConnectedSource(
         MaxRise=FMath::Max(MaxRise,T.MaxLength*Scale);
         // Only genuine growing arcs are rasterized. No independent basal blob
         // or decorative upper fork can conceal the actual split and rebirth.
-        FVector WorldA=TongueCenterAt(T,Root,0.f,Right);
+        T.DisplayClock=Elapsed;T.DisplayHeat=Heat;T.DisplayGeneration=T.Generation;
+        T.bDisplayedPinch=T.Life==EFlameLife::Bridging && T.PhaseAge>=T.BridgeSeconds;
+        for(int32 K=0;K<RingsPerTongue;++K)
+        {
+            T.DisplayArc[K]=TongueCenterAt(T,Root,NeckFractions[K],Right);
+            T.DisplayRadius[K]=TongueRadiusAt(T,NeckFractions[K]);
+        }
+        FVector WorldA=T.DisplayArc[0];
         for(int32 K=1;K<RingsPerTongue;++K)
         {
             const float V0=NeckFractions[K-1],V1=NeckFractions[K];
-            const FVector WorldB=TongueCenterAt(T,Root,V1,Right);
-            AppendNeck(WorldA,WorldB,TongueRadiusAt(T,V0),TongueRadiusAt(T,V1),V0,V1,Phase);
+            const FVector WorldB=T.DisplayArc[K];
+            AppendNeck(WorldA,WorldB,T.DisplayRadius[K-1],T.DisplayRadius[K],V0,V1,Phase);
             WorldA=WorldB;
         }
     }

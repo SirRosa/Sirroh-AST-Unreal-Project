@@ -21,7 +21,7 @@ assert fnv(r)=="930b76ee","burn/torch runtime changed"
 for token in ("GetTongueCount()", "SetSizeScale(", "RunSmokeAudit(", "RunFireV4Audit("):
     assert token in h,token
 for token in ("GetSkinnedVertexPosition","LineTraceComponent(","ConnectedRoots.Add(",
-              "AppendNeck(WorldA,WorldB,TongueRadiusAt(T,V0),TongueRadiusAt(T,V1),V0,V1,Phase)",
+              "AppendNeck(WorldA,WorldB,T.DisplayRadius[K-1],T.DisplayRadius[K],V0,V1,Phase)",
               "EFlameLife::Bridging","D.Position+=D.Velocity*Dt;",
               "const float PixelPitch=UpdateConnectedSource",
               "const float Pitch=FMath::Max(.1875f,PixelPitch);",
@@ -54,8 +54,8 @@ for scale in (.15,1,2):
 # sampled cut ring. There is no independent upper sprite or retraction.
 assert "EFlameLife::Retracting" not in c
 assert "BodyCenter(" not in c
-assert "Child.Arc[K]=TongueCenterAt(Tongue,Base,V,Right)-Child.Position;" in c
-assert "Child.Radius[K]=TongueRadiusAt(Tongue,V);" in c
+assert "Child.Arc[K]=(bSnapshot?Tongue.DisplayArc[Cut+K]" in c
+assert "Child.Radius[K]=bSnapshot?Tongue.DisplayRadius[Cut+K]" in c
 assert "Child.BirthPhase=Tongue.Seed+Tongue.Phase;" in c
 assert "T.RestartLength=FMath::Min(Remaining,T.MaxLength*.34f);" in c
 assert "D.Temperature=FMath::Pow(Fade,1.25f);" in c
@@ -70,3 +70,6 @@ for cut in (2,3):
         a,b=1-(i-1)/20,1-i/20
         assert b**.92<a**.92 and b**1.25<a**1.25
 print("Fire lifecycle: original upper arc, atomic rebirth, cooling, preserved smoke/sparks")
+
+assert 'T.PhaseAge>=T.BridgeSeconds && bCutReady' in c
+assert 'const FVector Expected=Old.DisplayArc[Ring];' in c
