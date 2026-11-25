@@ -2854,6 +2854,14 @@ float UASTFireFreeFlameComponent::UpdateConnectedSource(
                 if(D<Best){Best=D;Owner=I;}
             }
         if(Owner==INDEX_NONE || (Forced==INDEX_NONE && Best>Reach*Reach))return;
+        // Stable mesh-local fuel thresholds: individual patches disappear
+        // progressively without resampling random noise on camera motion.
+        if(Dying<1.f)
+        {
+            const float Threshold=.06f+.88f*FMath::Abs(ASTFireLife::Hash(
+                float(Rest.X*.312+Rest.Y*.719+Rest.Z*.217)+Seed*.031f));
+            if(Dying<Threshold)return;
+        }
         if(FVector::DotProduct(World-Projection.Cam,Projection.Forward)<=12.f)return;
         float Influence=Forced!=INDEX_NONE?1.f:FMath::Clamp(1.f-FMath::Sqrt(Best)/Reach,.12f,1.f);
         if(!Skel && Forced==INDEX_NONE)
@@ -2968,8 +2976,6 @@ float UASTFireFreeFlameComponent::UpdateConnectedSource(
     {
         const auto& F=Surface[Y*NX+X];
         if(F.Owner==INDEX_NONE)continue;
-        // Deterministic per-cell loss during final cooling, no random flicker.
-        if(Dying<1.f && ASTFireLife::Hash(float((X+GX)*13+(Y+GY)*71)+Seed*.031f)>Dying)continue;
         const float H=Heights[F.Owner]*ASTFireLife::FFireProjection::Reference/F.Depth/Pitch;
         const float Crest=FMath::Max(1.f,H*(.55f+.45f*F.Strength)+Corrugation[Y*NX+X]*2.0f);
         const float Drift=FMath::Clamp(float(FVector::DotProduct(Tongues[F.Owner].WorldVelocity,Projection.Right))/180.f,-1.f,1.f);
