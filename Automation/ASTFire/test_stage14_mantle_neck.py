@@ -20,7 +20,7 @@ LOCKS = [
     {
         "start": "void UASTFireFreeFlameComponent::ConfigureGeneration(",
         "end": "void UASTFireFreeFlameComponent::RebuildClusters(",
-        "hash": "957fd72e"
+        "hash": "3df1cb20"
     },
     {
         "start": "int32 UASTFireFreeFlameComponent::EmitTip(",
