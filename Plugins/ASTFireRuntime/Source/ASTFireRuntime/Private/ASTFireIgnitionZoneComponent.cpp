@@ -47,16 +47,6 @@ void UASTFireIgnitionZoneComponent::BeginPlay()
         GetWorld()->GetTimerManager().SetTimer(ContactPollTimer,this,
             &UASTFireIgnitionZoneComponent::PollContactOverlaps,.05f,true);
 
-    if (GetOwner() && GetOwner()->GetNetMode() != NM_Client && bIgniteInitialOverlaps)
-    {
-        TArray<AActor*> AlreadyOverlapping;
-        GetOverlappingActors(AlreadyOverlapping);
-        for (AActor* Actor : AlreadyOverlapping)
-        {
-            if (IsValid(Actor))
-                IgniteTarget(Actor, Actor->GetActorLocation());
-        }
-    }
     if(GetOwner() && GetOwner()->HasAuthority())
     {
         bPrimingContacts=!bIgniteInitialOverlaps;
@@ -72,7 +62,7 @@ void UASTFireIgnitionZoneComponent::EndPlay(const EEndPlayReason::Type EndPlayRe
     OnComponentEndOverlap.RemoveDynamic(
         this, &UASTFireIgnitionZoneComponent::HandleEndOverlap);
     if(GetWorld())GetWorld()->GetTimerManager().ClearTimer(ContactPollTimer);
-    IgnitedDuringOverlap.Reset();
+    ClearContacts();
     Super::EndPlay(EndPlayReason);
 }
 
@@ -81,16 +71,8 @@ void UASTFireIgnitionZoneComponent::HandleBeginOverlap(
     UPrimitiveComponent* OtherComponent, int32 OtherBodyIndex,
     bool bFromSweep, const FHitResult& SweepResult)
 {
-    if (!IsValid(OtherActor) || !IsValid(OtherComponent)) return;
-    FVector Point = OtherComponent->Bounds.Origin;
-    if (bFromSweep && !SweepResult.ImpactPoint.IsNearlyZero())
-    {
-        // UE 5.8 HitResult stores a quantized vector; do not use a ternary
-        // with a large-world-coordinate FVector (incompatible scalar types).
-        Point = FVector(SweepResult.ImpactPoint.X,
-            SweepResult.ImpactPoint.Y, SweepResult.ImpactPoint.Z);
-    }
-    IgniteTarget(OtherActor, Point);
+    // The reconciled contact poll is the only ignition path. A begin event
+    // must never bypass the continuous heating requirement.
 }
 
 void UASTFireIgnitionZoneComponent::HandleEndOverlap(
@@ -102,16 +84,51 @@ void UASTFireIgnitionZoneComponent::HandleEndOverlap(
     // from one primitive must not reset an actor whose other body still touches.
 }
 
+bool UASTFireIgnitionZoneComponent::IsHeatActive() const
+{
+    const AActor* Owner=GetOwner();
+    return IsValid(Owner)&&Owner->HasAuthority()&&IsRegistered()&&
+        GetCollisionEnabled()!=ECollisionEnabled::NoCollision&&
+        (!bRequireSourceBurning||UASTFireBlueprintLibrary::IsActorBurning(Owner));
+}
+
+bool UASTFireIgnitionZoneComponent::IsSustaining(const AActor* Target) const
+{
+    return IsHeatActive() && IsValid(Target) &&
+        IgnitedDuringOverlap.Contains(TWeakObjectPtr<AActor>(const_cast<AActor*>(Target)));
+}
+
+void UASTFireIgnitionZoneComponent::ClearContacts()
+{
+    for(const auto& Key:IgnitedDuringOverlap)
+        if(auto* Fire=UASTFireBlueprintLibrary::FindFireComponent(Key.Get()))
+            Fire->SetIgniterContact(this,false);
+    IgnitedDuringOverlap.Reset();
+    ContactStartedAt.Reset();
+    SuppressedInitialContacts.Reset();
+}
+
+float UASTFireIgnitionZoneComponent::ContactDelay(float SizeCm)
+{
+    // 50 cm or smaller: 1.5 s; character ~2.8 s; larger bodies heat longer.
+    return 1.5f*FMath::Sqrt(FMath::Max(1.f,SizeCm/50.f));
+}
+
 void UASTFireIgnitionZoneComponent::PollContactOverlaps()
+{
+    if(UWorld* World=GetWorld())PollContactOverlapsAt(World->GetTimeSeconds());
+}
+
+void UASTFireIgnitionZoneComponent::PollContactOverlapsAt(double Now)
 {
     AActor* Owner=GetOwner();
     UWorld* World=GetWorld();
     if(!IsValid(Owner)||!Owner->HasAuthority()||!World)return;
+    if(!IsHeatActive()){ClearContacts();return;}
     TSet<TWeakObjectPtr<AActor>> Touching;
+    TMap<TWeakObjectPtr<AActor>,FVector> Points;
     TArray<AActor*> Native;
     GetOverlappingActors(Native);
-    for(AActor* Actor:Native)
-        if(IsValid(Actor)&&Actor!=Owner)Touching.Add(Actor);
 
     const FVector ZoneCenter=GetComponentLocation();
     const FQuat ZoneRotation=GetComponentQuat();
@@ -121,14 +138,13 @@ void UASTFireIgnitionZoneComponent::PollContactOverlaps()
     {
         const TWeakObjectPtr<AActor> Key(Actor);
         Touching.Add(Key);
-        if(bPrimingContacts){IgnitedDuringOverlap.Add(Key);return;}
-        if(IgnitedDuringOverlap.Contains(Key))return;
+        if(Points.Contains(Key))return;
         FVector Contact=Body->Bounds.GetBox().GetClosestPointTo(ZoneCenter);
         FVector Closest;
         if(Body->GetCollisionEnabled()!=ECollisionEnabled::NoCollision &&
             Body->GetClosestPointOnCollision(ZoneCenter,Closest)>0.f)
             Contact=Closest;
-        IgniteTarget(Actor,Contact);
+        Points.Add(Key,Contact);
     };
     FCollisionQueryParams Query(SCENE_QUERY_STAT(ASTFireContact),false,Owner);
     // Include custom physics object channels; reject static architecture below.
@@ -190,11 +206,53 @@ void UASTFireIgnitionZoneComponent::PollContactOverlaps()
             if(!bSeparated)RecordContact(Actor,Body);
         }
     }
-    // Also retry native contacts if the source was not lit on entry.
-    if(!bPrimingContacts)for(AActor* Actor:Native)
-        if(IsValid(Actor))IgniteTarget(Actor,Actor->GetActorLocation());
-    for(auto It=IgnitedDuringOverlap.CreateIterator();It;++It)
+    // Native-only initial scenery remains opt-in; actual physical contacts
+    // (including props initially resting in fire) always start heating.
+    for(AActor* Actor:Native)
+    {
+        if(!IsValid(Actor)||Actor==Owner)continue;
+        const TWeakObjectPtr<AActor> Key(Actor);
+        if(Touching.Contains(Key))continue;
+        Touching.Add(Key);
+        if(bPrimingContacts)SuppressedInitialContacts.Add(Key);
+        Points.Add(Key,Actor->GetActorLocation());
+    }
+    for(auto It=SuppressedInitialContacts.CreateIterator();It;++It)
         if(!It->IsValid()||!Touching.Contains(*It))It.RemoveCurrent();
+    for(auto It=ContactStartedAt.CreateIterator();It;++It)
+        if(!It.Key().IsValid()||!Touching.Contains(It.Key()))It.RemoveCurrent();
+    for(auto It=IgnitedDuringOverlap.CreateIterator();It;++It)
+        if(!It->IsValid()||!Touching.Contains(*It))
+        {
+            if(auto* Fire=UASTFireBlueprintLibrary::FindFireComponent(It->Get()))
+                Fire->SetIgniterContact(this,false);
+            It.RemoveCurrent();
+        }
+    for(const auto& Pair:Points)
+    {
+        AActor* Target=Pair.Key.Get();
+        if(!IsValid(Target)||SuppressedInitialContacts.Contains(Pair.Key))continue;
+        if(!bIgniteOtherFireSources && Target->GetClass()->GetName().StartsWith(TEXT("BP_AST_FireSource")))continue;
+        auto* Fire=UASTFireBlueprintLibrary::FindFireComponent(Target);
+        if(Fire && Fire->bStartLit)
+        {
+            IgnitedDuringOverlap.Add(Pair.Key);
+            Fire->SetIgniterContact(this,true);
+            continue;
+        }
+        if(IgnitedDuringOverlap.Contains(Pair.Key))
+        {
+            // The component may have been replaced externally. Restart heating.
+            IgnitedDuringOverlap.Remove(Pair.Key);
+            ContactStartedAt.Remove(Pair.Key);
+        }
+        const double Started=ContactStartedAt.FindOrAdd(Pair.Key,Now);
+        const USceneComponent* Mesh=Fire?Fire->FindTargetComponent():
+            UASTFireReactiveComponent::ResolveTargetComponent(Target,NAME_None);
+        const float Size=UASTFireReactiveComponent::MeasureFuelSize(Mesh,180.f);
+        if(Now-Started+1.e-6>=ContactDelay(Size))
+            IgniteTarget(Target,Pair.Value);
+    }
 }
 
 void UASTFireIgnitionZoneComponent::IgniteTarget(
@@ -210,9 +268,10 @@ void UASTFireIgnitionZoneComponent::IgniteTarget(
 
     const TWeakObjectPtr<AActor> WeakTarget(Target);
     if (IgnitedDuringOverlap.Contains(WeakTarget)) return;
-    if (UASTFireBlueprintLibrary::IsActorBurning(Target))
+    if (auto* Fire=UASTFireBlueprintLibrary::FindFireComponent(Target); Fire && Fire->bStartLit)
     {
         IgnitedDuringOverlap.Add(WeakTarget);
+        Fire->SetIgniterContact(this,true);
         return;
     }
 
@@ -231,10 +290,11 @@ void UASTFireIgnitionZoneComponent::IgniteTarget(
         Points = FMath::Max(Points, 7);
     Points = FMath::Clamp(Points, 1, FMath::Clamp(MaxDistributedFlames, 1, 12));
 
-    if (UASTFireBlueprintLibrary::IgniteActor(
+    if (auto* Fire=UASTFireBlueprintLibrary::IgniteActor(
         Target, ContactPosition, IgnitionStrength, Points))
     {
         IgnitedDuringOverlap.Add(WeakTarget);
+        Fire->SetIgniterContact(this,true);
         UE_LOG(LogTemp, Log,
             TEXT("AST Fire: contact ignited %s from %s (%d flame points)"),
             *Target->GetName(), *Owner->GetName(), Points);
