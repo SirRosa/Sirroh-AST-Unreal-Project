@@ -17,7 +17,7 @@ def region(a,b):
 # Critical approved Stage16 lifecycle/timing and strip visual input locked.
 locks=[
 ("void UASTFireFreeFlameComponent::ConfigureGeneration(",
- "void UASTFireFreeFlameComponent::RebuildClusters(","957fd72e"),
+ "void UASTFireFreeFlameComponent::RebuildClusters(","3df1cb20"),
 ("void UASTFireFreeFlameComponent::AdvanceSimulation(",
  "void UASTFireFreeFlameComponent::UpdateSurfaceMap(","99c50fdc"),
 ("void UASTFireFreeFlameComponent::AddStrip(",

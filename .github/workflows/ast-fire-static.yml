@@ -99,7 +99,8 @@ jobs:
             "Automation/ASTFire/deploy_stage6_windows.ps1",
             "Automation/ASTFire/deploy_stage8_windows.ps1",
             "Automation/ASTFire/deploy_stage9_windows.ps1",
-            "Automation/ASTFire/deploy_stage10_windows.ps1"
+            "Automation/ASTFire/deploy_stage10_windows.ps1",
+            "Automation/ASTFire/deploy_stage33_smoke_windows.ps1"
           )) {
             $tokens = $null
             $errors = $null

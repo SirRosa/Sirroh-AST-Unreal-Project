@@ -197,9 +197,9 @@ void UASTFireFreeFlameComponent::ConfigureGeneration(FTongue& Tongue)
     // long broad tongues, all within the same living source field.
     Tongue.GrowSeconds = .48f + .76f * Uniform(Salt + 1);
     Tongue.MaxLength = (19.f + 158.f *
-        FMath::Pow(Uniform(Salt + 2),1.34f)) * Tongue.Scale;
+        FMath::Pow(Uniform(Salt + 2),1.34f)) * Tongue.Scale * SizeScale;
     Tongue.BaseWidth = (5.5f + 38.f *
-        FMath::Pow(Uniform(Salt + 3),1.65f)) * Tongue.Scale;
+        FMath::Pow(Uniform(Salt + 3),1.65f)) * Tongue.Scale * SizeScale;
     Tongue.RemainingFraction = .30f + .27f * Uniform(Salt + 4);
     Tongue.Phase = 6.283185f * Uniform(Salt + 5);
 }

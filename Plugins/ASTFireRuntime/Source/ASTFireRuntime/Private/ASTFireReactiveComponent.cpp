@@ -209,10 +209,11 @@ USceneComponent* UASTFireReactiveComponent::FindTargetComponent() const
 
     for (UMeshComponent* Mesh : Meshes)
     {
-        if (!IsValid(Mesh) || Mesh->IsEditorOnly() || !Mesh->IsVisible()) continue;
+        if (!IsValid(Mesh) || Mesh->IsEditorOnly()) continue;
         if (!PreferredMeshComponentName.IsNone() &&
             Mesh->GetFName() == PreferredMeshComponentName)
             return Mesh;
+        if (!Mesh->IsVisible()) continue;
         const float Radius = Mesh->Bounds.SphereRadius;
         // The torso's skinned mesh is the correct burnable surface. A backpack
         // or attached static weapon may have larger bounds than the character.
@@ -956,8 +957,13 @@ void UASTFireReactiveComponent::InitializeFire()
             NAME_None, RF_Transient);
         if (IsValid(FreeFlames))
         {
+            FreeFlames->SetSizeScale(FlameSize);
             FreeFlames->SetSource(Parent, ProceduralMaterial, SimulationSeed);
-            FreeFlames->SetIgnitionPoints(ExtraLocalPoints);
+            TArray<FVector_NetQuantize10> InitialPoints=ExtraLocalPoints;
+            // A point source must work without collision (e.g. a torch's hidden wick).
+            if(Coverage==EASTFireCoverage::Point && InitialPoints.IsEmpty())
+                InitialPoints.Add(FVector_NetQuantize10(PointOffset));
+            FreeFlames->SetIgnitionPoints(InitialPoints);
             FreeFlames->SetSurfaceMaterial(FireSurfaceMID);
             FreeFlames->SetThermal(Intensity, AmbientWind, 0.75f);
             FreeFlames->RegisterComponent();

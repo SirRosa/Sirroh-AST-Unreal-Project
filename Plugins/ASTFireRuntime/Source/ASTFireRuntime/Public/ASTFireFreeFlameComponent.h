@@ -22,10 +22,12 @@ class ASTFIRERUNTIME_API UASTFireFreeFlameComponent : public UActorComponent
 
 public:
     UASTFireFreeFlameComponent();
+    void SetSizeScale(float Value) { SizeScale=FMath::Max(.01f,Value); }
     void SetSource(USceneComponent* InSource, UMaterialInterface* InMaterial, int32 InSeed);
     void SetThermal(float InHeat, const FVector& InWorldWind, float InEnergy);
     void SetSurfaceMaterial(UMaterialInstanceDynamic* InMaterial);
     void SetIgnitionPoints(const TArray<FVector_NetQuantize10>& InPoints);
+    int32 GetTongueCount() const { return Tongues.Num(); }
     float GetVisualEnergy() const { return VisualEnergy; }
     void SetFlamesVisible(bool bVisible);
 
@@ -40,6 +42,7 @@ protected:
         FActorComponentTickFunction* ThisTickFunction) override;
 
 private:
+    float SizeScale=1.f;
     static constexpr int32 MaxTongues = 15;
     static constexpr int32 RingsPerTongue = 9;
     static constexpr int32 MaxDetached = 16;

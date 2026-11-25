@@ -54,3 +54,13 @@ def tone(height,light,facing,core):
     return min(4,int(shade*5))
 assert {tone(h,l,f,k) for h in (0,.25,.5,.75,1) for l in (0,.3,.6,1) for f in (0,.5,1) for k in (0,.5,1)}==set(range(5))
 print("Stage33 audit: collision fixtures and five achievable light bands")
+
+# Preserve local torch integration and the game module's existing imported ABI.
+r=(p/"Private/ASTFireReactiveComponent.cpp").read_text()
+assert "int32 GetTongueCount() const { return Tongues.Num(); }" in h
+assert "void SetSizeScale(float Value)" in h
+assert c.count("* Tongue.Scale * SizeScale;")==2
+assert "FreeFlames->SetSizeScale(FlameSize);" in r
+assert "InitialPoints.Add(FVector_NetQuantize10(PointOffset));" in r
+assert r.index("Mesh->GetFName() == PreferredMeshComponentName")<r.index("if (!Mesh->IsVisible()) continue;")
+print("Stage33: preserve existing torch point-source and game-module ABI")
