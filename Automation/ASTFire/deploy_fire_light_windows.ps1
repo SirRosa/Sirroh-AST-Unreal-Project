@@ -14,11 +14,11 @@ function Assert-EditorClosed {
 # Building in an isolated clone is safe while the editor is open.
 # The existing Assert-EditorClosed after ABI checks still blocks all live writes.
 $stamp=Get-Date -Format 'yyyyMMdd_HHmmss'
-$root=Join-Path $env:TEMP ('ASTFireLighting_'+$stamp)
+$root=Join-Path $env:TEMP ('ASTFireLightingBounded_'+$stamp)
 $source=Join-Path $root 'Source'
 $built=Join-Path $root 'Built'
 $report=Join-Path $ProjectRoot 'Saved\ChatGPT\NiagaraFire\FireV4'
-$backup=Join-Path $report ('Backup_Lighting_'+$stamp)
+$backup=Join-Path $report ('Backup_LightingBounded_'+$stamp)
 New-Item -ItemType Directory -Force -Path $root,$report | Out-Null
 & git clone --quiet --depth 1 --branch work/niagara-fire-stage2 'https://github.com/SirRosa/Sirroh-AST-Unreal-Project.git' $source
 if($LASTEXITCODE -ne 0){throw 'Clone failed'}
@@ -36,10 +36,10 @@ $files=@(
 $sourcePlugin=Join-Path $source $plugin
 $livePlugin=Join-Path $ProjectRoot $plugin
 $baseline=@{
- "$plugin\Source\ASTFireRuntime\Private\ASTFireReactiveComponent.cpp"=@('fb64038d92e18ce5c18bfc25712ae7dfa436ea4b')
- "$plugin\Source\ASTFireRuntime\Public\ASTFireReactiveComponent.h"=@('c5935079095eb86d42dfdcac97738e2b2e55ad35')
- "$plugin\Source\ASTFireRuntime\Private\ASTFireFreeFlameComponent.cpp"=@('3760a0499b01ee2a7be725420e6692501269fbb4')
- "$plugin\Source\ASTFireRuntime\Public\ASTFireFreeFlameComponent.h"=@('dc31a18a7226146d41a70a733da64476305c93de')
+ "$plugin\Source\ASTFireRuntime\Private\ASTFireReactiveComponent.cpp"=@('4aa57a8a5260abeba5a5daf2ee20c1f2a25addb3')
+ "$plugin\Source\ASTFireRuntime\Public\ASTFireReactiveComponent.h"=@('075997b66b6d0323cc1c4b7df1d15b7274102e10')
+ "$plugin\Source\ASTFireRuntime\Private\ASTFireFreeFlameComponent.cpp"=@('a5b099d121bbcbf9692ea8399745c42643d2cd3b')
+ "$plugin\Source\ASTFireRuntime\Public\ASTFireFreeFlameComponent.h"=@('6c96b7e9723790605fab64c3bda66cfe86be53d7')
 }
 foreach($rel in $baseline.Keys){
  $current=(& git -C $ProjectRoot hash-object ('--path='+$rel.Replace('\','/')) (Join-Path $ProjectRoot $rel)).Trim()
@@ -123,6 +123,15 @@ try {
  $data=Get-Content -LiteralPath $result -Raw|ConvertFrom-Json
  Write-Output ('FIRE_LIGHT_AUDIT='+($data|ConvertTo-Json -Depth 6 -Compress))
  if($exit -ne 0 -or $data.status -ne 'PASS'){throw 'Fire lighting audit failed'}
+ $gpuResult=Join-Path $report 'fire_light_gpu_result.json'
+ if(Test-Path $gpuResult){Move-Item $gpuResult (Join-Path $backup 'previous_fire_light_gpu_result.json') -Force}
+ $gpuLog=Join-Path $report ('LightGPU_'+$stamp+'.log')
+ & $ue $project '-run=pythonscript' ('-script='+$script.Replace('\','/')) '-unattended' '-nop4' '-nosplash' '-AllowCommandletRendering' '-RenderOffscreen' '-d3d12' *> $gpuLog
+ $gpuExit=$LASTEXITCODE
+ if(!(Test-Path $gpuResult)){Get-Content $gpuLog -Tail 40;throw "No GPU lighting audit result ($gpuExit)"}
+ $gpu=Get-Content $gpuResult -Raw|ConvertFrom-Json
+ Write-Output ('FIRE_LIGHT_GPU_AUDIT='+($gpu|ConvertTo-Json -Depth 6 -Compress))
+ if($gpuExit -ne 0 -or $gpu.status -ne 'PASS'){throw 'Manual exposure GPU audit failed'}
  Write-Output 'FIRE_LIGHT_INSTALL_SUCCESS'
 } catch {
  $why=$_.Exception.Message

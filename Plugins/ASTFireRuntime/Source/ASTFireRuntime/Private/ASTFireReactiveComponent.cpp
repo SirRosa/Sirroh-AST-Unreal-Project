@@ -21,6 +21,12 @@
 #include "GameFramework/Actor.h"
 #include "GameFramework/Pawn.h"
 #include "UObject/ConstructorHelpers.h"
+#include "Components/SceneCaptureComponent2D.h"
+#include "Engine/TextureRenderTarget2D.h"
+#include "ImageUtils.h"
+#include "RenderingThread.h"
+#include "Misc/Paths.h"
+#include "HAL/FileManager.h"
 
 namespace ASTFire
 {
@@ -1149,15 +1155,19 @@ void UASTFireReactiveComponent::ConfigureFireLight(USceneComponent* Parent)
 {
     if(!IsValid(Light)||!IsValid(Parent))return;
     Light->SetMobility(EComponentMobility::Movable);
-    Light->SetUseInverseSquaredFalloff(true);
-    Light->SetIntensityUnits(ELightUnits::Lumens);
+    // PWG's orthographic camera uses manual exposure at unity, not a
+    // photographic EV. Physical lumens at this exposure create a clipped
+    // orange disk. Use bounded, smoothly decaying local irradiance instead.
+    Light->SetUseInverseSquaredFalloff(false);
+    Light->SetIntensityUnits(ELightUnits::Unitless);
+    Light->SetLightFalloffExponent(4.5f);
     Light->SetCastShadows(true);
-    // A neutral tint with a physically meaningful warm illuminant, rather
-    // than an over-saturated orange RGB multiplier.
     Light->SetLightColor(FLinearColor::White);
     Light->SetUseTemperature(true);
-    Light->SetTemperature(2000.f);
-    Light->SetVolumetricScatteringIntensity(.45f);
+    Light->SetTemperature(3400.f);
+    Light->SetSpecularScale(.12f);
+    Light->SetIndirectLightingIntensity(.25f);
+    Light->SetVolumetricScatteringIntensity(.025f);
     bFireLightReady=false;
 }
 
@@ -1212,22 +1222,28 @@ void UASTFireReactiveComponent::UpdateFireLight(float Dt,float Time,float FlameE
             if(FreeFlames->GetFireLightCenter(HotCenter))Center.Z=HotCenter.Z;
         }
     }
-    const float SoftRadius=FMath::Clamp(Width*.33f,1.5f,35.f);
+    const float SoftRadius=FMath::Clamp(Width*.52f,2.0f,45.f);
     Center+=FVector(Slow,Gust,Fast*.6f)*SoftRadius*.40f;
     Center+=SmoothedFlow.GetClampedToMaxSize(300.f)*(.018f*FMath::Min(Scale,2.f));
-    // Fixed physical reach for the fuel size; brightness falls naturally
-    // with inverse-square distance. Do not pulse the attenuation sphere.
-    const float Reach=LightRadius*FMath::Clamp(FMath::Sqrt(SizeFactor),.23f,2.f);
-    const float WantedLumens=FMath::Max(0.f,LightPower)*SizeFactor*Heat*
-        (.58f+.42f*E)*Flicker;
-    const float WantedKelvin=FMath::Clamp(1910.f+230.f*E+105.f*Fast+65.f*Slow-160.f*(1.f-Heat),1650.f,2350.f);
+    // With non-inverse-square attenuation the shader's radial kernel is
+    // pow(saturate(1-r*r),4.5). Its finite peak preserves near-field detail,
+    // and both irradiance and slope approach zero at the outer boundary.
+    // Preserve existing authored LightPower (450 = reference), not its
+    // previous interpretation as hundreds of physical lumens.
+    const float Reach=FMath::Clamp(LightRadius*FMath::Clamp(FMath::Sqrt(SizeFactor)*1.25f,.32f,1.65f),0.f,1200.f);
+    const float Authored=FMath::Clamp(LightPower/450.f,0.f,1.6f);
+    const float SizeBrightness=FMath::Pow(FMath::Max(.001f,SizeFactor),.25f);
+    // Legacy member name retained for ABI; the value is now unitless.
+    const float WantedLumens=FMath::Min(2.35f,1.9f*Authored*SizeBrightness*Heat*
+        (.78f+.22f*E)*Flicker);
+    const float WantedKelvin=FMath::Clamp(3220.f+200.f*E+95.f*Fast+65.f*Slow-110.f*(1.f-Heat),3000.f,3650.f);
     const bool bSnap=!bFireLightReady||Dt<=0.f||FVector::DistSquared(Center,FireLightCenter)>FMath::Square(100.f);
     FireLightCenter=bSnap?Center:FMath::VInterpTo(FireLightCenter,Center,Dt,17.f);
     FireLightLumens=bSnap?WantedLumens:FMath::FInterpTo(FireLightLumens,WantedLumens,Dt,15.f);
     FireLightKelvin=bSnap?WantedKelvin:FMath::FInterpTo(FireLightKelvin,WantedKelvin,Dt,8.f);
     bFireLightReady=true;
     Light->SetWorldLocation(FireLightCenter);
-    Light->SetIntensity(Heat<=.005f?0.f:FireLightLumens);
+    Light->SetIntensity(Heat<=.005f || Reach<=1.f?0.f:FireLightLumens);
     Light->SetTemperature(FireLightKelvin);
     if(!FMath::IsNearlyEqual(Light->AttenuationRadius,Reach,.5f))Light->SetAttenuationRadius(Reach);
     if(!FMath::IsNearlyEqual(Light->SourceRadius,SoftRadius,.1f))Light->SetSourceRadius(SoftRadius);
@@ -1266,23 +1282,120 @@ FString UASTFireReactiveComponent::RunFireLightAudit()
         RangeDrift=FMath::Max(RangeDrift,FMath::Abs(L->AttenuationRadius-Radius));
         Near=FMath::Max(Near,float(FVector::Distance(First,L->GetComponentLocation())));
     }
-    const bool bPhotometric=L->bUseInverseSquaredFalloff && L->CastShadows &&
+    const bool bPhotometric=!L->bUseInverseSquaredFalloff && L->CastShadows &&
+        L->LightFalloffExponent>=4.f && L->SpecularScale<=.15f && Max<=2.35f &&
         L->SourceRadius>1.f && L->bUseTemperature && RangeDrift<.1f &&
         Max>Min*1.12f && Min>0.f && MaxK-MinK>30.f && Near>.5f;
     const bool bWick=FVector::DistSquared(L->GetComponentLocation(),Root->GetComponentTransform().TransformPosition(Fire->PointOffset))<FMath::Square(55.f)
         && L->GetComponentLocation().Z>Fire->PointOffset.Z;
     const float NormalLumens=L->Intensity;
     Fire->FlameSize=.15f;Fire->UpdateFireLight(0.f,6.f,.7f);
-    const bool bScale=L->Intensity<NormalLumens*.25f && L->AttenuationRadius<Radius*.6f;
+    const bool bScale=L->Intensity<NormalLumens*.8f && L->AttenuationRadius<Radius*.6f;
+    Fire->LightPower=50000.f;Fire->UpdateFireLight(0.f,6.1f,1.f);
+    const bool bCap=L->Intensity<=2.35f;
+    Fire->LightPower=450.f;
     Fire->FlameSize=1.f;Fire->Coverage=EASTFireCoverage::Bounds;
     Fire->UpdateFireLight(0.f,7.f,.7f);
     const bool bSurface=L->GetComponentLocation().Z>Root->Bounds.Origin.Z+Root->Bounds.BoxExtent.Z;
     Fire->SmoothIntensity=0.f;Fire->UpdateFireLight(.04f,8.f,0.f);
     const bool bOff=L->Intensity==0.f && FMath::IsNearlyEqual(Unrelated->Intensity,123.f);
     Fire->DestroyComponent();Host->Destroy();World->DestroyWorld(false);
-    return FString::Printf(TEXT("%s:lumens=%.1f..%.1f;kelvin=%.1f..%.1f;rangeDrift=%.3f;motion=%.2f;wick=%d;scale=%d;surface=%d;off=%d;photometric=%d"),
-        bPhotometric&&bWick&&bScale&&bSurface&&bOff?TEXT("PASS"):TEXT("FAIL"),Min,Max,MinK,MaxK,RangeDrift,Near,
+    return FString::Printf(TEXT("%s:unitless=%.3f..%.3f;kelvin=%.1f..%.1f;rangeDrift=%.3f;motion=%.2f;wick=%d;scale=%d;surface=%d;off=%d;bounded=%d"),
+        bPhotometric&&bWick&&bScale&&bSurface&&bOff&&bCap?TEXT("PASS"):TEXT("FAIL"),Min,Max,MinK,MaxK,RangeDrift,Near,
         int32(bWick),int32(bScale),int32(bSurface),int32(bOff),int32(bPhotometric));
+#else
+    return TEXT("EDITOR_ONLY");
+#endif
+}
+
+FString UASTFireReactiveComponent::RunFireLightCapture(UClass* TorchClass)
+{
+#if WITH_EDITOR
+    if(!TorchClass||!TorchClass->IsChildOf(AActor::StaticClass()))return TEXT("FAIL:TORCH_CLASS");
+    UWorld* World=UWorld::CreateWorld(EWorldType::Game,false);
+    if(!World)return TEXT("FAIL:NO_WORLD");
+    AActor* Torch=World->SpawnActor<AActor>(TorchClass,FVector::ZeroVector,FRotator::ZeroRotator);
+    AActor* Wall=World->SpawnActor<AActor>();
+    AActor* Camera=World->SpawnActor<AActor>();
+    if(!Torch||!Wall||!Camera){World->DestroyWorld(false);return TEXT("FAIL:ACTORS");}
+    auto* Fire=Torch->FindComponentByClass<UASTFireReactiveComponent>();
+    if(!Fire){World->DestroyWorld(false);return TEXT("FAIL:NO_FIRE");}
+    Fire->InitializeFire();
+    auto* Parent=Fire->FindTargetComponent();
+    if(!Parent||!IsValid(Fire->Light)){World->DestroyWorld(false);return TEXT("FAIL:NO_WICK_LIGHT");}
+    Fire->bPlaying=true;Fire->SmoothIntensity=1.f;Fire->bStartLit=true;Fire->Intensity=1.f;
+    const FVector Wick=Parent->GetComponentTransform().TransformPosition(Fire->PointOffset);
+    auto* Mesh=NewObject<UStaticMeshComponent>(Wall);
+    Mesh->SetStaticMesh(LoadObject<UStaticMesh>(nullptr,TEXT("/Engine/BasicShapes/Cube.Cube")));
+    Wall->SetRootComponent(Mesh);Mesh->SetMobility(EComponentMobility::Movable);
+    Mesh->RegisterComponent();Mesh->SetWorldScale3D(FVector(.15f,8.f,6.f));
+    Mesh->SetWorldLocation(Wick+FVector(-55.f,0,0));
+    if(auto* Mat=LoadObject<UMaterialInterface>(nullptr,TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial")))
+        Mesh->SetMaterial(0,Mat);
+    auto* Capture=NewObject<USceneCaptureComponent2D>(Camera);
+    Camera->SetRootComponent(Capture);
+    Capture->bCaptureEveryFrame=false;Capture->bCaptureOnMovement=false;
+    Capture->ProjectionType=ECameraProjectionMode::Orthographic;
+    Capture->OrthoWidth=800.f;Capture->CaptureSource=SCS_FinalColorLDR;
+    auto& PP=Capture->PostProcessSettings;
+    PP.bOverride_AutoExposureMethod=true;PP.AutoExposureMethod=AEM_Manual;
+    PP.bOverride_AutoExposureApplyPhysicalCameraExposure=true;PP.AutoExposureApplyPhysicalCameraExposure=false;
+    PP.bOverride_AutoExposureBias=true;PP.AutoExposureBias=0.f;
+    Capture->PostProcessBlendWeight=1.f;
+    Capture->ShowFlags.SetTemporalAA(false);Capture->ShowFlags.SetMotionBlur(false);
+    auto* RT=NewObject<UTextureRenderTarget2D>(Capture);
+    RT->RenderTargetFormat=RTF_RGBA8_SRGB;RT->InitAutoFormat(512,512);
+    RT->UpdateResourceImmediate(true);Capture->TextureTarget=RT;Capture->RegisterComponent();
+    Capture->SetWorldLocation(Wick+FVector(1000,0,-45.f));Capture->SetWorldRotation(FRotator(0,180,0));
+    for(int32 I=0;I<35;++I)
+    {
+        Fire->UpdateFireLight(.04f,I*.04f,.7f);
+        if(IsValid(Fire->FreeFlames))
+        {
+            Fire->FreeFlames->SetThermal(1.f,FVector::ZeroVector,.7f);
+            Fire->FreeFlames->TickComponent(.04f,LEVELTICK_All,&Fire->FreeFlames->PrimaryComponentTick);
+        }
+    }
+    const float Peak=Fire->Light->Intensity;
+    const float Radius=Fire->Light->AttenuationRadius;
+    const FString Folder=FPaths::ProjectSavedDir()/TEXT("ChatGPT/NiagaraFire/FireV4/LightingGPU");
+    IFileManager::Get().MakeDirectory(*Folder,true);
+    auto Frame=[&](const TCHAR* Name,TArray<FColor>& Pixels)
+    {
+        World->SendAllEndOfFrameUpdates();Capture->CaptureScene();FlushRenderingCommands();
+        FTextureRenderTargetResource* Resource=RT->GameThread_GetRenderTargetResource();
+        if(!Resource||!Resource->ReadPixels(Pixels))return false;
+        TUniquePtr<FArchive> Ar(IFileManager::Get().CreateFileWriter(*(Folder/Name)));
+        return Ar&&FImageUtils::ExportRenderTarget2DAsPNG(RT,*Ar);
+    };
+    TArray<FColor> Lit,Dark;
+    const bool bLit=Frame(TEXT("Torch_Manual_Lit.png"),Lit);
+    Fire->Light->SetIntensity(0.f);
+    const bool bDark=Frame(TEXT("Torch_Manual_Off.png"),Dark);
+    int32 NearN=0,FarN=0,Clipped=0;float Near=0.f,Far=0.f;
+    if(bLit&&bDark&&Lit.Num()==512*512&&Dark.Num()==Lit.Num())
+    {
+        // The side regions avoid the torch and test illuminated WALL
+        // pixels. Compare with the same geometry, same exposure, light off.
+        for(int32 Y=180;Y<260;++Y)for(int32 X=20;X<492;++X)
+        {
+            const int32 DX=FMath::Abs(X-256);
+            const auto& A=Lit[Y*512+X];const auto& B=Dark[Y*512+X];
+            const float Delta=(float(A.R)+A.G+A.B-float(B.R)-B.G-B.B)/3.f;
+            if(DX>=35&&DX<80){++NearN;Near+=Delta;Clipped+=A.R>=250&&A.G>=250&&A.B>=250;}
+            if(DX>=150&&DX<210){++FarN;Far+=Delta;}
+        }
+    }
+    Near/=FMath::Max(1,NearN);Far/=FMath::Max(1,FarN);
+    const float ClipRate=float(Clipped)/FMath::Max(1,NearN);
+    TArray<UPointLightComponent*> Lights;Torch->GetComponents<UPointLightComponent>(Lights);
+    int32 Owned=0,Other=0;
+    for(auto* L:Lights)if(IsValid(L)){if(L==Fire->Light)++Owned;else if(L->IsVisible()&&L->Intensity>0.f)++Other;}
+    const bool bPass=bLit&&bDark&&NearN>0&&Near>2.f&&Near>Far+1.f&&ClipRate<.01f&&Peak>0.f&&Peak<=2.35f&&Owned==1&&Other==0;
+    const float Scale=Fire->FlameSize,Power=Fire->LightPower;
+    World->DestroyWorld(false);
+    return FString::Printf(TEXT("%s:scale=%.3f;authoredPower=%.2f;output=%.3f;radius=%.1f;nearDelta=%.2f;farDelta=%.2f;whiteClip=%.4f;owned=%d;otherActive=%d"),
+        bPass?TEXT("PASS"):TEXT("FAIL"),Scale,Power,Peak,Radius,Near,Far,ClipRate,Owned,Other);
 #else
     return TEXT("EDITOR_ONLY");
 #endif

@@ -34,8 +34,8 @@ for token in (
     "AnchorAcceleration", "DepthGust", "SmoothedFlow",
     "Wind * 19.5f", "Field.Breath", "LocalLife", "LocalAge",
     "Field.VisualEnergy", "LightEnvelope", "Light->SetAttenuationRadius",
-    "Light->SetIntensity(Heat<=.005f?0.f:FireLightLumens)",
-    "Light->SetUseInverseSquaredFalloff(true)", "Light->SetCastShadows(true)",
+    "Light->SetIntensity(Heat<=.005f || Reach<=1.f?0.f:FireLightLumens)",
+    "Light->SetUseInverseSquaredFalloff(false)", "Light->SetCastShadows(true)",
 ):
     assert token in runtime, "Missing reactive life/light: " + token
 assert "FMath::Clamp(DesiredFlamePoints, 1, 16)" in api

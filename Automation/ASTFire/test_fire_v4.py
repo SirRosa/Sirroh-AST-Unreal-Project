@@ -18,7 +18,7 @@ def region(a,b): return c[c.index(a):c.index(b,c.index(a))]
 for a,b,expected in [["void UASTFireFreeFlameComponent::UpdateSparks(","void UASTFireFreeFlameComponent::UpdateSmoke(","1408cade"],["    // Collision volume is also the exact support of visible density.","    if (bVisible && Heat>.10f && Active>0)","413ed2d7"],["// Perspective-correct density raster, with per-cell collision-safe depth.","FString UASTFireFreeFlameComponent::RunSmokeAudit(","ad9ffb29"]]:
     assert fnv(region(a,b))==expected, a
 # Approved lifetime change only; visual source remains pinned to accepted main.
-assert fnv(r)=="3344b99a","unexpected burn/torch runtime change"
+assert fnv(r)=="77febc36","unexpected burn/torch runtime change"
 assert fnv(c[:c.index("\nbool UASTFireFreeFlameComponent::GetFireLightCenter(")])=="73dbf86a","accepted fire rendering changed"
 for token in ("GetTongueCount()", "SetSizeScale(", "RunSmokeAudit(", "RunFireV4Audit("):
     assert token in h,token
@@ -131,10 +131,25 @@ assert 'WorldRequired>FireVisualWidth' in c
 assert 'MeshPitchChanges<=4' in c
 
 # Light changes cannot alter the accepted simulation or its envelope.
-assert "Light->SetUseInverseSquaredFalloff(true);" in r
+assert "Light->SetUseInverseSquaredFalloff(false);" in r
 assert "Light->SetCastShadows(true);" in r
-assert "ELightUnits::Lumens" in r
+assert "ELightUnits::Unitless" in r
 assert "RangeDrift<.1f" in r
 assert "FMath::PerlinNoise1D" in r
 assert "0.09f + 0.91f * VisualEnergy + 0.04f" in r
 assert "RunFireLightAudit()" in r
+
+# Manual-exposure regression: a bounded smooth kernel, not an unbounded hot spot.
+assert "Light->SetLightFalloffExponent(4.5f)" in r
+assert "FMath::Min(2.35f" in r
+assert "ClipRate<.01f" in r and "Near>Far+1.f" in r
+assert "RunFireLightCapture(UClass* TorchClass)" in r
+assert "PP.AutoExposureApplyPhysicalCameraExposure=false" in r
+assert "Light->SetSpecularScale(.12f)" in r
+assert "Light->SetVolumetricScatteringIntensity(.025f)" in r
+for size in (.05,.15,.25,1,4,8):
+    for power in (0,450,1300,50000):
+        peak=min(2.35,1.9*min(1.6,max(0,power/450))*size**(1.35*.25)*1.48)
+        assert 0<=peak<=2.35
+for dist in (.0,.25,.5,.75,.95,1.):
+    assert 0<=(1-dist*dist)**4.5<=1

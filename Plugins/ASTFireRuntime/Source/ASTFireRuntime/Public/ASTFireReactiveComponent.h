@@ -170,7 +170,7 @@ public:
     FVector PointOffset = FVector::ZeroVector;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="AST Fire|Light", meta=(ClampMin="0"))
-    float LightPower = 450.0f;
+    float LightPower = 450.0f; // Legacy authored reference; converted to bounded game-exposure output.
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="AST Fire|Light", meta=(ClampMin="0"))
     float LightRadius = 525.0f;
@@ -224,6 +224,9 @@ public:
 
     UFUNCTION(BlueprintCallable, Category="AST Fire|Diagnostics")
     static FString RunFireLightAudit();
+
+    UFUNCTION(BlueprintCallable, Category="AST Fire|Diagnostics")
+    static FString RunFireLightCapture(UClass* TorchClass);
 
 protected:
     virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
