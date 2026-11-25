@@ -39,7 +39,7 @@ UASTFireReactiveComponent* UASTFireBlueprintLibrary::IgniteActor(
 
     // A character is not a cylinder: give articulated limbs multiple
     // surface-bound clusters even for callers who request a single point.
-    if (Target->FindComponentByClass<USkeletalMeshComponent>())
+    if (Target->FindComponentByClass<USkinnedMeshComponent>())
         DesiredFlamePoints = FMath::Max(DesiredFlamePoints, 7);
     Fire->SetFireCoverage(
         EASTFireCoverage::Bounds,
