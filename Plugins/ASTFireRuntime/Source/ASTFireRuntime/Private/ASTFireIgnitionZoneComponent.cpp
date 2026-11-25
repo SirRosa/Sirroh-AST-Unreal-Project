@@ -1,6 +1,8 @@
 #include "ASTFireIgnitionZoneComponent.h"
 
 #include "ASTFireBlueprintLibrary.h"
+#include "ASTFireReactiveComponent.h"
+#include "Engine/StaticMesh.h"
 #include "GameFramework/Actor.h"
 #include "Components/PrimitiveComponent.h"
 #include "Components/SkeletalMeshComponent.h"
@@ -119,10 +121,11 @@ void UASTFireIgnitionZoneComponent::PollContactOverlaps()
         const bool bPawn=Actor->IsA<APawn>();
         const bool bMesh=Body->IsA<UStaticMeshComponent>()||Body->IsA<USkinnedMeshComponent>();
         const bool bPhysical=Body->IsSimulatingPhysics()||
-            (bMesh&&Body->Mobility==EComponentMobility::Movable&&Body->IsVisible()&&!Body->bHiddenInGame);
+            (bMesh&&Body->GetMobility()==EComponentMobility::Movable&&Body->IsVisible()&&!Body->bHiddenInGame);
         if(!bPawn&&!bPhysical)continue;
         const TWeakObjectPtr<AActor> Key(Actor);
         Touching.Add(Key);
+        if(IgnitedDuringOverlap.Contains(Key))continue;
         FVector Contact=Body->Bounds.Origin;
         FVector Closest;
         if(Body->GetClosestPointOnCollision(GetComponentLocation(),Closest)>=0.f)
@@ -178,4 +181,57 @@ void UASTFireIgnitionZoneComponent::IgniteTarget(
             TEXT("AST Fire: contact ignited %s from %s (%d flame points)"),
             *Target->GetName(), *Owner->GetName(), Points);
     }
+}
+
+FString UASTFireIgnitionZoneComponent::RunContactAudit()
+{
+#if WITH_EDITOR
+    UWorld* World=UWorld::CreateWorld(EWorldType::Game,false);
+    UStaticMesh* Cube=LoadObject<UStaticMesh>(nullptr,TEXT("/Engine/BasicShapes/Cube.Cube"));
+    if(!World||!Cube){if(World)World->DestroyWorld(false);return TEXT("FAIL:world/assets");}
+    AActor* Source=World->SpawnActor<AActor>();
+    AActor* Prop=World->SpawnActor<AActor>();
+    if(!Source||!Prop){World->DestroyWorld(false);return TEXT("FAIL:actors");}
+    auto* Zone=NewObject<UASTFireIgnitionZoneComponent>(Source);
+    Source->SetRootComponent(Zone);
+    Zone->RegisterComponent();
+    Zone->SetBoxExtent(FVector(75));
+    Zone->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+    Zone->SetCollisionObjectType(ECC_WorldDynamic);
+    Zone->SetCollisionResponseToAllChannels(ECR_Overlap);
+    Zone->bRequireSourceBurning=false;
+    auto* Body=NewObject<UStaticMeshComponent>(Prop);
+    Body->SetStaticMesh(Cube);
+    Body->SetMobility(EComponentMobility::Movable);
+    Body->SetCollisionProfileName(TEXT("BlockAllDynamic"));
+    Body->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+    Body->SetGenerateOverlapEvents(false);
+    Prop->SetRootComponent(Body);Body->RegisterComponent();
+    auto* Fire=NewObject<UASTFireReactiveComponent>(Prop);
+    Prop->AddInstanceComponent(Fire);
+    Fire->bStartLit=false;Fire->Intensity=0.f;
+    Fire->bEnableProceduralFlames=false;Fire->bEnableFlameCards=false;
+    Fire->bEnableNiagara=false;Fire->bEnableSurfaceFire=false;
+    Fire->RegisterComponent();
+    Prop->SetActorLocation(FVector(400,0,0));
+    Zone->PollContactOverlaps();
+    const bool bOutside=!UASTFireBlueprintLibrary::IsActorBurning(Prop);
+    Prop->SetActorLocation(FVector::ZeroVector);
+    Zone->PollContactOverlaps();
+    const bool bIgnited=UASTFireBlueprintLibrary::IsActorBurning(Prop);
+    UASTFireBlueprintLibrary::ExtinguishActor(Prop);
+    Zone->PollContactOverlaps();
+    const bool bNoDuplicate=!UASTFireBlueprintLibrary::IsActorBurning(Prop);
+    Prop->SetActorLocation(FVector(400,0,0));
+    Zone->PollContactOverlaps();
+    Prop->SetActorLocation(FVector::ZeroVector);
+    Zone->PollContactOverlaps();
+    const bool bReentry=UASTFireBlueprintLibrary::IsActorBurning(Prop);
+    World->DestroyWorld(false);
+    return FString::Printf(TEXT("%s:outside=%d;no_overlap_events=%d;no_duplicate=%d;reentry=%d"),
+        bOutside&&bIgnited&&bNoDuplicate&&bReentry?TEXT("PASS"):TEXT("FAIL"),
+        int32(bOutside),int32(bIgnited),int32(bNoDuplicate),int32(bReentry));
+#else
+    return TEXT("EDITOR_ONLY");
+#endif
 }
