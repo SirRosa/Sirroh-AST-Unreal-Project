@@ -18,8 +18,8 @@ def region(a,b): return c[c.index(a):c.index(b,c.index(a))]
 for a,b,expected in [["void UASTFireFreeFlameComponent::UpdateSparks(","void UASTFireFreeFlameComponent::UpdateSmoke(","1408cade"],["    // Collision volume is also the exact support of visible density.","    if (bVisible && Heat>.10f && Active>0)","413ed2d7"],["// Perspective-correct density raster, with per-cell collision-safe depth.","FString UASTFireFreeFlameComponent::RunSmokeAudit(","ad9ffb29"]]:
     assert fnv(region(a,b))==expected, a
 # Approved lifetime change only; visual source remains pinned to accepted main.
-assert fnv(r)=="c6d1d32b","unexpected burn/torch runtime change"
-assert fnv(c)=="73dbf86a","accepted fire rendering changed"
+assert fnv(r)=="3344b99a","unexpected burn/torch runtime change"
+assert fnv(c[:c.index("\nbool UASTFireFreeFlameComponent::GetFireLightCenter(")])=="73dbf86a","accepted fire rendering changed"
 for token in ("GetTongueCount()", "SetSizeScale(", "RunSmokeAudit(", "RunFireV4Audit("):
     assert token in h,token
 for token in ("GetSkinnedVertexPosition","LineTraceComponent(","ConnectedRoots.Add(",
@@ -129,3 +129,12 @@ assert 'CrateSaved>=4 && CrateAnchors>=30 && CrateCuts>=2' in c
 
 assert 'WorldRequired>FireVisualWidth' in c
 assert 'MeshPitchChanges<=4' in c
+
+# Light changes cannot alter the accepted simulation or its envelope.
+assert "Light->SetUseInverseSquaredFalloff(true);" in r
+assert "Light->SetCastShadows(true);" in r
+assert "ELightUnits::Lumens" in r
+assert "RangeDrift<.1f" in r
+assert "FMath::PerlinNoise1D" in r
+assert "0.09f + 0.91f * VisualEnergy + 0.04f" in r
+assert "RunFireLightAudit()" in r

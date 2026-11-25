@@ -30,6 +30,7 @@ public:
     void SetIgnitionPoints(const TArray<FVector_NetQuantize10>& InPoints);
     int32 GetTongueCount() const { return Tongues.Num(); }
     float GetVisualEnergy() const { return VisualEnergy; }
+    bool GetFireLightCenter(FVector& Out) const;
     void SetFlamesVisible(bool bVisible);
 
     /** Editor commandlet audit: isolated transient physics world, no map writes. */

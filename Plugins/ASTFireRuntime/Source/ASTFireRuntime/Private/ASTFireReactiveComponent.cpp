@@ -153,7 +153,7 @@ void UASTFireReactiveComponent::BeginPlay()
         bAutoExtinguish = false;
     InitializeFire();
 
-    if (Light) Light->SetIntensity(LightPower * SmoothIntensity);
+    if (Light) UpdateFireLight(0.f,GetWorld()?GetWorld()->GetTimeSeconds():0.f,.65f);
     UpdateVisibility();
 
     AActor* Owner = GetOwner();
@@ -939,18 +939,13 @@ void UASTFireReactiveComponent::InitializeFire()
         {
             GeneratedLight->ComponentTags.AddUnique(ASTFire::FireLightTag);
             GeneratedLight->SetMobility(EComponentMobility::Movable);
-            GeneratedLight->SetCastShadows(false);
+            GeneratedLight->SetCastShadows(true);
             GeneratedLight->SetupAttachment(Parent);
             GeneratedLight->RegisterComponent();
             Light = GeneratedLight;
         }
     }
-    if (Light)
-    {
-        Light->SetMobility(EComponentMobility::Movable);
-        Light->SetAttenuationRadius(LightRadius);
-        Light->SetLightColor(FLinearColor(1.0f, 0.42f, 0.21f));
-    }
+    if (Light) ConfigureFireLight(Parent);
 
     if (bEnableProceduralFlames && !bUseLegacyHeatGrid && ProceduralMaterial)
     {
@@ -1150,6 +1145,149 @@ void UASTFireReactiveComponent::InitializeFire()
     UpdateVisibility();
 }
 
+void UASTFireReactiveComponent::ConfigureFireLight(USceneComponent* Parent)
+{
+    if(!IsValid(Light)||!IsValid(Parent))return;
+    Light->SetMobility(EComponentMobility::Movable);
+    Light->SetUseInverseSquaredFalloff(true);
+    Light->SetIntensityUnits(ELightUnits::Lumens);
+    Light->SetCastShadows(true);
+    // A neutral tint with a physically meaningful warm illuminant, rather
+    // than an over-saturated orange RGB multiplier.
+    Light->SetLightColor(FLinearColor::White);
+    Light->SetUseTemperature(true);
+    Light->SetTemperature(2000.f);
+    Light->SetVolumetricScatteringIntensity(.45f);
+    bFireLightReady=false;
+}
+
+void UASTFireReactiveComponent::UpdateFireLight(float Dt,float Time,float FlameEnergy)
+{
+    if(!IsValid(Light))return;
+    const USceneComponent* Parent=FindTargetComponent();
+    if(!IsValid(Parent))return;
+    const bool bPoint=Coverage==EASTFireCoverage::Point;
+    const float Scale=FMath::Clamp(FlameSize,.05f,8.f);
+    const float Heat=FMath::Clamp(bPlaying?SmoothIntensity:(bStartLit?Intensity:0.f),0.f,1.f);
+    const float E=FMath::Clamp(FlameEnergy,0.f,1.f);
+    const float Seed=float(GetTypeHash(GetOwner()->GetFName())%8191)*.137f+SimulationSeed*.019f;
+    // Three independent noise bands, no periodic sine or random per-frame jumps.
+    const float Slow=FMath::PerlinNoise1D(Time*2.1f+Seed);
+    const float Fast=FMath::PerlinNoise1D(Time*8.3f+Seed+17.3f);
+    const float Gust=FMath::PerlinNoise1D(Time*4.7f+Seed+41.7f);
+    const float Flicker=FMath::Clamp(1.f+.32f*Slow+.22f*Fast+.12f*Gust,.52f,1.48f);
+    FVector Center=Parent->GetComponentTransform().TransformPosition(PointOffset);
+    float Width=25.f*Scale;
+    float SizeFactor=FMath::Pow(Scale,1.35f);
+    if(!bPoint)
+    {
+        if(const UPrimitiveComponent* P=Cast<UPrimitiveComponent>(Parent))
+        {
+            const FBoxSphereBounds B=P->Bounds;
+            Width=FMath::Clamp(float(B.BoxExtent.GetMax())*.34f,7.f,90.f);
+            SizeFactor=FMath::Clamp(FMath::Pow(float(B.BoxExtent.GetMax())/50.f,.75f),.25f,4.f);
+            Center=B.Origin+FVector::UpVector*(B.BoxExtent.Z+Width*.25f);
+            // For distributed combustion the emitter is just outside the
+            // upper burning surface, never buried at the actor pivot.
+            // This avoids self-occlusion and makes walls/props cast shadows.
+            if(IsValid(FreeFlames))
+            {
+                FVector HotCenter;
+                if(FreeFlames->GetFireLightCenter(HotCenter))
+                {
+                    Center.X=FMath::Clamp(HotCenter.X,B.Origin.X-B.BoxExtent.X*.7,B.Origin.X+B.BoxExtent.X*.7);
+                    Center.Y=FMath::Clamp(HotCenter.Y,B.Origin.Y-B.BoxExtent.Y*.7,B.Origin.Y+B.BoxExtent.Y*.7);
+                }
+            }
+        }
+    }
+    else
+    {
+        // Flame occupies space above the actual wick, including explicit
+        // PointOffset on a hidden component. Never use camera-space coordinates.
+        Center+=FVector::UpVector*(19.f*Scale+8.f*Scale*E);
+        if(IsValid(FreeFlames))
+        {
+            FVector HotCenter;
+            if(FreeFlames->GetFireLightCenter(HotCenter))Center.Z=HotCenter.Z;
+        }
+    }
+    const float SoftRadius=FMath::Clamp(Width*.33f,1.5f,35.f);
+    Center+=FVector(Slow,Gust,Fast*.6f)*SoftRadius*.40f;
+    Center+=SmoothedFlow.GetClampedToMaxSize(300.f)*(.018f*FMath::Min(Scale,2.f));
+    // Fixed physical reach for the fuel size; brightness falls naturally
+    // with inverse-square distance. Do not pulse the attenuation sphere.
+    const float Reach=LightRadius*FMath::Clamp(FMath::Sqrt(SizeFactor),.23f,2.f);
+    const float WantedLumens=FMath::Max(0.f,LightPower)*SizeFactor*Heat*
+        (.58f+.42f*E)*Flicker;
+    const float WantedKelvin=FMath::Clamp(1910.f+230.f*E+105.f*Fast+65.f*Slow-160.f*(1.f-Heat),1650.f,2350.f);
+    const bool bSnap=!bFireLightReady||Dt<=0.f||FVector::DistSquared(Center,FireLightCenter)>FMath::Square(100.f);
+    FireLightCenter=bSnap?Center:FMath::VInterpTo(FireLightCenter,Center,Dt,17.f);
+    FireLightLumens=bSnap?WantedLumens:FMath::FInterpTo(FireLightLumens,WantedLumens,Dt,15.f);
+    FireLightKelvin=bSnap?WantedKelvin:FMath::FInterpTo(FireLightKelvin,WantedKelvin,Dt,8.f);
+    bFireLightReady=true;
+    Light->SetWorldLocation(FireLightCenter);
+    Light->SetIntensity(Heat<=.005f?0.f:FireLightLumens);
+    Light->SetTemperature(FireLightKelvin);
+    if(!FMath::IsNearlyEqual(Light->AttenuationRadius,Reach,.5f))Light->SetAttenuationRadius(Reach);
+    if(!FMath::IsNearlyEqual(Light->SourceRadius,SoftRadius,.1f))Light->SetSourceRadius(SoftRadius);
+    if(!FMath::IsNearlyEqual(Light->SoftSourceRadius,SoftRadius*.55f,.1f))Light->SetSoftSourceRadius(SoftRadius*.55f);
+}
+
+FString UASTFireReactiveComponent::RunFireLightAudit()
+{
+#if WITH_EDITOR
+    UWorld* World=UWorld::CreateWorld(EWorldType::Game,false);
+    if(!World)return TEXT("FAIL:NO_WORLD");
+    AActor* Host=World->SpawnActor<AActor>();
+    if(!Host){World->DestroyWorld(false);return TEXT("FAIL:NO_HOST");}
+    auto* Root=NewObject<UStaticMeshComponent>(Host);
+    Root->SetStaticMesh(LoadObject<UStaticMesh>(nullptr,TEXT("/Engine/BasicShapes/Cube.Cube")));
+    Host->SetRootComponent(Root);Root->RegisterComponent();
+    auto* Unrelated=NewObject<UPointLightComponent>(Host);
+    Unrelated->SetupAttachment(Root);Unrelated->SetIntensity(123.f);Unrelated->RegisterComponent();
+    auto* Fire=NewObject<UASTFireReactiveComponent>(Host);
+    Fire->bEnableProceduralFlames=false;Fire->bEnableSurfaceFire=false;
+    Fire->PointOffset=FVector(25,10,50);Fire->RegisterComponent();
+    Fire->InitializeFire();Fire->bPlaying=true;Fire->SmoothIntensity=1.f;
+    if(!IsValid(Fire->Light)||Fire->Light==Unrelated)
+    {World->DestroyWorld(false);return TEXT("FAIL:OWNERSHIP");}
+    auto* L=Fire->Light.Get();
+    float Min=BIG_NUMBER,Max=0.f,MinK=BIG_NUMBER,MaxK=0.f,RangeDrift=0.f;
+    float Near=0.f;
+    Fire->UpdateFireLight(0.f,0.f,.7f);
+    const float Radius=L->AttenuationRadius;
+    const FVector First=L->GetComponentLocation();
+    for(int32 I=0;I<150;++I)
+    {
+        Fire->UpdateFireLight(.04f,I*.04f,.7f);
+        Min=FMath::Min(Min,L->Intensity);Max=FMath::Max(Max,L->Intensity);
+        MinK=FMath::Min(MinK,L->Temperature);MaxK=FMath::Max(MaxK,L->Temperature);
+        RangeDrift=FMath::Max(RangeDrift,FMath::Abs(L->AttenuationRadius-Radius));
+        Near=FMath::Max(Near,float(FVector::Distance(First,L->GetComponentLocation())));
+    }
+    const bool bPhotometric=L->bUseInverseSquaredFalloff && L->CastShadows &&
+        L->SourceRadius>1.f && L->bUseTemperature && RangeDrift<.1f &&
+        Max>Min*1.12f && Min>0.f && MaxK-MinK>30.f && Near>.5f;
+    const bool bWick=FVector::DistSquared(L->GetComponentLocation(),Root->GetComponentTransform().TransformPosition(Fire->PointOffset))<FMath::Square(55.f)
+        && L->GetComponentLocation().Z>Fire->PointOffset.Z;
+    const float NormalLumens=L->Intensity;
+    Fire->FlameSize=.15f;Fire->UpdateFireLight(0.f,6.f,.7f);
+    const bool bScale=L->Intensity<NormalLumens*.25f && L->AttenuationRadius<Radius*.6f;
+    Fire->FlameSize=1.f;Fire->Coverage=EASTFireCoverage::Bounds;
+    Fire->UpdateFireLight(0.f,7.f,.7f);
+    const bool bSurface=L->GetComponentLocation().Z>Root->Bounds.Origin.Z+Root->Bounds.BoxExtent.Z;
+    Fire->SmoothIntensity=0.f;Fire->UpdateFireLight(.04f,8.f,0.f);
+    const bool bOff=L->Intensity==0.f && FMath::IsNearlyEqual(Unrelated->Intensity,123.f);
+    Fire->DestroyComponent();Host->Destroy();World->DestroyWorld(false);
+    return FString::Printf(TEXT("%s:lumens=%.1f..%.1f;kelvin=%.1f..%.1f;rangeDrift=%.3f;motion=%.2f;wick=%d;scale=%d;surface=%d;off=%d;photometric=%d"),
+        bPhotometric&&bWick&&bScale&&bSurface&&bOff?TEXT("PASS"):TEXT("FAIL"),Min,Max,MinK,MaxK,RangeDrift,Near,
+        int32(bWick),int32(bScale),int32(bSurface),int32(bOff),int32(bPhotometric));
+#else
+    return TEXT("EDITOR_ONLY");
+#endif
+}
+
 void UASTFireReactiveComponent::RemoveGeneratedVisuals()
 {
     if (IsValid(FreeFlames))
@@ -1176,6 +1314,7 @@ void UASTFireReactiveComponent::RemoveGeneratedVisuals()
         GeneratedLight->DestroyComponent();
     GeneratedLight = nullptr;
     Light = nullptr;
+    bFireLightReady=false;FireLightLumens=0.f;
     bInitialized = false;
 }
 
@@ -1391,7 +1530,7 @@ void UASTFireReactiveComponent::UpdateVisibility()
     {
         Light->SetVisibility(bShowFire);
         if (!bShowFire) Light->SetIntensity(0.0f);
-        else if (!bPlaying) Light->SetIntensity(LightPower * Intensity);
+        else if (!bPlaying) UpdateFireLight(0.f,0.f,.65f);
     }
 }
 
@@ -1622,15 +1761,7 @@ void UASTFireReactiveComponent::TickComponent(
         0.10f, 1.22f);
     LightEnvelope = FMath::FInterpTo(LightEnvelope, WantedLight, DeltaTime,
         WantedLight > LightEnvelope ? 12.0f : 6.0f);
-    if (IsValid(Light))
-    {
-        const float FireLight = SmoothIntensity * LightEnvelope;
-        Light->SetIntensity(LightPower * FireLight);
-        Light->SetAttenuationRadius(LightRadius *
-            FMath::Clamp(0.54f + 0.62f * LightEnvelope, 0.52f, 1.27f));
-        Light->SetLightColor(FLinearColor(
-            1.0f, 0.24f + 0.26f * LightEnvelope, 0.075f + 0.18f * LightEnvelope));
-    }
+    UpdateFireLight(DeltaTime,Time,VisualEnergy);
 
     const float Lean = FMath::Clamp(
         LocalWindVec.Size2D() / 600.0f, 0.0f, 1.0f) * MaxLeanDegrees;

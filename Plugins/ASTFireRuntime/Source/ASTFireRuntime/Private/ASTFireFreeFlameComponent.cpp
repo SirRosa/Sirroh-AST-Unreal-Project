@@ -3019,3 +3019,35 @@ void UASTFireFreeFlameComponent::TickComponent(
     UpdateGeometry(false);
     if (IsValid(Render)) Render->SetVisibility(true);
 }
+
+bool UASTFireFreeFlameComponent::GetFireLightCenter(FVector& Out) const
+{
+    if(!IsValid(Source)||!bGenerated)return false;
+    if(PointField.Num()==FieldX*FieldY)
+    {
+        // Logical field height is independent of camera/depth quantization.
+        float Sum=0.f,Height=0.f;
+        for(int32 I=0;I<PointField.Num();++I)
+        {
+            const auto& C=PointField[I];
+            if(!C.bLit)continue;
+            const float W=C.Temperature*C.Temperature;
+            Sum+=W;Height+=W*(float(I/FieldX)-3.f);
+        }
+        if(Sum<=.001f)return false;
+        Out=IgnitionPoints.IsEmpty()?Source->GetComponentLocation():
+            Source->GetComponentTransform().TransformPosition(IgnitionPoints[0]);
+        Out.Z+=FMath::Clamp(Height/Sum*2.55f*SizeScale,3.f*SizeScale,60.f*SizeScale);
+        return true;
+    }
+    // Root positions are actual simulated surface samples in world space.
+    Out=FVector::ZeroVector;float Sum=0.f;
+    for(const auto& T:Tongues)
+    {
+        if(!T.bActive||T.Age<0.f)continue;
+        const float W=FMath::Max(1.f,T.CurrentLength*T.CurrentWidth);
+        Out+=T.WorldPrevious*W;Sum+=W;
+    }
+    if(Sum<=0.f)return false;
+    Out/=Sum;return true;
+}

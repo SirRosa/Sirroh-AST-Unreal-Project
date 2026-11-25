@@ -222,6 +222,9 @@ public:
     UFUNCTION(BlueprintCallable, Category="AST Fire|Diagnostics")
     static FString RunBurnDurationAudit(USkeletalMesh* CharacterMesh);
 
+    UFUNCTION(BlueprintCallable, Category="AST Fire|Diagnostics")
+    static FString RunFireLightAudit();
+
 protected:
     virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
     virtual void OnRegister() override;
@@ -264,6 +267,8 @@ private:
     void UpdateVolume(UProceduralMeshComponent* Volume, int32 Index, bool bCreate, float StepSeconds = 0.0f);
     void UpdateVisibility();
     float ComputeBurnDuration() const;
+    void ConfigureFireLight(USceneComponent* Parent);
+    void UpdateFireLight(float Dt,float Time,float FlameEnergy);
 
     UPROPERTY(Transient)
     TArray<TObjectPtr<UNiagaraComponent>> FireFX;
@@ -325,4 +330,9 @@ private:
     bool bPreviousReplicatedLit = false;
     bool bInitialized = false;
     bool bPlaying = false;
+    // Local-only photometric response; appended to preserve prior member offsets.
+    FVector FireLightCenter=FVector::ZeroVector;
+    float FireLightLumens=0.f;
+    float FireLightKelvin=2000.f;
+    bool bFireLightReady=false;
 };
