@@ -1280,6 +1280,97 @@ void UASTFireReactiveComponent::UpdateFireLight(float Dt,float Time,float FlameE
     }
     Light->SetWorldLocation(RenderCenter);
     Light->SetIntensity(Heat<=.005f || Reach<=1.f?0.f:FireLightLumens);
+    // Preserve the approved environmental light. An independent camera-facing
+    // fill illuminates the local player's mesh only (reserved runtime channel 2).
+    // The light is deliberately not replicated; each viewer has their own camera.
+    if(bPlaying && GetWorld() && GetWorld()->IsGameWorld())
+    {
+        static const FName FillTag(TEXT("ASTFireCharacterFill"));
+        UPointLightComponent* Fill=nullptr;
+        TArray<USceneComponent*> Children;
+        Light->GetChildrenComponents(false,Children);
+        for(USceneComponent* Child:Children)
+            if(Child->ComponentHasTag(FillTag))
+            {
+                Fill=Cast<UPointLightComponent>(Child);
+                if(IsValid(Fill))break;
+            }
+        float FillIntensity=0.f;
+        FVector FillPosition=RenderCenter;
+        APlayerController* PC=GetWorld()->GetFirstPlayerController();
+        APawn* Pawn=PC?PC->GetPawn():nullptr;
+        if(IsValid(Pawn) && PC->IsLocalController() && PC->PlayerCameraManager &&
+            Heat>.005f && Reach>1.f && FireLightLumens>0.f)
+        {
+            TArray<USkeletalMeshComponent*> Meshes;
+            Pawn->GetComponents<USkeletalMeshComponent>(Meshes);
+            USkeletalMeshComponent* Body=nullptr;
+            for(USkeletalMeshComponent* Mesh:Meshes)
+                if(IsValid(Mesh) && Mesh->IsVisible() && (!Body || Mesh->Bounds.SphereRadius>Body->Bounds.SphereRadius))
+                    Body=Mesh;
+            if(Body)
+            {
+                const FVector Target=Body->Bounds.Origin;
+                const FVector TowardCamera=-PC->PlayerCameraManager->GetCameraRotation().Vector();
+                const float Distance=float(FVector::Dist(Target,FireLightCenter));
+                const float Ratio=Distance/FMath::Max(Reach,1.f);
+                if(Ratio<1.f)
+                {
+                    // The physical flame must have line of sight to the pawn.
+                    // Ignore the carrier and source, not intervening architecture.
+                    FCollisionQueryParams Query(SCENE_QUERY_STAT(ASTFireCharacterFillOcclusion),false,GetOwner());
+                    Query.AddIgnoredActor(Pawn);
+                    FCollisionObjectQueryParams Objects;
+                    Objects.AddObjectTypesToQuery(ECC_WorldStatic);
+                    Objects.AddObjectTypesToQuery(ECC_WorldDynamic);
+                    FHitResult Hit;
+                    if(!GetWorld()->LineTraceSingleByObjectType(Hit,FireLightCenter,Target,Objects,Query))
+                    {
+                        const float Attenuation=FMath::Pow(FMath::Max(0.f,1.f-Ratio*Ratio),4.5f);
+                        const FVector InPlane=FVector::VectorPlaneProject(FireLightCenter-Target,TowardCamera);
+                        const float FrontDepth=FMath::Clamp(float(Body->Bounds.SphereRadius)*1.25f,100.f,180.f);
+                        FillPosition=Target+TowardCamera*FrontDepth+InPlane.GetClampedToMaxSize(85.f)*.65f;
+                        FillIntensity=FMath::Min(.70f,FireLightLumens*.62f)*Attenuation;
+                        if(FillIntensity>.003f)
+                        {
+                            for(USkeletalMeshComponent* Mesh:Meshes)
+                                if(IsValid(Mesh) && !Mesh->LightingChannels.bChannel2)
+                                    Mesh->SetLightingChannels(Mesh->LightingChannels.bChannel0,Mesh->LightingChannels.bChannel1,true);
+                            if(!IsValid(Fill))
+                            {
+                                Fill=NewObject<UPointLightComponent>(GetOwner(),NAME_None,RF_Transient);
+                                if(Fill)
+                                {
+                                    Fill->ComponentTags.AddUnique(FillTag);
+                                    Fill->SetMobility(EComponentMobility::Movable);
+                                    Fill->SetLightingChannels(false,false,true);
+                                    Fill->SetCastShadows(false);
+                                    Fill->SetUseInverseSquaredFalloff(false);
+                                    Fill->SetIntensityUnits(ELightUnits::Unitless);
+                                    Fill->SetLightFalloffExponent(2.f);
+                                    Fill->SetAttenuationRadius(350.f);
+                                    Fill->SetSpecularScale(0.f);
+                                    Fill->SetIndirectLightingIntensity(0.f);
+                                    Fill->SetVolumetricScatteringIntensity(0.f);
+                                    Fill->SetUseTemperature(true);
+                                    Fill->SetIntensity(0.f);
+                                    Fill->SetupAttachment(Light);
+                                    Fill->RegisterComponent();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if(IsValid(Fill))
+        {
+            Fill->SetWorldLocation(FillPosition);
+            Fill->SetTemperature(FireLightKelvin);
+            Fill->SetIntensity(FillIntensity);
+            Fill->SetVisibility(FillIntensity>.003f);
+        }
+    }
     Light->SetTemperature(FireLightKelvin);
     if(!FMath::IsNearlyEqual(Light->AttenuationRadius,Reach,.5f))Light->SetAttenuationRadius(Reach);
     if(!FMath::IsNearlyEqual(Light->SourceRadius,SoftRadius,.1f))Light->SetSourceRadius(SoftRadius);
@@ -1474,6 +1565,16 @@ void UASTFireReactiveComponent::RemoveGeneratedVisuals()
     LocalFields.Empty();
     VolumeUpdateDebt = 0.0f;
 
+    // Explicitly remove the transient camera fill even when the primary light
+    // was authored in a Blueprint and must survive a visual refresh.
+    if(IsValid(Light))
+    {
+        TArray<USceneComponent*> Children;
+        Light->GetChildrenComponents(false,Children);
+        for(USceneComponent* Child:Children)
+            if(IsValid(Child) && Child->ComponentHasTag(FName(TEXT("ASTFireCharacterFill"))))
+                Child->DestroyComponent();
+    }
     if (IsValid(GeneratedLight))
         GeneratedLight->DestroyComponent();
     GeneratedLight = nullptr;
