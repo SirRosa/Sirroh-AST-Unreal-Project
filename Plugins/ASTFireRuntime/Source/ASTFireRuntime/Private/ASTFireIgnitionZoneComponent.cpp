@@ -306,19 +306,27 @@ FString UASTFireIgnitionZoneComponent::RunContactAudit(UClass* BoxClass,UClass* 
 #if WITH_EDITOR
     UWorld* World=UWorld::CreateWorld(EWorldType::Game,false);
     if(!World||!BoxClass||!BarrelClass){if(World)World->DestroyWorld(false);return TEXT("FAIL:world/assets");}
-    AActor* Source=World->SpawnActor<AActor>();
-    if(!Source){World->DestroyWorld(false);return TEXT("FAIL:source");}
-    auto* Zone=NewObject<UASTFireIgnitionZoneComponent>(Source);
-    Source->AddInstanceComponent(Zone);
-    Source->SetRootComponent(Zone);
-    Zone->SetBoxExtent(FVector(75));
-    Zone->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
-    Zone->SetCollisionObjectType(ECC_WorldDynamic);
-    Zone->SetCollisionResponseToAllChannels(ECR_Overlap);
-    Zone->SetMobility(EComponentMobility::Movable);
-    Zone->RegisterComponent();
-    Zone->bRequireSourceBurning=false;
-    bool bPass=true;
+    auto MakeZone=[&]()
+    {
+        AActor* Source=World->SpawnActor<AActor>();
+        if(!Source)return static_cast<UASTFireIgnitionZoneComponent*>(nullptr);
+        auto* Zone=NewObject<UASTFireIgnitionZoneComponent>(Source);
+        Source->AddInstanceComponent(Zone);Source->SetRootComponent(Zone);
+        Zone->SetBoxExtent(FVector(75));
+        Zone->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+        Zone->SetCollisionObjectType(ECC_WorldDynamic);
+        Zone->SetCollisionResponseToAllChannels(ECR_Overlap);
+        Zone->SetGenerateOverlapEvents(false);
+        Zone->SetMobility(EComponentMobility::Movable);
+        Zone->RegisterComponent();
+        Zone->bRequireSourceBurning=false;
+        return Zone;
+    };
+    auto* Zone=MakeZone();
+    auto* OtherZone=MakeZone();
+    if(!Zone||!OtherZone){World->DestroyWorld(false);return TEXT("FAIL:source");}
+    OtherZone->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+    bool bPass=FMath::IsNearlyEqual(ContactDelay(30.f),1.5f)&&ContactDelay(180.f)>ContactDelay(50.f)&&ContactDelay(600.f)>ContactDelay(180.f);
     FString Details;
     for(UClass* Class:{BoxClass,BarrelClass})
     {
@@ -335,29 +343,82 @@ FString UASTFireIgnitionZoneComponent::RunContactAudit(UClass* BoxClass,UClass* 
         Fire->bEnableProceduralFlames=false;Fire->bEnableFlameCards=false;
         Fire->bEnableNiagara=false;Fire->bEnableSurfaceFire=false;
         Fire->RegisterComponent();
+        double Now=0.;
+        auto Poll=[&](double Advance)
+        {
+            Now+=Advance;
+            Zone->PollContactOverlapsAt(Now);
+            OtherZone->PollContactOverlapsAt(Now);
+        };
         auto Move=[&](const FVector& Point,const FRotator& Rotation)
         {
-            // Place the actual mesh center rather than assuming its pivot.
             Body->SetWorldRotation(Rotation,false,nullptr,ETeleportType::TeleportPhysics);
             const FVector Offset=Body->GetComponentTransform().TransformVector(Body->GetStaticMesh()->GetBoundingBox().GetCenter());
             Body->SetWorldLocation(Point-Offset,false,nullptr,ETeleportType::TeleportPhysics);
-            Zone->PollContactOverlaps();
+            Poll(0.);
         };
+        const float Delay=ContactDelay(UASTFireReactiveComponent::MeasureFuelSize(Body,180.f));
         Move(FVector(1000,0,0),FRotator::ZeroRotator);
         const bool bOutside=!UASTFireBlueprintLibrary::IsActorBurning(Prop);
         Move(FVector::ZeroVector,FRotator(23,40,17));
-        const bool bIgnited=UASTFireBlueprintLibrary::IsActorBurning(Prop);
-        UASTFireBlueprintLibrary::ExtinguishActor(Prop);
-        Zone->PollContactOverlaps();
-        const bool bNoDuplicate=!UASTFireBlueprintLibrary::IsActorBurning(Prop);
+        Poll(Delay*.75);
+        const bool bEarly=!UASTFireBlueprintLibrary::IsActorBurning(Prop);
         Move(FVector(1000,0,0),FRotator::ZeroRotator);
-        // Match the collision-disabled carried state, with a different pose.
-        Body->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+        Poll(Delay*2.);
         Move(FVector::ZeroVector,FRotator(65,12,40));
-        const bool bCarriedReentry=UASTFireBlueprintLibrary::IsActorBurning(Prop);
-        bPass&=bOutside&&bIgnited&&bNoDuplicate&&bCarriedReentry;
-        Details+=FString::Printf(TEXT(";%s:outside=%d;no_overlap_events=%d;no_duplicate=%d;reentry=%d"),
-            *Class->GetName(),int32(bOutside),int32(bIgnited),int32(bNoDuplicate),int32(bCarriedReentry));
+        Poll(Delay*.75);
+        const bool bReset=!UASTFireBlueprintLibrary::IsActorBurning(Prop);
+        Poll(Delay*.25+.001);
+        const bool bIgnited=UASTFireBlueprintLibrary::IsActorBurning(Prop);
+        Fire->bInitialized=true;Fire->bPlaying=true;
+        const float Duration=Fire->BurnDurationSeconds;
+        // Hold longer than a whole lifetime, with fuel updates from real ticks.
+        for(float T=0;T<Duration+1.f;T+=.25f)
+        {
+            Poll(.25);
+            Fire->TickComponent(.25f,LEVELTICK_All,&Fire->PrimaryComponentTick);
+        }
+        const bool bHeld=Fire->bStartLit && FMath::IsNearlyZero(Fire->BurnElapsedSeconds) &&
+            FMath::IsNearlyEqual(Fire->Intensity,Fire->InitialBurnIntensity);
+        const int32 Anchors=Fire->ExtraLocalPoints.Num();
+        UASTFireBlueprintLibrary::ExtinguishActor(Prop);
+        Poll(.1);
+        const bool bNoDuplicate=Fire->bStartLit && Fire->ExtraLocalPoints.Num()==Anchors;
+        // Two simultaneously active sources must not release each other's hold.
+        OtherZone->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+        Poll(.05);
+        const bool bTwo=Fire->ActiveIgniters.Num()==2;
+        Zone->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+        Poll(.05);
+        Fire->TickComponent(1.f,LEVELTICK_All,&Fire->PrimaryComponentTick);
+        const bool bOtherHolds=Fire->bStartLit&&FMath::IsNearlyZero(Fire->BurnElapsedSeconds);
+        OtherZone->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+        Poll(.05);
+        Fire->TickComponent(1.f,LEVELTICK_All,&Fire->PrimaryComponentTick);
+        const bool bReleased=Fire->bStartLit&&FMath::IsNearlyEqual(Fire->BurnElapsedSeconds,1.f);
+        // Reentry while already burning replenishes without another delay.
+        Zone->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+        Body->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+        Poll(.05);
+        const bool bCarriedReentry=Fire->bStartLit&&FMath::IsNearlyZero(Fire->BurnElapsedSeconds);
+        Move(FVector(1000,0,0),FRotator::ZeroRotator);
+        float Elapsed=0.f;
+        while(Fire->bStartLit&&Elapsed<Duration+1.f)
+        {
+            Fire->TickComponent(.05f,LEVELTICK_All,&Fire->PrimaryComponentTick);
+            Elapsed+=.05f;
+        }
+        const bool bFullOutside=!Fire->bStartLit&&FMath::Abs(Elapsed-Duration)<.075f;
+        // Collision-disabled object also needs a fresh full heating interval.
+        Move(FVector::ZeroVector,FRotator(23,40,17));
+        Poll(Delay-.05);
+        const bool bCarriedEarly=!Fire->bStartLit;
+        Poll(.051);
+        const bool bCarriedIgnite=Fire->bStartLit;
+        bPass&=bOutside&&bEarly&&bReset&&bIgnited&&bHeld&&bNoDuplicate&&bTwo&&bOtherHolds&&bReleased&&bCarriedReentry&&bFullOutside&&bCarriedEarly&&bCarriedIgnite;
+        Details+=FString::Printf(TEXT(";%s:delay=%.2f;duration=%.2f;outside=%.2f;early=%d;reset=%d;ignited=%d;hold=%d;no_duplicate=%d;two=%d;other_holds=%d;release=%d;reentry=%d;full=%d;carried_delay=%d"),
+            *Class->GetName(),Delay,Duration,Elapsed,int32(bEarly),int32(bReset),int32(bIgnited),int32(bHeld),int32(bNoDuplicate),int32(bTwo),int32(bOtherHolds),int32(bReleased),int32(bCarriedReentry),int32(bFullOutside),int32(bCarriedEarly&&bCarriedIgnite));
+        Zone->ClearContacts();OtherZone->ClearContacts();
         Prop->Destroy();
     }
     World->DestroyWorld(false);
