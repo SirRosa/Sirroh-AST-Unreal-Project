@@ -24,6 +24,7 @@
 #include "Misc/Paths.h"
 #include "HAL/FileManager.h"
 #include "Engine/StaticMesh.h"
+#include "StaticMeshResources.h"
 #include "Components/SceneCaptureComponent2D.h"
 #include "Engine/TextureRenderTarget2D.h"
 #include "ImageUtils.h"
@@ -1732,7 +1733,7 @@ FString UASTFireFreeFlameComponent::RunFireV4Audit(UMaterialInterface* TestMater
             bSeen=true;
             MaxCells=FMath::Max(MaxCells,Main.Num());
             bFragment|=!DetachedPixels.IsEmpty();
-            if(bOnMesh)bMesh|=Fire->Tongues.Num()>=4 && Main.Num()>20 && Fire->MeshCuts>=1 && Fire->MeshTransferred>=2;
+            if(bOnMesh)bMesh|=Fire->Tongues.Num()>=4 && Fire->SourceAnchors.Num()>=30 && Main.Num()>40 && Fire->MeshCuts>=1 && Fire->MeshTransferred>=2;
             if(bHiddenWick)bWick|=Fire->Tongues.Num()==2 && Main.Num()>5 &&
                 FMath::Abs(float(Fire->Tongues[0].RestPosition.Z)-45.f)<.01f;
             if(I>=80)bMoving|=Host->GetActorLocation().Y>5.f && Main.Num()>10;
@@ -2105,8 +2106,42 @@ FString UASTFireFreeFlameComponent::RunFireV4Capture(UMaterialInterface* TestMat
             if(Ar && FImageUtils::ExportRenderTarget2DAsPNG(RT,*Ar))++Saved;
         }
     }
-    Fire->DestroyComponent();Capture->DestroyComponent();World->DestroyWorld(false);
-    return FString::Printf(TEXT("%s:frames=%d"),Saved>=6?TEXT("PASS"):TEXT("FAIL"),Saved);
+    Fire->DestroyComponent();Host->Destroy();
+    AActor* CrateActor=World->SpawnActor<AActor>();
+    int32 CrateSaved=0,CrateAnchors=0,CrateCuts=0;
+    if(CrateActor)
+    {
+        UStaticMeshComponent* Crate=NewObject<UStaticMeshComponent>(CrateActor);
+        Crate->SetStaticMesh(LoadObject<UStaticMesh>(nullptr,TEXT("/Engine/BasicShapes/Cube.Cube")));
+        CrateActor->SetRootComponent(Crate);Crate->RegisterComponent();
+        auto* CrateFire=NewObject<UASTFireFreeFlameComponent>(CrateActor);
+        CrateFire->SetSource(Crate,TestMaterial,1831);
+        TArray<FVector_NetQuantize10> Contacts;
+        for(const FVector& Q:{FVector(50,-30,-20),FVector(50,30,20),FVector(0,0,50),FVector(-50,-25,20)})
+            Contacts.Add(FVector_NetQuantize10(Q));
+        CrateFire->SetIgnitionPoints(Contacts);CrateFire->RegisterComponent();
+        Capture->FOVAngle=22.f;
+        Capture->ShowFlags.SetLighting(false);
+        for(int32 I=0;I<100;++I)
+        {
+            if(I>=50)CrateActor->SetActorRotation(FRotator(0,(I-50)*1.2f,0));
+            CrateFire->SetThermal(1.f,FVector::ZeroVector,.75f);
+            CrateFire->AdvanceSimulation(.04f);CrateFire->UpdateDetachedVortices(.04f);
+            CrateFire->UpdateGeometry(false);
+            if(I>=48 && I%10==8)
+            {
+                World->SendAllEndOfFrameUpdates();Capture->CaptureScene();FlushRenderingCommands();
+                const FString Name=Folder/FString::Printf(TEXT("Crate_%03d.png"),I);
+                TUniquePtr<FArchive> Ar(IFileManager::Get().CreateFileWriter(*Name));
+                if(Ar && FImageUtils::ExportRenderTarget2DAsPNG(RT,*Ar))++CrateSaved;
+            }
+        }
+        CrateAnchors=CrateFire->SourceAnchors.Num();CrateCuts=CrateFire->MeshCuts;
+        CrateFire->DestroyComponent();CrateActor->Destroy();
+    }
+    Capture->DestroyComponent();World->DestroyWorld(false);
+    return FString::Printf(TEXT("%s:frames=%d;crateFrames=%d;crateAnchors=%d;crateCuts=%d"),
+        Saved>=6 && CrateSaved>=4 && CrateAnchors>=30 && CrateCuts>=2?TEXT("PASS"):TEXT("FAIL"),Saved,CrateSaved,CrateAnchors,CrateCuts);
 #else
     return TEXT("EDITOR_ONLY");
 #endif
@@ -2269,9 +2304,10 @@ void UASTFireFreeFlameComponent::BuildSourceAnchors()
 {
     SourceAnchors.Reset();
     if (!IsValid(Source)) return;
-    auto Add = [this](const FVector& Rest, int32 VertexIndex)
+    const int32 Limit=Cast<UStaticMeshComponent>(Source) && !ASTFireLife::IsPointSource(Source,!IgnitionPoints.IsEmpty())?192:MaxSourceAnchors;
+    auto Add = [this,Limit](const FVector& Rest, int32 VertexIndex)
     {
-        if (SourceAnchors.Num() >= MaxSourceAnchors) return;
+        if (SourceAnchors.Num() >= Limit) return;
         for (const FSourceAnchor& Existing:SourceAnchors)
             if ((VertexIndex!=INDEX_NONE &&
                  Existing.SkinnedVertexIndex==VertexIndex) ||
@@ -2310,45 +2346,82 @@ void UASTFireFreeFlameComponent::BuildSourceAnchors()
     }
     else if (UStaticMeshComponent* Static=Cast<UStaticMeshComponent>(Source))
     {
-        // Collision samples are ACTUAL geometry/primitive hits in local
-        // space. Do not rely on CPU access to StaticMesh render buffers,
-        // which may be stripped in cooked builds.
+        // Prefer actual triangle surfaces when the mesh retains CPU data.
+        // Area-weighted stratification avoids concentrating all fuel on the
+        // four initial collision contacts of a crate or an irregular mesh.
+        if(!ASTFireLife::IsPointSource(Source,!IgnitionPoints.IsEmpty()))
+        if(UStaticMesh* Asset=Static->GetStaticMesh())
+        if(Asset->bAllowCPUAccess || GIsEditor)
+        if(const FStaticMeshRenderData* Data=Asset->GetRenderData())
+        if(Data->LODResources.Num()>0)
+        {
+            const FStaticMeshLODResources& L=Data->LODResources[0];
+            const FPositionVertexBuffer& Positions=L.VertexBuffers.PositionVertexBuffer;
+            if(Positions.GetNumVertices()>0 && Positions.GetVertexData()!=nullptr)
+            {
+                const FIndexArrayView Indices=L.IndexBuffer.GetArrayView();
+                const int32 Count=Indices.Num()/3;
+                const int32 Stride=FMath::Max(1,FMath::DivideAndRoundUp(Count,4096));
+                struct FTriangle { FVector A,B,C;float End; };
+                TArray<FTriangle> Triangles;Triangles.Reserve(FMath::Min(Count,4096));
+                float Area=0.f;
+                for(int32 I=0;I<Count;I+=Stride)
+                {
+                    const uint32 IA=Indices[I*3],IB=Indices[I*3+1],IC=Indices[I*3+2];
+                    if(IA>=Positions.GetNumVertices() || IB>=Positions.GetNumVertices() || IC>=Positions.GetNumVertices())continue;
+                    const FVector A(Positions.VertexPosition(IA)),B(Positions.VertexPosition(IB)),C(Positions.VertexPosition(IC));
+                    const float W=float(FVector::CrossProduct(B-A,C-A).Size());
+                    if(W<=KINDA_SMALL_NUMBER)continue;
+                    Area+=W;Triangles.Add({A,B,C,Area});
+                }
+                if(Area>0.f)
+                {
+                    int32 Tri=0;
+                    // Low-discrepancy barycentric coordinates and an area
+                    // CDF cover small and large triangles uniformly.
+                    for(int32 I=0;I<Limit*2 && SourceAnchors.Num()<Limit;++I)
+                    {
+                        if(I==Limit)Tri=0;
+                        const float Target=(float(I%Limit)+(I<Limit?.35f:.75f))*Area/Limit;
+                        while(Tri+1<Triangles.Num() && Triangles[Tri].End<Target)++Tri;
+                        const auto& T=Triangles[Tri];
+                        const float U=FMath::Sqrt(FMath::Frac((I+1)*.754877666f));
+                        const float V=FMath::Frac((I+1)*.569840296f);
+                        Add(T.A*(1.f-U)+T.B*(U*(1.f-V))+T.C*(U*V),INDEX_NONE);
+                    }
+                }
+            }
+        }
+        // Cooked meshes may strip CPU buffers: retain a bounded collision
+        // sampling path, interleaving faces rather than filling one side.
         const FBoxSphereBounds Box=Static->CalcBounds(FTransform::Identity);
         const FVector H=Box.BoxExtent.GetAbs();
         const FTransform Transform=Static->GetComponentTransform();
         const float Far=H.GetMax()*2.8f+20.f;
-        FCollisionQueryParams Query;
-        Query.bTraceComplex=true;
-        for (int32 Face=0;Face<6 && SourceAnchors.Num()<MaxSourceAnchors;++Face)
-            for(int32 A=0;A<4;++A)
-                for(int32 B=0;B<4;++B)
+        FCollisionQueryParams Query;Query.bTraceComplex=true;
+        const int32 Grid=Limit>MaxSourceAnchors?6:4;
+        for(int32 A=0;A<Grid && SourceAnchors.Num()<Limit;++A)
+            for(int32 B=0;B<Grid && SourceAnchors.Num()<Limit;++B)
+                for(int32 Face=0;Face<6 && SourceAnchors.Num()<Limit;++Face)
                 {
-                    const float U=(float(A)/3.f)*1.76f-.88f;
-                    const float V=(float(B)/3.f)*1.76f-.88f;
+                    const float U=(float(A)/(Grid-1))*1.76f-.88f;
+                    const float V=(float(B)/(Grid-1))*1.76f-.88f;
                     FVector Point=Box.Origin;
                     FVector Normal=FVector::UpVector;
                     switch(Face)
                     {
-                    case 0: Normal=FVector(1,0,0);
-                        Point+=FVector(H.X,U*H.Y,V*H.Z);break;
-                    case 1: Normal=FVector(-1,0,0);
-                        Point+=FVector(-H.X,U*H.Y,V*H.Z);break;
-                    case 2: Normal=FVector(0,1,0);
-                        Point+=FVector(U*H.X,H.Y,V*H.Z);break;
-                    case 3: Normal=FVector(0,-1,0);
-                        Point+=FVector(U*H.X,-H.Y,V*H.Z);break;
+                    case 0: Normal=FVector(1,0,0);Point+=FVector(H.X,U*H.Y,V*H.Z);break;
+                    case 1: Normal=FVector(-1,0,0);Point+=FVector(-H.X,U*H.Y,V*H.Z);break;
+                    case 2: Normal=FVector(0,1,0);Point+=FVector(U*H.X,H.Y,V*H.Z);break;
+                    case 3: Normal=FVector(0,-1,0);Point+=FVector(U*H.X,-H.Y,V*H.Z);break;
                     case 4: Point+=FVector(U*H.X,V*H.Y,H.Z);break;
-                    default: Normal=FVector(0,0,-1);
-                        Point+=FVector(U*H.X,V*H.Y,-H.Z);break;
+                    default: Normal=FVector(0,0,-1);Point+=FVector(U*H.X,V*H.Y,-H.Z);break;
                     }
                     FHitResult Hit;
                     if(Static->LineTraceComponent(Hit,
                         Transform.TransformPosition(Point+Normal*14.f),
                         Transform.TransformPosition(Point-Normal*Far),Query))
-                    {
-                        Add(Transform.InverseTransformPosition(
-                            FVector(Hit.ImpactPoint)),INDEX_NONE);
-                    }
+                        Add(Transform.InverseTransformPosition(FVector(Hit.ImpactPoint)),INDEX_NONE);
                 }
     }
 
@@ -2685,10 +2758,17 @@ float UASTFireFreeFlameComponent::UpdateConnectedSource(
             }
         if(Owner==INDEX_NONE || (Forced==INDEX_NONE && Best>Reach*Reach))return;
         if(FVector::DotProduct(World-Projection.Cam,Projection.Forward)<=12.f)return;
-        const float Influence=Forced!=INDEX_NONE?1.f:FMath::Clamp(1.f-FMath::Sqrt(Best)/Reach,.12f,1.f);
+        float Influence=Forced!=INDEX_NONE?1.f:FMath::Clamp(1.f-FMath::Sqrt(Best)/Reach,.12f,1.f);
+        if(!Skel && Forced==INDEX_NONE)
+        {
+            const float Wave=.61f*FMath::Sin(float(Rest.X*.071+Rest.Y*.053+Rest.Z*.059)-Elapsed*5.1f+Seed*.017f)+
+                .39f*FMath::Sin(float(Rest.X*.039-Rest.Y*.083+Rest.Z*.107)+Elapsed*7.2f);
+            if(Wave<-.36f) return;
+            Influence*=.78f+.22f*Wave;
+        }
         const float Depth=FMath::Max(10.f,Projection.Depth(World)-Bias);
         const FVector2D Q=Projection.Project(World);
-        const float Radius=(Skel?FMath::Lerp(5.f,9.5f,Influence):FMath::Lerp(7.f,13.f,Influence))*
+        const float Radius=(Skel?FMath::Lerp(5.f,9.5f,Influence):FMath::Lerp(6.f,10.f,Influence))*
             FMath::Sqrt(S)*ASTFireLife::FFireProjection::Reference/Depth;
         Fuel.Add({Q,Depth,Radius,Influence,Owner});
         Lo.X=FMath::Min(Lo.X,Q.X-Radius);Lo.Y=FMath::Min(Lo.Y,Q.Y-Radius);

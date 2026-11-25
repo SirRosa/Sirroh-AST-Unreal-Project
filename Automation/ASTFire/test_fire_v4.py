@@ -120,3 +120,7 @@ assert fnv(region("float UASTFireFreeFlameComponent::UpdatePointField(","void UA
 assert "GetSkinnedVertexPosition(Skel,A.SkinnedVertexIndex" in c
 assert "if(X>=0 && X<NX && Y>=0 && Y<NY && Gas[Y*NX+X].Owner!=INDEX_NONE)continue;" in c
 assert "Group.Num()<2" in c
+
+assert 'L.IndexBuffer.GetArrayView()' in c
+assert 'Fire->SourceAnchors.Num()>=30' in c
+assert 'CrateSaved>=4 && CrateAnchors>=30 && CrateCuts>=2' in c

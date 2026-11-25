@@ -35,8 +35,8 @@ $sourcePlugin=Join-Path $source $plugin
 $livePlugin=Join-Path $ProjectRoot $plugin
 # Compare the exact locally deployed source to the accepted revision.
 $baseline=@{
- "$plugin\Source\ASTFireRuntime\Private\ASTFireFreeFlameComponent.cpp"=@('16af2c8653c72bba66508ff598fb157ff85d4a2d','0189c213c6d69a49beb72337dc01581b77f4e7f0','5050224e71c7a5f75a4f77ef46fdc189e89c706c','9520ada15f9b4816b3b3ba67457979e12e34832e','3c74313569b73fd65da07ab5c0baee5f751f0486','4724878aa11c80acfeabb7aa24daec5d956850aa','5c4a0dd1c7dad856230e628ab60b4179fc6b5ba8','b78b323d2f2cf144aad1b94c42d6eb9fd3c44c35')
- "$plugin\Source\ASTFireRuntime\Public\ASTFireFreeFlameComponent.h"=@('e4d980e5940a773065e7277300a35f0ea8190d6a','237adae01b04d70857c2029242e72299deaa1114','d74a3c735313c62524edc6d4ec735ea6bd57e1d6','0853677c1bd187d0e7fcda4ee3acd0e2d000786c','7e974c61ccd5ec2f5d7ba2840ed2587152212ccd','8baf31011dc8b897dfce964fb3251a4310b2a6b4','2f91c7a578b9a6e572192df6651cb7de4ed707aa')
+ "$plugin\Source\ASTFireRuntime\Private\ASTFireFreeFlameComponent.cpp"=@('16af2c8653c72bba66508ff598fb157ff85d4a2d','0189c213c6d69a49beb72337dc01581b77f4e7f0','5050224e71c7a5f75a4f77ef46fdc189e89c706c','9520ada15f9b4816b3b3ba67457979e12e34832e','3c74313569b73fd65da07ab5c0baee5f751f0486','4724878aa11c80acfeabb7aa24daec5d956850aa','5c4a0dd1c7dad856230e628ab60b4179fc6b5ba8','b78b323d2f2cf144aad1b94c42d6eb9fd3c44c35','a6dd6d16a6f7cedc67300c7750a3c146d1730506')
+ "$plugin\Source\ASTFireRuntime\Public\ASTFireFreeFlameComponent.h"=@('e4d980e5940a773065e7277300a35f0ea8190d6a','237adae01b04d70857c2029242e72299deaa1114','d74a3c735313c62524edc6d4ec735ea6bd57e1d6','0853677c1bd187d0e7fcda4ee3acd0e2d000786c','7e974c61ccd5ec2f5d7ba2840ed2587152212ccd','8baf31011dc8b897dfce964fb3251a4310b2a6b4','2f91c7a578b9a6e572192df6651cb7de4ed707aa','dc31a18a7226146d41a70a733da64476305c93de')
 }
 foreach($rel in $baseline.Keys){
  $current=(& git -C $ProjectRoot hash-object ('--path='+$rel.Replace('\','/')) (Join-Path $ProjectRoot $rel)).Trim()
