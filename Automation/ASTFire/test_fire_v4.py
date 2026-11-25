@@ -21,7 +21,7 @@ assert fnv(r)=="930b76ee","burn/torch runtime changed"
 for token in ("GetTongueCount()", "SetSizeScale(", "RunSmokeAudit(", "RunFireV4Audit("):
     assert token in h,token
 for token in ("GetSkinnedVertexPosition","LineTraceComponent(","ConnectedRoots.Add(",
-              "AppendNeck(WorldA,WorldB,RadiusAt(V0),RadiusAt(V1),V0,V1)",
+              "AppendNeck(WorldA,WorldB,RadiusAt(V0),K==RingsPerTongue-1?0.f:RadiusAt(V1),V0,V1)",
               "AppendNeck(BranchRoot,Mid,BranchRadius,", "EFlameLife::Bridging",
               "EFlameLife::Retracting","D.Position+=D.Velocity*Dt;",
               "const float PixelPitch=UpdateConnectedSource",
@@ -29,7 +29,7 @@ for token in ("GetSkinnedVertexPosition","LineTraceComponent(","ConnectedRoots.A
               "const float Support=R-D+Rim;", "Cell.Temperature=FMath::Clamp",
               "CornerDepth(CX,CY)","Colors.Add(FLinearColor(ASTFireLife::ToneCode(C.Temperature),0.f,0.f,1.f))",
               "const float V=(PY*CS+PX*SN)", "Projection.Unproject(P,Depth)",
-              "const float Flow=.57f*FMath::Sin","const float Shift=.28f*R*Flow",
+              "Cell.Flow=.57f*FMath::Sin","const float Shift=.28f*R*Flow",
               "MaxXCells=72,MaxYCells=104", "RunFireV4Audit("):
     assert token in c,token
 assert "floor(UV" not in m
@@ -78,3 +78,7 @@ print("Fire v4 raster, independent heat, detached lifecycle, v3 smoke/spark/torc
 assert 'World->SendAllEndOfFrameUpdates();' in c
 assert 'FragmentTone=DetachedPixels.Find(Q)' in c
 assert 'const float PlumeCenter=BodyCenter(Z)' in c
+
+assert 'for(int32 Y=Y0;Y<=Y1;++Y)' in c
+assert 'bHiddenWick=Case==7' in c
+assert 'bMesh && bWick' in c

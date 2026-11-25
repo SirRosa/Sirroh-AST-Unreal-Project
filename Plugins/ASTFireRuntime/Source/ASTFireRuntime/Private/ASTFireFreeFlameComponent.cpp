@@ -79,6 +79,15 @@ namespace ASTFireLife
         {return Cam+Forward*Depth+(Right*P.X+Up*P.Y)*(Depth/Reference);}
     };
 
+    // Hidden torch wicks are explicit attachment points, not burnable surfaces.
+    bool IsPointSource(const USceneComponent* Source, bool bHasContact)
+    {
+        const UMeshComponent* Mesh=Cast<UMeshComponent>(Source);
+        if(!Mesh)return true;
+        return bHasContact && !Mesh->IsVisible() &&
+            Mesh->GetCollisionEnabled()==ECollisionEnabled::NoCollision;
+    }
+
     float SmoothStep(float V)
     {
         const float T = FMath::Clamp(V, 0.f, 1.f);
@@ -351,12 +360,13 @@ void UASTFireFreeFlameComponent::BuildAnchors()
     Tongues.Reset();
     if (!IsValid(Source)) return;
     int32 DesiredCount = 5; // retain compact free-standing fire
-    if (Cast<USkeletalMeshComponent>(Source))
+    const bool bPoint=ASTFireLife::IsPointSource(Source,!IgnitionPoints.IsEmpty());
+    if (!bPoint && Cast<USkeletalMeshComponent>(Source))
     {
         // A whole character needs head/torso/arms/legs, not 3 foot roots.
         DesiredCount = 10 + FMath::RoundToInt(Uniform(731) * 4.f);
     }
-    else if (const UStaticMeshComponent* Static = Cast<UStaticMeshComponent>(Source))
+    else if (const UStaticMeshComponent* Static = bPoint?nullptr:Cast<UStaticMeshComponent>(Source))
     {
         const FVector Size = Static->Bounds.BoxExtent * 2.f;
         const float Area = 2.f * (Size.X * Size.Y + Size.Y * Size.Z + Size.Z * Size.X);
@@ -367,7 +377,7 @@ void UASTFireFreeFlameComponent::BuildAnchors()
     }
     DesiredCount = FMath::Clamp(DesiredCount, 3, MaxTongues);
 
-    if (const USkeletalMeshComponent* Skeletal = Cast<USkeletalMeshComponent>(Source))
+    if (const USkeletalMeshComponent* Skeletal = bPoint?nullptr:Cast<USkeletalMeshComponent>(Source))
     {
         USkeletalMesh* Asset = Skeletal->GetSkeletalMeshAsset();
         FSkeletalMeshRenderData* Data = Asset ? Asset->GetResourceForRendering() : nullptr;
@@ -426,7 +436,7 @@ void UASTFireFreeFlameComponent::BuildAnchors()
             }
         }
     }
-    else if (UStaticMeshComponent* Static = Cast<UStaticMeshComponent>(Source))
+    else if (UStaticMeshComponent* Static = bPoint?nullptr:Cast<UStaticMeshComponent>(Source))
     {
         const FBoxSphereBounds Bounds = Static->CalcBounds(FTransform::Identity);
         const FVector Half = Bounds.BoxExtent.GetAbs();
@@ -479,10 +489,13 @@ void UASTFireFreeFlameComponent::BuildAnchors()
                         Point+=FVector(U*Half.X,V*Half.Y,-Half.Z);break;
                     }
                     FHitResult Hit;
-                    if(!Static->LineTraceComponent(Hit,
-                        Transform.TransformPosition(Point+Normal*18.f),
-                        Transform.TransformPosition(Point-Normal*Far),Query))
-                        continue; // Never invent anchors outside real collision.
+                    const FVector Start=Transform.TransformPosition(Point+Normal*18.f);
+                    const FVector End=Transform.TransformPosition(Point-Normal*Far);
+                    if(!Static->LineTraceComponent(Hit,Start,End,Query))
+                    {
+                        FCollisionQueryParams Simple=Query;Simple.bTraceComplex=false;
+                        if(!Static->LineTraceComponent(Hit,Start,End,Simple))continue;
+                    }
                     const FVector Rest=Transform.InverseTransformPosition(
                         FVector(Hit.ImpactPoint));
                     bool bDuplicate=false;
@@ -515,15 +528,17 @@ void UASTFireFreeFlameComponent::BuildAnchors()
             SurfaceCandidates.RemoveAtSwap(Best);
         }
     }
-    if (Tongues.IsEmpty() && !Cast<UMeshComponent>(Source))
+    if (Tongues.IsEmpty() && bPoint)
     {
         // Free-standing source uses compact flame base, never a rectangular field.
         for (int32 I=0; I<DesiredCount; ++I)
         {
             FTongue Root;
             const float Angle=I*2.399963f;
-            Root.RestPosition=FVector(FMath::Cos(Angle)*13.f,
-                FMath::Sin(Angle)*13.f,0.f)*FMath::Min(1.f,SizeScale);
+            const FVector Offset=IgnitionPoints.IsEmpty()?FVector::ZeroVector:IgnitionPoints[0];
+            // The explicit wick position is component-local; keep root spacing in world cm.
+            Root.RestPosition=Offset+Source->GetComponentTransform().InverseTransformVector(
+                FVector(FMath::Cos(Angle)*13.f,FMath::Sin(Angle)*13.f,0.f)*FMath::Min(1.f,SizeScale));
             Root.Seed = Uniform(I+501)*103.f;
             Root.Scale = .85f;
             Tongues.Add(Root);
@@ -615,7 +630,7 @@ FVector UASTFireFreeFlameComponent::TongueCenterAt(
     // long ones. The physical wind still drives the visible and emitted tip.
     const float L=FMath::Max(.1f,Tongue.CurrentLength);
     const float S=FMath::Min(1.f,SizeScale);
-    const bool bPoint=!Cast<UMeshComponent>(Source);
+    const bool bPoint=ASTFireLife::IsPointSource(Source,!IgnitionPoints.IsEmpty());
     const float Shape=(Curl+Curl2+Dance+TipHook)*S+Lean*V;
     const float Side=bPoint?FMath::Clamp(Shape*.62f,-L*.23f*V,L*.23f*V):
         FMath::Clamp(Shape,-L*.44f*V,L*.44f*V);
@@ -1462,7 +1477,7 @@ FString UASTFireFreeFlameComponent::RunFireV4Audit(UMaterialInterface* TestMater
     if(!IsValid(TestMaterial)) return TEXT("FAIL:NO_MATERIAL");
     UWorld* World=UWorld::CreateWorld(EWorldType::Game,false);
     if(!World) return TEXT("FAIL:NO_WORLD");
-    bool bPass=true,bFragment=false,bCool=true,bSmall=false,bMesh=false,bMoving=false;
+    bool bPass=true,bFragment=false,bCool=true,bSmall=false,bMesh=false,bMoving=false,bWick=false;
     int32 MaxCells=0,MaxTones=0,FrameCount=0,StableFrames=0,GoodShape=0,Connected=0;
     int32 HotPixels=0,AllPixels=0,FragmentPixels=0,PitchChanges=0;
     int32 ChangedColors=0,CommonColors=0;
@@ -1471,23 +1486,29 @@ FString UASTFireFreeFlameComponent::RunFireV4Audit(UMaterialInterface* TestMater
     FString Raster;
     const FString Folder=FPaths::ProjectSavedDir()/TEXT("ChatGPT/NiagaraFire/FireV4");
     IFileManager::Get().MakeDirectory(*Folder,true);
-    const auto NewFire=[&](float Scale,int32 Salt,bool bOnMesh)
+    const auto NewFire=[&](float Scale,int32 Salt,bool bOnMesh,bool bHiddenWick=false)
     {
         AActor* Host=World->SpawnActor<AActor>();
         if(!Host)return static_cast<UASTFireFreeFlameComponent*>(nullptr);
         USceneComponent* Root=nullptr;
-        if(bOnMesh)
+        if(bOnMesh || bHiddenWick)
         {
             UStaticMeshComponent* Mesh=NewObject<UStaticMeshComponent>(Host);
             Mesh->SetStaticMesh(LoadObject<UStaticMesh>(nullptr,TEXT("/Engine/BasicShapes/Cube.Cube")));
             Mesh->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
             Mesh->SetCollisionResponseToAllChannels(ECR_Block);
+            if(bHiddenWick){Mesh->SetVisibility(false);Mesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);Mesh->SetRelativeScale3D(FVector(.12));}
             Root=Mesh;
         }
         else Root=NewObject<USceneComponent>(Host);
         Host->SetRootComponent(Root);Root->RegisterComponent();
         UASTFireFreeFlameComponent* Fire=NewObject<UASTFireFreeFlameComponent>(Host);
         Fire->SetSizeScale(Scale);Fire->SetSource(Root,TestMaterial,Salt);
+        // Exact cube surface coordinates; the transient audit world may not expose complex collision.
+        TArray<FVector_NetQuantize10> Contacts;
+        if(bHiddenWick)Contacts.Add(FVector_NetQuantize10(FVector(0,0,45)));
+        else if(bOnMesh)for(const FVector& P:{FVector(50,-30,-20),FVector(50,30,20),FVector(0,0,50),FVector(-50,-25,20)})Contacts.Add(FVector_NetQuantize10(P));
+        Fire->SetIgnitionPoints(Contacts);
         Fire->RegisterComponent();
         return Fire;
     };
@@ -1498,11 +1519,12 @@ FString UASTFireFreeFlameComponent::RunFireV4Audit(UMaterialInterface* TestMater
         Fire->UpdateDetachedVortices(.04f);
         Fire->UpdateGeometry(false);
     };
-    for(int32 Case=0;Case<7;++Case)
+    for(int32 Case=0;Case<8;++Case)
     {
         const bool bOnMesh=Case==6;
-        const float Scale=Case==4?.15f:Case==5?1.8f:1.f;
-        UASTFireFreeFlameComponent* Fire=NewFire(Scale,1729+Case*911,bOnMesh);
+        const bool bHiddenWick=Case==7;
+        const float Scale=(Case==4 || bHiddenWick)?.15f:Case==5?1.8f:1.f;
+        UASTFireFreeFlameComponent* Fire=NewFire(Scale,1729+Case*911,bOnMesh,bHiddenWick);
         if(!Fire){bPass=false;continue;}
         AActor* Host=Fire->GetOwner();
         bool bSeen=false;
@@ -1559,7 +1581,9 @@ FString UASTFireFreeFlameComponent::RunFireV4Audit(UMaterialInterface* TestMater
             bSeen=true;
             MaxCells=FMath::Max(MaxCells,Main.Num());
             bFragment|=!DetachedPixels.IsEmpty();
-            if(bOnMesh)bMesh|=Fire->Tongues.Num()>1 && Main.Num()>20;
+            if(bOnMesh)bMesh|=Fire->Tongues.Num()>=4 && Main.Num()>20;
+            if(bHiddenWick)bWick|=Fire->Tongues.Num()==5 && Main.Num()>10 &&
+                FMath::Abs(float(Fire->Tongues[0].RestPosition.Z)-45.f)<.01f;
             if(I>=80)bMoving|=Host->GetActorLocation().Y>5.f && Main.Num()>10;
             TSet<int32> Tones;
             for(const auto& Pair:Main)Tones.Add(Pair.Value);
@@ -1653,12 +1677,12 @@ FString UASTFireFreeFlameComponent::RunFireV4Audit(UMaterialInterface* TestMater
     const float HotRate=float(HotPixels)/FMath::Max(1,AllPixels);
     const float ChangeRate=float(ChangedColors)/FMath::Max(1,CommonColors);
     const float FragmentRate=float(FragmentPixels)/FMath::Max(1,AllPixels);
-    bPass &= bFragment && bCool && bSmall && bMesh && bMoving && bRaster &&
+    bPass &= bFragment && bCool && bSmall && bMesh && bWick && bMoving && bRaster &&
         MaxTones==7 && ShapeRate>=.70f && Connectivity>=.80f &&
         HotRate>=.025f && HotRate<=.26f && ChangeRate>.02f && FragmentRate<.20f &&
         Crowd.Num()==20;
-    return FString::Printf(TEXT("%s:small=%d;fragment=%d;cool=%d;mesh=%d;moving=%d;raster=%d;cells=%d;tones=%d;shape=%.3f;connected=%.3f;aspect=%.3f;fill=%.3f;hot=%.3f;thermalChange=%.3f;detachedRatio=%.3f;pitchChanges=%d;cpuMs=%.3f;p95=%.3f;crowd20Ms=%.3f;crowdP95=%.3f"),
-        bPass?TEXT("PASS"):TEXT("FAIL"),int32(bSmall),int32(bFragment),int32(bCool),int32(bMesh),int32(bMoving),int32(bRaster),
+    return FString::Printf(TEXT("%s:small=%d;fragment=%d;cool=%d;mesh=%d;wick=%d;moving=%d;raster=%d;cells=%d;tones=%d;shape=%.3f;connected=%.3f;aspect=%.3f;fill=%.3f;hot=%.3f;thermalChange=%.3f;detachedRatio=%.3f;pitchChanges=%d;cpuMs=%.3f;p95=%.3f;crowd20Ms=%.3f;crowdP95=%.3f"),
+        bPass?TEXT("PASS"):TEXT("FAIL"),int32(bSmall),int32(bFragment),int32(bCool),int32(bMesh),int32(bWick),int32(bMoving),int32(bRaster),
         MaxCells,MaxTones,ShapeRate,Connectivity,AspectSum/FMath::Max(1,StableFrames),
         FillSum/FMath::Max(1,StableFrames),HotRate,ChangeRate,FragmentRate,PitchChanges,
         Cost/FMath::Max(1,FrameCount),Costs.IsEmpty()?0.:Costs[FMath::Clamp(FMath::FloorToInt(Costs.Num()*.95f),0,Costs.Num()-1)],
@@ -2056,7 +2080,7 @@ float UASTFireFreeFlameComponent::UpdateConnectedSource(
     const FVector2D OriginP=Projection.Project(Origin);
     const float OriginDepth=Projection.Depth(Origin);
     const float Bias=FMath::Clamp(4.f*SizeScale,.4f,4.f);
-    const bool bPoint=!Cast<UMeshComponent>(Source);
+    const bool bPoint=ASTFireLife::IsPointSource(Source,!IgnitionPoints.IsEmpty());
     const FTransform RenderTransform=Render->GetComponentTransform();
 
     USkeletalMeshComponent* Skel=Cast<USkeletalMeshComponent>(Source);
@@ -2091,6 +2115,7 @@ float UASTFireFreeFlameComponent::UpdateConnectedSource(
 
     for (const FSourceAnchor& A:SourceAnchors)
     {
+        if(bPoint)break; // no mesh-depth sampling for an explicit point wick
         // A local flame patch grows over the ACTUAL surface. The old
         // all-mesh cluster radius illuminated the whole character at once.
         // Gate sampled vertices by nearby live tongue anchors/contact hits.
@@ -2143,8 +2168,8 @@ float UASTFireFreeFlameComponent::UpdateConnectedSource(
             Include(Root+FVector::UpVector*Rise);
         }
 
-    if(!Cast<UMeshComponent>(Source))
-        Include(Origin); // no donut in free-standing fire
+    if(bPoint)
+        Include(IgnitionPoints.IsEmpty()?Origin:Source->GetComponentTransform().TransformPosition(IgnitionPoints[0])); // no donut in free-standing fire
     if(Samples.IsEmpty())
         Include(Origin);
 
@@ -2184,7 +2209,7 @@ float UASTFireFreeFlameComponent::UpdateConnectedSource(
                 Front=FMath::Max(Front,BestDepth[I]);
         if(Front<=-BIG_NUMBER*.5f)
             Front=HighestDepth;
-        ConnectedRoots.Add(Projection.Unproject(P,FMath::Max(10.f,bPoint?OriginDepth-Bias:-Front-Bias)));
+        ConnectedRoots.Add(Projection.Unproject(P,FMath::Max(10.f,bPoint?Projection.Depth(Root)-Bias:-Front-Bias)));
     }
 
     // Stage14: one burning body owns the lower section of EVERY living
@@ -2262,7 +2287,7 @@ float UASTFireFreeFlameComponent::UpdateConnectedSource(
         TargetHeight*.24f,TargetHeight*.34f);
     FireVisualHeight=FireVisualHeight>0.f?FMath::Lerp(FireVisualHeight,TargetHeight,.14f):TargetHeight;
     FireVisualWidth=FireVisualWidth>0.f?FMath::Lerp(FireVisualWidth,TargetWidth,.10f):TargetWidth;
-    const float H=FMath::Clamp(FireVisualHeight,TargetHeight*.82f,TargetHeight*1.10f);
+    const float H=FMath::Clamp(FireVisualHeight,TargetHeight*.86f,TargetHeight*1.06f);
     const float W=FMath::Clamp(FireVisualWidth,H*.23f,H*.35f);
     const float SeedPhase=Seed*.013f;
     const float Drift=FMath::Clamp(float(TipCenter.X-RootCenter.X)/FMath::Max(.1f,W),-.9f,.9f);
@@ -2301,15 +2326,16 @@ float UASTFireFreeFlameComponent::UpdateConnectedSource(
             const float Rim=.15f*FMath::Sin(V*13.f+Phase-Elapsed*6.1f)+
                 .08f*FMath::Sin(V*23.f+T.Seed+Elapsed*3.6f);
             const float Profile=FMath::Clamp(RootBlend-Waist+Rim,.38f,1.13f);
-            return PlumeWidth*FMath::Pow(FMath::Max(0.f,1.f-V),.83f)*Profile;
+            return PlumeWidth*FMath::Pow(FMath::Max(0.f,1.f-V),.65f)*Profile;
         };
         FVector WorldA=TongueCenterAt(T,Root,NeckFractions[0],Right);
         for(int32 K=1;K<RingsPerTongue;++K)
         {
-            const float V0=NeckFractions[K-1];
-            const float V1=NeckFractions[K];
+            const float TipLimit=bPoint?.90f+.04f*ASTFireLife::Hash(T.Seed*.57f):1.f;
+            const float V0=NeckFractions[K-1]*TipLimit;
+            const float V1=NeckFractions[K]*TipLimit;
             const FVector WorldB=TongueCenterAt(T,Root,V1,Right);
-            AppendNeck(WorldA,WorldB,RadiusAt(V0),RadiusAt(V1),V0,V1);
+            AppendNeck(WorldA,WorldB,RadiusAt(V0),K==RingsPerTongue-1?0.f:RadiusAt(V1),V0,V1);
             WorldA=WorldB;
         }
         // Short swept lobes curve upward out of the SAME living plume,
@@ -2343,7 +2369,9 @@ float UASTFireFreeFlameComponent::UpdateConnectedSource(
             const float A=1.f-ASTFireLife::SmoothStep(T.PhaseAge/FMath::Max(.04f,T.BridgeSeconds));
             const FVector Tip=TongueCenterAt(T,Root,.91f,Right);
             const FVector End=Detached[T.BridgedChild].Position;
-            AppendNeck(Tip,End,T.CurrentWidth*.12f*A,T.CurrentWidth*.05f*A,.85f,1.f);
+            // A split neck must never turn into a long one-pixel filament.
+            if(FVector::DistSquared(Tip,End)<FMath::Square(T.CurrentLength*.16f))
+                AppendNeck(Tip,End,T.CurrentWidth*.12f*A,T.CurrentWidth*.05f*A,.85f,1.f);
         }
     }
 
@@ -2386,11 +2414,13 @@ float UASTFireFreeFlameComponent::UpdateConnectedSource(
     if(Required>FirePixelPitch)
         FirePixelPitch=Base*FMath::Pow(2.f,FMath::CeilToFloat(FMath::Log2(Required/Base)));
     const float Pitch=FirePixelPitch;
+    const float PointDepth=bPoint?Projection.Depth(Projection.Unproject(RootCenter,OriginDepth)):OriginDepth;
+    const float WickDepth=bPoint && !IgnitionPoints.IsEmpty()?Projection.Depth(Source->GetComponentTransform().TransformPosition(IgnitionPoints[0])):PointDepth;
     MinX=FMath::FloorToFloat(MinX/Pitch)*Pitch;
     MinY=FMath::FloorToFloat(MinY/Pitch)*Pitch;
     const int32 NX=FMath::Clamp(FMath::CeilToInt((MaxX-MinX)/Pitch),1,MaxXCells);
     const int32 NY=FMath::Clamp(FMath::CeilToInt((MaxY-MinY)/Pitch),1,MaxYCells);
-    struct FFireCell { float Depth=0.f,Temperature=0.f; bool bVisible=false; };
+    struct FFireCell { float Depth=0.f,Temperature=0.f,Cover=-BIG_NUMBER,NeckDepth=-BIG_NUMBER,Flow=0.f,Rim=0.f; bool bVisible=false; };
     TArray<FFireCell> Cells;
     Cells.SetNum(NX*NY);
     for(int32 Y=0;Y<NY;++Y) for(int32 X=0;X<NX;++X)
@@ -2399,14 +2429,14 @@ float UASTFireFreeFlameComponent::UpdateConnectedSource(
         FFireCell& Cell=Cells[Y*NX+X];
         // Coherent fields at fixed physical frequencies, rather than
         // a per-tongue concentric shader. No noise in vertex interpolation.
-        float Cover=-BIG_NUMBER,Temperature=0.f,NeckDepth=-BIG_NUMBER;
+        float& Cover=Cell.Cover;
         const float Z=float(P.Y-RootCenter.Y)/FMath::Max(.1f,H);
         const float XN=float(P.X-RootCenter.X)/FMath::Max(.1f,W);
         const float PlumeCenter=BodyCenter(Z);
-        const float Flow=.57f*FMath::Sin(XN*4.1f+Z*15.f-Elapsed*9.f+SeedPhase)+
+        Cell.Flow=.57f*FMath::Sin(XN*4.1f+Z*15.f-Elapsed*9.f+SeedPhase)+
             .27f*FMath::Sin(XN*8.f-Z*22.f+Elapsed*10.f+SeedPhase*.8f)+
             .16f*FMath::Sin(XN*13.f+Z*31.f-Elapsed*12.f+SeedPhase*1.4f);
-        const float Rim=Pitch*(.45f*FMath::Sin(XN*12.f+Z*24.f-Elapsed*8.f+SeedPhase)+
+        const float Rim=Cell.Rim=Pitch*(.45f*FMath::Sin(XN*12.f+Z*24.f-Elapsed*8.f+SeedPhase)+
             .25f*FMath::Sin(XN*21.f-Z*33.f+Elapsed*9.f));
         if(bPoint)
         {
@@ -2419,25 +2449,37 @@ float UASTFireFreeFlameComponent::UpdateConnectedSource(
             Width*=1.f-.68f*ASTFireLife::SmoothStep((V-.78f)/.22f);
             if(Z>=-.055f && Z<=.83f)
                 Cover=(Width-FMath::Abs(XN-PlumeCenter))*W+Rim;
-            NeckDepth=-OriginDepth+Bias;
+            Cell.NeckDepth=-WickDepth+Bias;
         }
-        for(const FNeckSegment& Neck:Necks)
+    }
+    // Segment-first rasterization: evaluate only cells inside each segment's
+    // bounding rectangle, instead of scanning all segments for every pixel.
+    for(const FNeckSegment& Neck:Necks)
+    {
+        const float Reach=FMath::Max(Neck.StartRadius,Neck.EndRadius)+Pitch;
+        const int32 X0=FMath::Clamp(FMath::FloorToInt((FMath::Min(Neck.Start.X,Neck.End.X)-Reach-MinX)/Pitch),0,NX-1);
+        const int32 X1=FMath::Clamp(FMath::CeilToInt((FMath::Max(Neck.Start.X,Neck.End.X)+Reach-MinX)/Pitch),0,NX-1);
+        const int32 Y0=FMath::Clamp(FMath::FloorToInt((FMath::Min(Neck.Start.Y,Neck.End.Y)-Reach-MinY)/Pitch),0,NY-1);
+        const int32 Y1=FMath::Clamp(FMath::CeilToInt((FMath::Max(Neck.Start.Y,Neck.End.Y)+Reach-MinY)/Pitch),0,NY-1);
+        const FVector2D Axis=Neck.End-Neck.Start;
+        const FVector2D Side=FVector2D(-Axis.Y,Axis.X).GetSafeNormal();
+        const float InvDenominator=FMath::Max(.001f,float(Axis.SizeSquared()));
+        for(int32 Y=Y0;Y<=Y1;++Y) for(int32 X=X0;X<=X1;++X)
         {
-            const float Reach=FMath::Max(Neck.StartRadius,Neck.EndRadius)+Pitch;
-            if(P.X<FMath::Min(Neck.Start.X,Neck.End.X)-Reach ||
-               P.X>FMath::Max(Neck.Start.X,Neck.End.X)+Reach ||
-               P.Y<FMath::Min(Neck.Start.Y,Neck.End.Y)-Reach ||
-               P.Y>FMath::Max(Neck.Start.Y,Neck.End.Y)+Reach) continue;
-            const FVector2D Axis=Neck.End-Neck.Start;
+            FFireCell& Cell=Cells[Y*NX+X];
+            const FVector2D P(MinX+(X+.5f)*Pitch,MinY+(Y+.5f)*Pitch);
+            const float Flow=Cell.Flow,Rim=Cell.Rim;
+            float& Cover=Cell.Cover;
+            float& Temperature=Cell.Temperature;
+            float& NeckDepth=Cell.NeckDepth;
             const float Along=FMath::Clamp(float(FVector2D::DotProduct(P-Neck.Start,Axis))/
-                FMath::Max(.001f,float(Axis.SizeSquared())),0.f,1.f);
+                InvDenominator,0.f,1.f);
             const FVector2D Center=Neck.Start+Axis*Along;
             const float R=FMath::Lerp(Neck.StartRadius,Neck.EndRadius,Along);
             const float D=float((P-Center).Size());
             const float Support=R-D+Rim;
             if(Support<0.f) continue;
             const float V=FMath::Lerp(Neck.StartV,Neck.EndV,Along);
-            const FVector2D Side=FVector2D(-Axis.Y,Axis.X).GetSafeNormal();
             const float Shift=.28f*R*Flow;
             const float Core=FMath::Clamp(1.f-
                 FMath::Abs(float(FVector2D::DotProduct(P-Center,Side))-Shift)/
@@ -2450,6 +2492,15 @@ float UASTFireFreeFlameComponent::UpdateConnectedSource(
                 NeckDepth=FMath::Lerp(Neck.StartDepth,Neck.EndDepth,Along);
             }
         }
+    }
+    for(int32 Y=0;Y<NY;++Y) for(int32 X=0;X<NX;++X)
+    {
+        FFireCell& Cell=Cells[Y*NX+X];
+        const float Cover=Cell.Cover,NeckDepth=Cell.NeckDepth,Flow=Cell.Flow;
+        float& Temperature=Cell.Temperature;
+        const float Z=(MinY+(Y+.5f)*Pitch-RootCenter.Y)/FMath::Max(.1f,H);
+        const float XN=(MinX+(X+.5f)*Pitch-RootCenter.X)/FMath::Max(.1f,W);
+        const float PlumeCenter=BodyCenter(Z);
         Cell.bVisible=Cover>=0.f && Heat>.015f;
         if(!Cell.bVisible) continue;
         if(bPoint)
@@ -2458,9 +2509,9 @@ float UASTFireFreeFlameComponent::UpdateConnectedSource(
             // Thermal islands travel independently through the field.
             const float DX=XN-PlumeCenter-.12f*FMath::Sin(Z*10.f-Elapsed*7.f+SeedPhase);
             const float Central=FMath::Exp(-FMath::Square(DX/.49f)-FMath::Square((Z-.24f)/.34f));
-            float T=.21f+.63f*Central+.12f*(1.f-FMath::Clamp(Z,0.f,1.f))+
+            float T=.21f+.60f*Central+.12f*(1.f-FMath::Clamp(Z,0.f,1.f))+
                 .15f*Flow+.012f*FMath::Clamp(Cover/Pitch,0.f,4.f);
-            T-=.14f*FMath::Max(0.f,Z-.52f)/.48f;
+            T-=.17f*FMath::Max(0.f,Z-.52f)/.48f;
             T-=.08f*FMath::Clamp((1.5f-Cover/Pitch)/1.5f,0.f,1.f);
             T-=.12f*(1.f-ASTFireLife::SmoothStep((Z+.055f)/.13f));
             Temperature=T;
@@ -2468,7 +2519,7 @@ float UASTFireFreeFlameComponent::UpdateConnectedSource(
         Cell.Temperature=FMath::Clamp(Heat*Temperature,0.f,1.f);
         // Only occupied cells need expensive skin depth interpolation.
         float Front=-BIG_NUMBER;
-        if(bPoint) Front=-OriginDepth+Bias;
+        if(bPoint) Front=-WickDepth+Bias;
         else
         {
             float BestD2[3]={BIG_NUMBER,BIG_NUMBER,BIG_NUMBER};
