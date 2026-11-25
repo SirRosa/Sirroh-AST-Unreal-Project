@@ -41,6 +41,9 @@ public:
     static FString RunFireV4Audit(UMaterialInterface* TestMaterial);
 
     UFUNCTION(BlueprintCallable, Category="AST Fire|Diagnostics")
+    static FString RunCarryVisualAudit(UClass* BoxClass,UClass* BarrelClass);
+
+    UFUNCTION(BlueprintCallable, Category="AST Fire|Diagnostics")
     static FString RunFireV4Capture(UMaterialInterface* TestMaterial);
 
     UFUNCTION(BlueprintCallable, Category="AST Fire|Diagnostics")
