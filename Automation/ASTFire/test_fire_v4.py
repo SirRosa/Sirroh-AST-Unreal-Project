@@ -15,21 +15,19 @@ def fnv(s):
     return f"{v:08x}"
 def region(a,b): return c[c.index(a):c.index(b,c.index(a))]
 # The hashes are pinned to accepted v3 7d0eee1049ffbcca7f25ed39811901667a362ba5, NOT recomputed from v4.
-for a,b,expected in [["void UASTFireFreeFlameComponent::UpdateSparks(","void UASTFireFreeFlameComponent::UpdateSmoke(","1408cade"],["void UASTFireFreeFlameComponent::UpdateSmoke(","FString UASTFireFreeFlameComponent::RunSmokeAudit(","f03b75c8"],["void UASTFireFreeFlameComponent::UpdateDetachedVortices(","void UASTFireFreeFlameComponent::AddStrip(","59110f1b"],["    // Stage30: distinct high-contrast hot pixels","    // Section 1 was authored before this section","4ba8a0a3"]]:
+for a,b,expected in [["void UASTFireFreeFlameComponent::UpdateSparks(","void UASTFireFreeFlameComponent::UpdateSmoke(","1408cade"],["void UASTFireFreeFlameComponent::UpdateSmoke(","FString UASTFireFreeFlameComponent::RunSmokeAudit(","f03b75c8"],["    // Stage30: distinct high-contrast hot pixels","    // Section 1 was authored before this section","4ba8a0a3"]]:
     assert fnv(region(a,b))==expected, a
 assert fnv(r)=="930b76ee","burn/torch runtime changed"
 for token in ("GetTongueCount()", "SetSizeScale(", "RunSmokeAudit(", "RunFireV4Audit("):
     assert token in h,token
 for token in ("GetSkinnedVertexPosition","LineTraceComponent(","ConnectedRoots.Add(",
-              "AppendNeck(WorldA,WorldB,RadiusAt(V0),K==RingsPerTongue-1?0.f:RadiusAt(V1),V0,V1)",
-              "AppendNeck(BranchRoot,Mid,BranchRadius,", "EFlameLife::Bridging",
-              "EFlameLife::Retracting","D.Position+=D.Velocity*Dt;",
+              "AppendNeck(WorldA,WorldB,TongueRadiusAt(T,V0),TongueRadiusAt(T,V1),V0,V1,Phase)",
+              "EFlameLife::Bridging","D.Position+=D.Velocity*Dt;",
               "const float PixelPitch=UpdateConnectedSource",
               "const float Pitch=FMath::Max(.1875f,PixelPitch);",
-              "const float Support=R-D+Rim;", "Cell.Temperature=FMath::Clamp",
+              "const float Support=R-D;", "Cell.Temperature=FMath::Clamp",
               "CornerDepth(CX,CY)","Colors.Add(FLinearColor(ASTFireLife::ToneCode(C.Temperature),0.f,0.f,1.f))",
-              "const float V=(PY*CS+PX*SN)", "Projection.Unproject(P,Depth)",
-              "Cell.Flow=.57f*FMath::Sin","const float Shift=.28f*R*Flow",
+              "Projection.Unproject(P,Depth)", "ASTFireLife::ArcHeat(V,Core",
               "MaxXCells=72,MaxYCells=104", "RunFireV4Audit("):
     assert token in c,token
 assert "floor(UV" not in m
@@ -52,33 +50,23 @@ for scale in (.15,1,2):
     for w,height in ((12,22),(100,170),(350,700)):
         p=pitch(scale,w,height)
         assert ceil(w/p)+1<=72 and ceil(height/p)+1<=104
-# Thermal islands move independently of geometric mask. Outside stays absent.
-def field(distance,r,v,flow,rim=0):
-    cover=r-distance+rim>=0
-    core=max(0,min(1,1-abs(distance-.28*r*flow)/max(.25,r)))
-    heat=max(0,min(1,.21+.62*core-.31*v+.15*flow))
-    return cover,heat
-assert field(13,10,.2,1)[0] is False
-assert field(2,10,.2,-1)[0] and field(2,10,.2,1)[0]
-assert field(2,10,.2,-1)[1]!=field(2,10,.2,1)[1]
-assert field(0,10,.2,0)[1]>field(0,10,.8,0)[1]
-# Each detached piece is proportionate to the retracted portion, then
-# shrinks and cools. Pixel grid itself does not spin.
-for remaining in (.66,.75,.83):
-    for random in (0,.5,1):
-        child=100*(1-remaining)*(.72+.24*random)
-        assert 0<child<35
-        for age in (0,.25,.75):
-            assert child*(1-age)>child*(1-age-.1)
-assert "Child.Width=FMath::Min" in c
-assert "Child.Lifetime=.19f + .32f" in c
-print("Fire v4 raster, independent heat, detached lifecycle, v3 smoke/spark/torch locks: PASS")
-
-# Verified directly in installed UE 5.8 World.h.
-assert 'World->SendAllEndOfFrameUpdates();' in c
-assert 'FragmentTone=DetachedPixels.Find(Q)' in c
-assert 'Row.Center=BodyCenter(Row.Z)' in c
-
-assert 'for(int32 Y=Y0;Y<=Y1;++Y)' in c
-assert 'bHiddenWick=Case==7' in c
-assert 'bMesh && bWick' in c
+# Real lifecycle contract: the original arc is transferred at an exact
+# sampled cut ring. There is no independent upper sprite or retraction.
+assert "EFlameLife::Retracting" not in c
+assert "BodyCenter(" not in c
+assert "Child.Arc[K]=TongueCenterAt(Tongue,Base,V,Right)-Child.Position;" in c
+assert "Child.Radius[K]=TongueRadiusAt(Tongue,V);" in c
+assert "Child.BirthPhase=Tongue.Seed+Tongue.Phase;" in c
+assert "T.RestartLength=FMath::Min(Remaining,T.MaxLength*.34f);" in c
+assert "D.Temperature=FMath::Pow(Fade,1.25f);" in c
+assert "MaxTransferError<.05f" in c and "MaxResetRatio<=.3751f" in c
+assert "bCycle && bFragment" in c and "bMesh && bWick" in c
+assert "World->SendAllEndOfFrameUpdates();" in c
+for cut in (2,3):
+    vs=[k/8 for k in range(cut,9)]
+    assert vs[0] in (.25,.375) and vs[-1]==1
+    assert 1-vs[0]>.60
+    for i in range(1,20):
+        a,b=1-(i-1)/20,1-i/20
+        assert b**.92<a**.92 and b**1.25<a**1.25
+print("Fire lifecycle: original upper arc, atomic rebirth, cooling, preserved smoke/sparks")

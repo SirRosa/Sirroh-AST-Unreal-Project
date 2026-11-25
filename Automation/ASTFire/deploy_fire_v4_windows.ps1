@@ -35,12 +35,12 @@ $sourcePlugin=Join-Path $source $plugin
 $livePlugin=Join-Path $ProjectRoot $plugin
 # Compare the exact locally deployed source to the accepted revision.
 $baseline=@{
- "$plugin\Source\ASTFireRuntime\Private\ASTFireFreeFlameComponent.cpp"='16af2c8653c72bba66508ff598fb157ff85d4a2d'
- "$plugin\Source\ASTFireRuntime\Public\ASTFireFreeFlameComponent.h"='e4d980e5940a773065e7277300a35f0ea8190d6a'
+ "$plugin\Source\ASTFireRuntime\Private\ASTFireFreeFlameComponent.cpp"=@('16af2c8653c72bba66508ff598fb157ff85d4a2d','0189c213c6d69a49beb72337dc01581b77f4e7f0')
+ "$plugin\Source\ASTFireRuntime\Public\ASTFireFreeFlameComponent.h"=@('e4d980e5940a773065e7277300a35f0ea8190d6a','237adae01b04d70857c2029242e72299deaa1114')
 }
 foreach($rel in $baseline.Keys){
  $current=(& git -C $ProjectRoot hash-object ('--path='+$rel.Replace('\','/')) (Join-Path $ProjectRoot $rel)).Trim()
- if($LASTEXITCODE -ne 0 -or $current -ne $baseline[$rel]){throw ('Local source changed '+$rel+' '+$current)}
+ if($LASTEXITCODE -ne 0 -or $baseline[$rel] -notcontains $current){throw ('Local source changed '+$rel+' '+$current)}
 }
 # Fail closed if unrelated live C++ differs; never overwrite someone else's work.
 foreach($f in Get-ChildItem -LiteralPath (Join-Path $sourcePlugin 'Source') -File -Recurse){

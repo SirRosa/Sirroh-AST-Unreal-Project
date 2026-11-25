@@ -36,7 +36,6 @@ for key in (
     "UpdateSparks(SimDt);",
     "D.Position+=D.Velocity*Dt;",
     "T.Life = EFlameLife::Bridging;",
-    "T.Life = EFlameLife::Retracting;",
     "T.Life = EFlameLife::Growing;",
 ): assert key in c,key
 assert c.index("AdvanceSimulation(SimDt);")<c.index(

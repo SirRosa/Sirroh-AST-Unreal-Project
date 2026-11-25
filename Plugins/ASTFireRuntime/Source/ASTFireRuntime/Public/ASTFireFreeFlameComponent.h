@@ -66,7 +66,7 @@ private:
     static constexpr int32 SourceGridY = 44;
     static constexpr int32 MaxSourceAnchors = 96;
 
-    enum class EFlameLife : uint8 { Growing, Bridging, Retracting };
+    enum class EFlameLife : uint8 { Growing, Bridging };
     // One physical source may support several independently-lived tongues.
     // Hotspots nearby are merged here, before the mesh-bound GPU source mask.
     struct FBurnCluster
@@ -124,6 +124,15 @@ private:
         float Length = 22.f;
         float Temperature = 0.65f;
         float Seed = 0.f;
+        // The actual severed upper arc, expressed relative to its cut point.
+        FVector Arc[RingsPerTongue]{};
+        float Radius[RingsPerTongue]{};
+        float SourceV[RingsPerTongue]{};
+        int32 ArcCount=0;
+        int32 ParentGeneration=0;
+        float BirthClock=0.f;
+        float BirthPhase=0.f;
+        float BirthHeat=1.f;
         bool bAlive = false;
     };
 
@@ -167,6 +176,7 @@ private:
     FVector SampleRoot(const FTongue& Tongue) const;
     FVector TongueCenterAt(const FTongue& Tongue, const FVector& Base,
         float Fraction, const FVector& Right) const;
+    float TongueRadiusAt(const FTongue& Tongue,float V) const;
     void AdvanceSimulation(float Dt);
     void UpdateDetachedVortices(float Dt);
     void UpdateSparks(float Dt);
