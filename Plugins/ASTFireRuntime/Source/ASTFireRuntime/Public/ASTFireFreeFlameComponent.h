@@ -257,7 +257,9 @@ private:
     float FireVisualHeight=0.f;
     float FireVisualWidth=0.f;
     // Point flame: one evolving combustion front, not a union of swept arcs.
-    static constexpr int32 FieldX=40,FieldY=44,FieldZones=5;
+    static constexpr int32 FieldX=40;
+    static constexpr int32 FieldY=44;
+    static constexpr int32 FieldZones=5;
     struct FFieldCell
     {
         FVector World=FVector::ZeroVector;
@@ -268,12 +270,14 @@ private:
     {
         FVector2D Offset=FVector2D::ZeroVector;
         float Temperature=0.f;
+        int32 SourceIndex=INDEX_NONE;
     };
     struct FFieldFragment
     {
         TArray<FFieldFlake> Cells;
         FVector Center=FVector::ZeroVector,Velocity=FVector::ZeroVector;
         float Age=0.f,Life=1.f;
+        int32 Serial=0;
     };
     TArray<FFieldCell> PointField;
     TArray<FFieldFragment> FieldFragments;

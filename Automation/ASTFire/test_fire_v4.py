@@ -107,3 +107,6 @@ assert "if(bPointField)RenderFieldFragments" in c
 assert "if(!PointField[I].bLit || Next[I].bLit)continue;" in c
 assert "FieldCellsTransferred>=15" in c
 assert "Ridge=FMath::Max(Ridge,Heights[I]*Shape)" in c
+
+assert 'OldField[J].bLit && !Single->PointField[J].bLit' in c
+assert 'FVector::DistSquared(OldField[J].World,Restored)<.0001f' in c

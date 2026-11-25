@@ -270,6 +270,7 @@ void UASTFireFreeFlameComponent::OnUnregister()
     SmokeFireSize = 0.f;
     SmokePixelPitch = 0.f;
     FirePixelPitch = FireVisualHeight = FireVisualWidth = 0.f;
+    PointField.Reset();FieldFragments.Reset();FieldClock=-1.f;
     NearbySmokeLights.Reset();
     SmokeMaterial = nullptr;
     SparkMaterial = nullptr;
@@ -1827,16 +1828,18 @@ FString UASTFireFreeFlameComponent::RunFireV4Audit(UMaterialInterface* TestMater
                 {
                     for(const auto& C:F.Cells)
                     {
-                        bool bFoundCell=false;
-                        for(const auto& Prev:OldField)
-                            if(Prev.bLit && FMath::IsNearlyEqual(Prev.Temperature,C.Temperature,.0001f))
-                            {bFoundCell=true;break;}
-                        bFieldContinuity&=bFoundCell;
+                        const int32 J=C.SourceIndex;
+                        const ASTFireLife::FFireProjection FieldProj(Single->Source->GetComponentLocation(),World);
+                        const FVector Restored=F.Center+FieldProj.Right*C.Offset.X+FieldProj.Up*C.Offset.Y;
+                        bFieldContinuity&=OldField.IsValidIndex(J) && Single->PointField.IsValidIndex(J) &&
+                            OldField[J].bLit && !Single->PointField[J].bLit &&
+                            FMath::IsNearlyEqual(OldField[J].Temperature,C.Temperature,.0001f) &&
+                            FVector::DistSquared(OldField[J].World,Restored)<.0001f;
                     }
                 }
                 else for(const auto& Prev:OldFragments)
-                    if(F.Cells.Num()==Prev.Cells.Num() && F.Life==Prev.Life && F.Age>Prev.Age)
-                    {++FieldCoolingFrames;bFieldContinuity&=F.Center.Z>Prev.Center.Z;break;}
+                    if(F.Serial==Prev.Serial && F.Age>Prev.Age)
+                    {++FieldCoolingFrames;bFieldContinuity&=F.Center.Z>Prev.Center.Z && F.Velocity.Z>Prev.Velocity.Z;break;}
             }
             const FTongue& New=Single->Tongues[0];
             if(New.Generation==Old.Generation && Old.Life==EFlameLife::Growing)
@@ -2452,13 +2455,14 @@ float UASTFireFreeFlameComponent::UpdatePointField(bool bCreate,const FVector& R
     const FVector2D Projected=P.Project(Origin);
     const FVector2D GridOrigin(FMath::FloorToDouble(Projected.X/Pitch)*Pitch,
         FMath::FloorToDouble(Projected.Y/Pitch)*Pitch);
+    const auto Random=[this](int32 Salt){return FMath::Abs(Uniform(Salt));};
     const bool bFirst=PointField.Num()!=FieldX*FieldY || FieldClock<0.f || Elapsed<FieldClock;
     if(bFirst)
     {
         PointField.Reset();PointField.SetNum(FieldX*FieldY);FieldFragments.Reset();
         FieldClock=Elapsed;FieldSplitCount=FieldTransferredCells=0;
         for(int32 Z=0;Z<FieldZones;++Z)
-        {FieldGeneration[Z]=0;FieldAge[Z]=Uniform(915+Z*71)*.9f;}
+        {FieldGeneration[Z]=0;FieldAge[Z]=Random(915+Z*71)*.9f;}
     }
     const float Dt=FMath::Max(0.f,Elapsed-FieldClock);
     FieldClock=Elapsed;
@@ -2488,20 +2492,20 @@ float UASTFireFreeFlameComponent::UpdatePointField(bool bCreate,const FVector& R
     for(int32 Z=0;Z<FieldZones;++Z)
     {
         const int32 Salt=Z*213+FieldGeneration[Z]*997;
-        const float Grow=.52f+.62f*Uniform(Salt+123);
-        const float Rest=.12f+.14f*Uniform(Salt+125);
+        const float Grow=.52f+.62f*Random(Salt+123);
+        const float Rest=.12f+.14f*Random(Salt+125);
         FieldAge[Z]+=Dt;
         if(FieldAge[Z]>=Grow+Rest)
         {
             Cut[Z]=true;FieldAge[Z]=0.f;++FieldGeneration[Z];
         }
         const int32 NextSalt=Z*213+FieldGeneration[Z]*997;
-        const float G=.52f+.62f*Uniform(NextSalt+123);
-        const float R=.12f+.14f*Uniform(NextSalt+125);
+        const float G=.52f+.62f*Random(NextSalt+123);
+        const float R=.12f+.14f*Random(NextSalt+125);
         const float Progress=ASTFireLife::SmoothStep((FieldAge[Z]-R)/G);
         Centers[Z]=- .80f+.40f*Z+.07f*FMath::Sin(Elapsed*3.7f+Z*2.9f+Seed*.01f);
-        Widths[Z]=.24f+.15f*Uniform(NextSalt+222);
-        Heights[Z]=(11.f+12.f*Uniform(NextSalt+121))*Progress;
+        Widths[Z]=.24f+.15f*Random(NextSalt+222);
+        Heights[Z]=(11.f+12.f*Random(NextSalt+121))*Progress;
     }
     const float WindSide=FMath::Clamp(float(FVector::DotProduct(Wind,P.Right))/180.f,-1.f,1.f);
     const float Phase=Seed*.017f;
@@ -2568,14 +2572,14 @@ float UASTFireFreeFlameComponent::UpdatePointField(bool bCreate,const FVector& R
         if(Removed.Num()<2)continue;
         if(FieldFragments.Num()>=12)FieldFragments.RemoveAt(0);
         auto& F=FieldFragments.AddDefaulted_GetRef();
-        F.Center=Center/Removed.Num();F.Life=.66f+.31f*Uniform(Z*37+FieldGeneration[Z]*811);
+        F.Center=Center/Removed.Num();F.Serial=FieldSplitCount+1;F.Life=.66f+.31f*Random(Z*37+FieldGeneration[Z]*811);
         const float S=FMath::Clamp(SizeScale,.08f,2.f);
-        F.Velocity=FVector::UpVector*(38.f+Uniform(Z*91+FieldGeneration[Z]*77)*27.f)*S+
+        F.Velocity=FVector::UpVector*(38.f+Random(Z*91+FieldGeneration[Z]*77)*27.f)*S+
             P.Right*(Centers[Z]*36.f*S)+Wind*.10f;
         for(int32 I:Removed)
         {
             const FVector Offset=PointField[I].World-F.Center;
-            F.Cells.Add({FVector2D(FVector::DotProduct(Offset,P.Right),FVector::DotProduct(Offset,P.Up)),PointField[I].Temperature});
+            F.Cells.Add({FVector2D(FVector::DotProduct(Offset,P.Right),FVector::DotProduct(Offset,P.Up)),PointField[I].Temperature,I});
         }
         ++FieldSplitCount;FieldTransferredCells+=Removed.Num();
     }
