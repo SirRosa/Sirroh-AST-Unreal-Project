@@ -124,3 +124,6 @@ assert "Group.Num()<2" in c
 assert 'L.IndexBuffer.GetArrayView()' in c
 assert 'Fire->SourceAnchors.Num()>=30' in c
 assert 'CrateSaved>=4 && CrateAnchors>=30 && CrateCuts>=2' in c
+
+assert 'WorldRequired>FireVisualWidth' in c
+assert 'MeshPitchChanges<=4' in c

@@ -1595,7 +1595,7 @@ FString UASTFireFreeFlameComponent::RunFireV4Audit(UMaterialInterface* TestMater
     if(!World) return TEXT("FAIL:NO_WORLD");
     bool bPass=true,bFragment=false,bCool=true,bSmall=false,bMesh=false,bMoving=false,bWick=false;
     int32 MaxCells=0,MaxTones=0,FrameCount=0,StableFrames=0,GoodShape=0,Connected=0;
-    int32 HotPixels=0,AllPixels=0,FragmentPixels=0,PitchChanges=0;
+    int32 HotPixels=0,AllPixels=0,FragmentPixels=0,PitchChanges=0,MeshPitchChanges=0;
     int32 ChangedColors=0,CommonColors=0;
     int32 DetachedCells=0,ExposedCells=0,MultiAxisFrames=0,AxisFrames=0,SparkSamples=0;
     bool bSparkGrid=true,bSparkFade=true;
@@ -1661,7 +1661,11 @@ FString UASTFireFreeFlameComponent::RunFireV4Audit(UMaterialInterface* TestMater
             if(!IsValid(Fire->Render)){bPass=false;break;}
             const float Pitch=Fire->FirePixelPitch;
             if(Pitch<=0.f)continue;
-            if(I>25 && LastPitch>0.f && Pitch!=LastPitch)++PitchChanges;
+            if(I>25 && LastPitch>0.f && Pitch!=LastPitch)
+            {
+                ++PitchChanges;
+                if(bOnMesh && I<72)++MeshPitchChanges;
+            }
             LastPitch=Pitch;
             const ASTFireLife::FFireProjection P(Fire->Source->GetComponentLocation(),World);
             const FTransform T=Fire->Render->GetComponentTransform();
@@ -1954,11 +1958,11 @@ FString UASTFireFreeFlameComponent::RunFireV4Audit(UMaterialInterface* TestMater
     bPass &= bCycle && bFragment && bCool && bSmall && bMesh && bWick && bMoving && bRaster &&
         MaxTones>=6 && ShapeRate>=.55f && Connectivity>=.65f &&
         HotRate<=.30f && ChangeRate>.02f && FragmentRate<.85f &&
-        Crowd.Num()==20;
-    return FString::Printf(TEXT("%s:small=%d;fragment=%d;cool=%d;mesh=%d;wick=%d;moving=%d;raster=%d;cells=%d;tones=%d;shape=%.3f;connected=%.3f;aspect=%.3f;fill=%.3f;hot=%.3f;thermalChange=%.3f;detachedRatio=%.3f;pitchChanges=%d;cpuMs=%.3f;p95=%.3f;crowd20Ms=%.3f;crowdP95=%.3f;cycle=%d;splits=%d;growing=%d;cooling=%d;transferError=%.5f;resetRatio=%.3f;exposure=%.3f;fan=%.3f;sparkGrid=%d;sparkFade=%d;sparkSamples=%d;fieldCuts=%d;fieldCells=%d;fieldCooling=%d;fieldContinuity=%d"),
+        Crowd.Num()==20 && MeshPitchChanges<=4;
+    return FString::Printf(TEXT("%s:small=%d;fragment=%d;cool=%d;mesh=%d;wick=%d;moving=%d;raster=%d;cells=%d;tones=%d;shape=%.3f;connected=%.3f;aspect=%.3f;fill=%.3f;hot=%.3f;thermalChange=%.3f;detachedRatio=%.3f;pitchChanges=%d;meshPitchChanges=%d;cpuMs=%.3f;p95=%.3f;crowd20Ms=%.3f;crowdP95=%.3f;cycle=%d;splits=%d;growing=%d;cooling=%d;transferError=%.5f;resetRatio=%.3f;exposure=%.3f;fan=%.3f;sparkGrid=%d;sparkFade=%d;sparkSamples=%d;fieldCuts=%d;fieldCells=%d;fieldCooling=%d;fieldContinuity=%d"),
         bPass?TEXT("PASS"):TEXT("FAIL"),int32(bSmall),int32(bFragment),int32(bCool),int32(bMesh),int32(bWick),int32(bMoving),int32(bRaster),
         MaxCells,MaxTones,ShapeRate,Connectivity,AspectSum/FMath::Max(1,StableFrames),
-        FillSum/FMath::Max(1,StableFrames),HotRate,ChangeRate,FragmentRate,PitchChanges,
+        FillSum/FMath::Max(1,StableFrames),HotRate,ChangeRate,FragmentRate,PitchChanges,MeshPitchChanges,
         Cost/FMath::Max(1,FrameCount),Costs.IsEmpty()?0.:Costs[FMath::Clamp(FMath::FloorToInt(Costs.Num()*.95f),0,Costs.Num()-1)],
         CrowdMs/FMath::Max(1,CrowdCosts.Num()),CrowdCosts.IsEmpty()?0.:CrowdCosts[FMath::Clamp(FMath::FloorToInt(CrowdCosts.Num()*.95f),0,CrowdCosts.Num()-1)],int32(bCycle),Splits,GrowingFrames,CoolingFrames,MaxTransferError,MaxResetRatio,Exposure,FanRate,int32(bSparkGrid),int32(bSparkFade),SparkSamples,FieldCuts,FieldCellsTransferred,FieldCoolingFrames,int32(bFieldContinuity));
 #else
@@ -2803,7 +2807,15 @@ float UASTFireFreeFlameComponent::UpdateConnectedSource(
     const float MaxRise=MaxHeight*ASTFireLife::FFireProjection::Reference/FMath::Max(10.f,OriginDepth*.70f);
     Lo.X-=MaxRise*.55f+Nominal*2.f;Hi.X+=MaxRise*.55f+Nominal*2.f;
     Lo.Y-=Nominal*2.f;Hi.Y+=MaxRise+Nominal*3.f;
-    FirePixelPitch=FMath::Max(Nominal,FMath::Max(float((Hi.X-Lo.X)/(MaxXCells-2)),float((Hi.Y-Lo.Y)/(MaxYCells-2))));
+    const float Required=FMath::Max(Nominal,FMath::Max(float((Hi.X-Lo.X)/(MaxXCells-2)),float((Hi.Y-Lo.Y)/(MaxYCells-2))));
+    // Store a world-space grid spacing in the existing unused width cache.
+    // Changing active surface cells may enlarge the envelope, but must
+    // never continuously resize pixels. Perspective changes remain smooth.
+    const float WorldRequired=Required*OriginDepth/ASTFireLife::FFireProjection::Reference;
+    const float WorldNominal=Nominal*OriginDepth/ASTFireLife::FFireProjection::Reference;
+    if(FireVisualWidth<=0.f || WorldRequired>FireVisualWidth || WorldNominal<FireVisualWidth*.52f && WorldRequired<FireVisualWidth*.65f)
+        FireVisualWidth=WorldNominal*FMath::Pow(1.20f,FMath::CeilToFloat(FMath::Loge(FMath::Max(1.f,WorldRequired/WorldNominal))/FMath::Loge(1.20f)));
+    FirePixelPitch=FMath::Max(.1875f,FireVisualWidth*ASTFireLife::FFireProjection::Reference/OriginDepth);
     const float Pitch=FirePixelPitch;
     const int32 GX=FMath::FloorToInt(Lo.X/Pitch),GY=FMath::FloorToInt(Lo.Y/Pitch);
     const int32 NX=FMath::Clamp(FMath::CeilToInt(Hi.X/Pitch)-GX,1,MaxXCells);
