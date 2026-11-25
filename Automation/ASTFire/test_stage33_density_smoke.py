@@ -64,3 +64,11 @@ assert "FreeFlames->SetSizeScale(FlameSize);" in r
 assert "InitialPoints.Add(FVector_NetQuantize10(PointOffset));" in r
 assert r.index("Mesh->GetFName() == PreferredMeshComponentName")<r.index("if (!Mesh->IsVisible()) continue;")
 print("Stage33: preserve existing torch point-source and game-module ABI")
+
+# Contact must preserve a valid radius and last-known-safe centre; do not kill
+# on grazing sweep or rejected growth (regression from the first native audit).
+assert "if(Candidate>=3.f && IsClear(S.Position,Candidate)) Radius=Candidate;" in c
+assert "const auto MoveClear=" in c
+assert "Out.bStartPenetrating?Start:Out.Location+Out.Normal*2.f" in c
+assert "if(!IsClear(S.Position,Radius)) S.Position=Previous;" in c
+assert "if (Hit.bStartPenetrating) { S.bAlive=false; continue; }" not in c

@@ -955,15 +955,17 @@ void UASTFireFreeFlameComponent::UpdateSmoke(float Dt)
         const float Headroom=S.MaxRise-Height-2.f;
         if (Headroom<3.f) { S.bAlive=false; continue; }
         const float Growth=1.f+1.5f*ASTFireLife::SmoothStep(Age/.68f);
-        float Radius=FMath::Min(Headroom,S.InitialRadius*Growth*
+        const float Desired=FMath::Min(Headroom,S.InitialRadius*Growth*
             (.91f+.09f*FMath::Sin(S.Seed+S.Age*.8f)));
-        Radius=FMath::Min(Radius,S.Radius+Dt*8.f);
-        // Bounded clearance checks; moving obstacles can displace/dissolve
-        // a carrier, but cannot leave a big rendered patch inside them.
-        for (int32 Try=0;Try<3 && Radius>=3.f && !IsClear(S.Position,Radius);++Try)
-            Radius*=.72f;
-        if (Radius<3.f || !IsClear(S.Position,Radius))
+        // Never shrink a cloud just because the next growth step touches
+        // a roof. Keep its last clear radius; shrink only on actual intrusion.
+        float Radius=FMath::Min(Headroom,S.Radius);
+        for(int32 Try=0;Try<6 && Radius>=3.f && !IsClear(S.Position,Radius);++Try)
+            Radius*=.78f;
+        if(Radius<3.f || !IsClear(S.Position,Radius))
         { S.bAlive=false; continue; }
+        const float Candidate=FMath::Min(Desired,Radius+Dt*8.f);
+        if(Candidate>=3.f && IsClear(S.Position,Candidate)) Radius=Candidate;
         S.Radius=Radius;
         const float Phase=float(S.Position.Z-S.BaseZ)*.013f+
             Elapsed*.43f+S.Seed*.20f;
@@ -977,38 +979,60 @@ void UASTFireFreeFlameComponent::UpdateSmoke(float Dt)
         S.Velocity=FMath::VInterpTo(S.Velocity,Target,Dt,1.25f);
         FVector Delta=S.Velocity*Dt;
         Delta.Z=FMath::Min(float(Delta.Z),FMath::Max(0.f,Headroom-Radius));
-        const FCollisionShape Shape=FCollisionShape::MakeSphere(Radius+1.f);
-        FHitResult Hit;
-        if (World->SweepSingleByChannel(Hit,S.Position,S.Position+Delta,
-                FQuat::Identity,SmokeChannel,Shape,Query))
+        // Match the overlap clearance exactly. Maintain a last-known-safe
+        // position for BOTH the approach and slide legs. A grazing sweep
+        // reporting initial penetration is a blocked movement, not a death.
+        const FCollisionShape Shape=FCollisionShape::MakeSphere(Radius+1.5f);
+        const auto MoveClear=[&](const FVector& Start,const FVector& Motion,FHitResult& Out)->FVector
         {
-            if (Hit.bStartPenetrating) { S.bAlive=false; continue; }
-            S.Position=Hit.Location+Hit.Normal*.85f;
-            FVector Slide=FVector::VectorPlaneProject(
-                Delta*(1.f-Hit.Time),Hit.Normal);
-            if (Hit.Normal.Z<-.45f)
+            if(Motion.IsNearlyZero()) return Start;
+            const bool bHit=World->SweepSingleByChannel(Out,Start,Start+Motion,
+                FQuat::Identity,SmokeChannel,Shape,Query);
+            FVector End=bHit ? (Out.bStartPenetrating?Start:Out.Location+Out.Normal*2.f)
+                            : Start+Motion;
+            if(IsClear(End,Radius)) return End;
+            // Numerical contact tolerances can disagree between sweep and
+            // overlap. Find a safe point along the already-swept segment.
+            float Lo=0.f,Hi=bHit?FMath::Clamp(Out.Time,0.f,1.f):1.f;
+            for(int32 K=0;K<6;++K)
             {
-                // Accumulation under a roof: tangent drift, varied by
-                // carrier; after passing an edge buoyancy resumes.
+                const float Mid=(Lo+Hi)*.5f;
+                if(IsClear(Start+Motion*Mid,Radius)) Lo=Mid;
+                else Hi=Mid;
+            }
+            const FVector Safe=Start+Motion*Lo;
+            return IsClear(Safe,Radius)?Safe:Start;
+        };
+        const FVector Previous=S.Position;
+        FHitResult Hit;
+        S.Position=MoveClear(Previous,Delta,Hit);
+        if(Hit.bBlockingHit)
+        {
+            FVector Normal=Hit.Normal.GetSafeNormal();
+            if(Normal.IsNearlyZero()) Normal=Hit.ImpactNormal.GetSafeNormal();
+            if(Normal.IsNearlyZero()) Normal=-Delta.GetSafeNormal();
+            FVector Slide=FVector::VectorPlaneProject(
+                Delta*(1.f-FMath::Clamp(Hit.Time,0.f,1.f)),Normal);
+            S.Velocity=FVector::VectorPlaneProject(S.Velocity,Normal);
+            if(Normal.Z<-.45f)
+            {
+                // Persistent tangent momentum keeps the mass sliding under
+                // a roof; gravity/buoyancy can lift it again past the edge.
                 const FVector Side(FMath::Cos(S.Seed),FMath::Sin(S.Seed),0.f);
-                Slide+=FVector::VectorPlaneProject(
-                    Side*S.RiseSpeed*.43f*Dt,Hit.Normal);
+                const FVector Tangent=FVector::VectorPlaneProject(Side,Normal).GetSafeNormal();
+                Slide+=Tangent*S.RiseSpeed*.55f*Dt;
+                S.Velocity+=Tangent*S.RiseSpeed*.24f;
+                S.Velocity=S.Velocity.GetClampedToMaxSize(S.RiseSpeed*1.15f);
             }
             FHitResult Second;
-            if (World->SweepSingleByChannel(Second,S.Position,
-                    S.Position+Slide,FQuat::Identity,SmokeChannel,Shape,Query))
-            {
-                if (!Second.bStartPenetrating)
-                    S.Position=Second.Location+Second.Normal*.85f;
-            }
-            else S.Position+=Slide;
-            S.Velocity=FVector::VectorPlaneProject(S.Velocity,Hit.Normal);
+            S.Position=MoveClear(S.Position,Slide,Second);
         }
-        else S.Position+=Delta;
-        // Final clearance and height check also covers the slide leg.
+        if(!IsClear(S.Position,Radius)) S.Position=Previous;
+        // A valid carrier remains alive under an obstruction until its
+        // ordinary lifespan runs out. The ceiling itself cannot delete it.
         const float Remaining=S.MaxRise-FMath::Max(0.f,float(S.Position.Z-S.BaseZ))-2.f;
-        S.Radius=FMath::Min(S.Radius,Remaining);
-        if (S.Radius<3.f || !IsClear(S.Position,S.Radius)) S.bAlive=false;
+        S.Radius=FMath::Min(Radius,Remaining);
+        if(S.Radius<3.f) { S.Position=Previous; S.Radius=Radius; }
     }
 
     if (bVisible && Heat>.10f && Active>0)
