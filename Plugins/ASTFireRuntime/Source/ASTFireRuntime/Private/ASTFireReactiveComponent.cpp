@@ -1168,7 +1168,7 @@ void UASTFireReactiveComponent::ConfigureFireLight(USceneComponent* Parent)
     Light->SetCastShadows(true);
     Light->SetLightColor(FLinearColor::White);
     Light->SetUseTemperature(true);
-    Light->SetTemperature(3400.f);
+    Light->SetTemperature(2700.f);
     Light->SetSpecularScale(.12f);
     Light->SetIndirectLightingIntensity(.25f);
     Light->SetVolumetricScatteringIntensity(.025f);
@@ -1189,7 +1189,7 @@ void UASTFireReactiveComponent::UpdateFireLight(float Dt,float Time,float FlameE
     const float Slow=FMath::PerlinNoise1D(Time*2.1f+Seed);
     const float Fast=FMath::PerlinNoise1D(Time*8.3f+Seed+17.3f);
     const float Gust=FMath::PerlinNoise1D(Time*4.7f+Seed+41.7f);
-    const float Flicker=FMath::Clamp(1.f+.32f*Slow+.22f*Fast+.12f*Gust,.52f,1.48f);
+    const float Flicker=FMath::Clamp(1.f+.40f*Slow+.28f*Fast+.16f*Gust,.48f,1.52f);
     FVector Center=Parent->GetComponentTransform().TransformPosition(PointOffset);
     float Width=25.f*Scale;
     float SizeFactor=FMath::Pow(Scale,1.35f);
@@ -1218,7 +1218,7 @@ void UASTFireReactiveComponent::UpdateFireLight(float Dt,float Time,float FlameE
     else
     {
         // Flame occupies space above the actual wick, including explicit
-        // PointOffset on a hidden component. Never use camera-space coordinates.
+        // PointOffset on a hidden component. Compute the physical center first;
         Center+=FVector::UpVector*(19.f*Scale+8.f*Scale*E);
         if(IsValid(FreeFlames))
         {
@@ -1234,19 +1234,51 @@ void UASTFireReactiveComponent::UpdateFireLight(float Dt,float Time,float FlameE
     // and both irradiance and slope approach zero at the outer boundary.
     // Preserve existing authored LightPower (450 = reference), not its
     // previous interpretation as hundreds of physical lumens.
-    const float Reach=FMath::Clamp(LightRadius*FMath::Clamp(FMath::Sqrt(SizeFactor)*1.25f,.32f,1.65f),0.f,1200.f);
+    // Keep the radius independent of flicker: a broad, faint outer skirt
+    // prevents the moving hard-edged disc. Radius remains authored/scaled.
+    const float Reach=FMath::Clamp(LightRadius*FMath::Clamp(FMath::Sqrt(SizeFactor)*2.2f,.65f,3.0f),0.f,2400.f);
     const float Authored=FMath::Clamp(LightPower/450.f,0.f,1.6f);
     const float SizeBrightness=FMath::Pow(FMath::Max(.001f,SizeFactor),.25f);
     // Legacy member name retained for ABI; the value is now unitless.
-    const float WantedLumens=FMath::Min(2.35f,1.9f*Authored*SizeBrightness*Heat*
-        (.78f+.22f*E)*Flicker);
-    const float WantedKelvin=FMath::Clamp(3220.f+200.f*E+95.f*Fast+65.f*Slow-110.f*(1.f-Heat),3000.f,3650.f);
+    const float WantedLumens=FMath::Min(1.65f,1.35f*Authored*SizeBrightness*Heat*
+        (.48f+.52f*E)*Flicker);
+    const float WantedKelvin=FMath::Clamp(2480.f+380.f*E+125.f*Fast+85.f*Slow-160.f*(1.f-Heat),2200.f,3100.f);
     const bool bSnap=!bFireLightReady||Dt<=0.f||FVector::DistSquared(Center,FireLightCenter)>FMath::Square(100.f);
     FireLightCenter=bSnap?Center:FMath::VInterpTo(FireLightCenter,Center,Dt,17.f);
     FireLightLumens=bSnap?WantedLumens:FMath::FInterpTo(FireLightLumens,WantedLumens,Dt,15.f);
     FireLightKelvin=bSnap?WantedKelvin:FMath::FInterpTo(FireLightKelvin,WantedKelvin,Dt,8.f);
     bFireLightReady=true;
-    Light->SetWorldLocation(FireLightCenter);
+    // Camera-side presentation offset: the orthographic view direction, not
+    // the camera's lateral position, determines which side should be lit.
+    // Resolve collision AFTER smoothing the physical center so interpolation
+    // cannot move the actual light through a wall. Never move the flame itself.
+    FVector RenderCenter=FireLightCenter;
+    if(UWorld* World=GetWorld())
+    {
+        if(const APlayerController* PC=World->GetFirstPlayerController())
+        {
+            if(const APlayerCameraManager* Cam=PC->PlayerCameraManager)
+            {
+                const FVector TowardCamera=-Cam->GetCameraRotation().Vector();
+                const float Depth=FMath::Min(bPoint?180.f:110.f,Reach*.24f);
+                if(Depth>1.f)
+                {
+                    const FVector End=FireLightCenter+TowardCamera*Depth;
+                    FCollisionQueryParams Query(SCENE_QUERY_STAT(ASTFireLightCameraOffset),false,GetOwner());
+                    FCollisionObjectQueryParams Objects;
+                    Objects.AddObjectTypesToQuery(ECC_WorldStatic);
+                    Objects.AddObjectTypesToQuery(ECC_WorldDynamic);
+                    FHitResult Hit;
+                    const bool bBlocked=World->SweepSingleByObjectType(Hit,FireLightCenter,End,
+                        FQuat::Identity,Objects,FCollisionShape::MakeSphere(8.f),Query);
+                    if(!bBlocked)RenderCenter=End;
+                    else if(!Hit.bStartPenetrating)
+                        RenderCenter=FireLightCenter+TowardCamera*FMath::Max(0.f,float(Hit.Distance)-4.f);
+                }
+            }
+        }
+    }
+    Light->SetWorldLocation(RenderCenter);
     Light->SetIntensity(Heat<=.005f || Reach<=1.f?0.f:FireLightLumens);
     Light->SetTemperature(FireLightKelvin);
     if(!FMath::IsNearlyEqual(Light->AttenuationRadius,Reach,.5f))Light->SetAttenuationRadius(Reach);
@@ -1287,7 +1319,8 @@ FString UASTFireReactiveComponent::RunFireLightAudit()
         Near=FMath::Max(Near,float(FVector::Distance(First,L->GetComponentLocation())));
     }
     const bool bPhotometric=!L->bUseInverseSquaredFalloff && L->CastShadows &&
-        L->LightFalloffExponent>=4.f && L->SpecularScale<=.15f && Max<=2.35f &&
+        L->LightFalloffExponent>=4.f && L->SpecularScale<=.15f && Max<=1.65f &&
+        Radius>Fire->LightRadius*1.8f && MinK>=2200.f && MaxK<=3100.f &&
         L->SourceRadius>1.f && L->bUseTemperature && RangeDrift<.1f &&
         Max>Min*1.12f && Min>0.f && MaxK-MinK>30.f && Near>.5f;
     const bool bWick=FVector::DistSquared(L->GetComponentLocation(),Root->GetComponentTransform().TransformPosition(Fire->PointOffset))<FMath::Square(55.f)
@@ -1296,7 +1329,7 @@ FString UASTFireReactiveComponent::RunFireLightAudit()
     Fire->FlameSize=.15f;Fire->UpdateFireLight(0.f,6.f,.7f);
     const bool bScale=L->Intensity<NormalLumens*.8f && L->AttenuationRadius<Radius*.6f;
     Fire->LightPower=50000.f;Fire->UpdateFireLight(0.f,6.1f,1.f);
-    const bool bCap=L->Intensity<=2.35f;
+    const bool bCap=L->Intensity<=1.65f;
     Fire->LightPower=450.f;
     Fire->FlameSize=1.f;Fire->Coverage=EASTFireCoverage::Bounds;
     Fire->UpdateFireLight(0.f,7.f,.7f);
@@ -1409,7 +1442,7 @@ FString UASTFireReactiveComponent::RunFireLightCapture(UClass* TorchClass)
     TArray<UPointLightComponent*> Lights;Torch->GetComponents<UPointLightComponent>(Lights);
     int32 Owned=0,Other=0;
     for(auto* L:Lights)if(IsValid(L)){if(L==Fire->Light)++Owned;else if(L->IsVisible()&&L->Intensity>0.f)++Other;}
-    const bool bPass=bLit&&bDark&&NearN>0&&Near>2.f&&Near>Far+1.f&&ClipRate<.01f&&Peak>0.f&&Peak<=2.35f&&Owned==1&&Other==0;
+    const bool bPass=bLit&&bDark&&NearN>0&&Near>2.f&&Near>Far+1.f&&ClipRate<.01f&&Peak>0.f&&Peak<=1.65f&&Owned==1&&Other==0;
     const float Scale=Fire->FlameSize,Power=Fire->LightPower;
     World->DestroyWorld(false);
     return FString::Printf(TEXT("%s:scale=%.3f;authoredPower=%.2f;output=%.3f;radius=%.1f;nearDelta=%.2f;farDelta=%.2f;whiteClip=%.4f;owned=%d;otherActive=%d"),
