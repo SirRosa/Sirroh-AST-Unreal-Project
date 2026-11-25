@@ -1159,6 +1159,7 @@ void UASTFireReactiveComponent::ConfigureFireLight(USceneComponent* Parent)
 {
     if(!IsValid(Light)||!IsValid(Parent))return;
     Light->SetMobility(EComponentMobility::Movable);
+    Light->ComponentTags.AddUnique(ASTFire::FireLightTag);
     // PWG's orthographic camera uses manual exposure at unity, not a
     // photographic EV. Physical lumens at this exposure create a clipped
     // orange disk. Use bounded, smoothly decaying local irradiance instead.
@@ -1248,37 +1249,8 @@ void UASTFireReactiveComponent::UpdateFireLight(float Dt,float Time,float FlameE
     FireLightLumens=bSnap?WantedLumens:FMath::FInterpTo(FireLightLumens,WantedLumens,Dt,15.f);
     FireLightKelvin=bSnap?WantedKelvin:FMath::FInterpTo(FireLightKelvin,WantedKelvin,Dt,8.f);
     bFireLightReady=true;
-    // Camera-side presentation offset: the orthographic view direction, not
-    // the camera's lateral position, determines which side should be lit.
-    // Resolve collision AFTER smoothing the physical center so interpolation
-    // cannot move the actual light through a wall. Never move the flame itself.
-    FVector RenderCenter=FireLightCenter;
-    if(UWorld* World=GetWorld())
-    {
-        if(const APlayerController* PC=World->GetFirstPlayerController())
-        {
-            if(const APlayerCameraManager* Cam=PC->PlayerCameraManager)
-            {
-                const FVector TowardCamera=-Cam->GetCameraRotation().Vector();
-                const float Depth=FMath::Min(bPoint?180.f:110.f,Reach*.24f);
-                if(Depth>1.f)
-                {
-                    const FVector End=FireLightCenter+TowardCamera*Depth;
-                    FCollisionQueryParams Query(SCENE_QUERY_STAT(ASTFireLightCameraOffset),false,GetOwner());
-                    FCollisionObjectQueryParams Objects;
-                    Objects.AddObjectTypesToQuery(ECC_WorldStatic);
-                    Objects.AddObjectTypesToQuery(ECC_WorldDynamic);
-                    FHitResult Hit;
-                    const bool bBlocked=World->SweepSingleByObjectType(Hit,FireLightCenter,End,
-                        FQuat::Identity,Objects,FCollisionShape::MakeSphere(8.f),Query);
-                    if(!bBlocked)RenderCenter=End;
-                    else if(!Hit.bStartPenetrating)
-                        RenderCenter=FireLightCenter+TowardCamera*FMath::Max(0.f,float(Hit.Distance)-4.f);
-                }
-            }
-        }
-    }
-    Light->SetWorldLocation(RenderCenter);
+    // Physical emitter follows the living flame, independent of camera or ragdoll.
+    Light->SetWorldLocation(FireLightCenter);
     Light->SetIntensity(Heat<=.005f || Reach<=1.f?0.f:FireLightLumens);
     Light->SetTemperature(FireLightKelvin);
     if(!FMath::IsNearlyEqual(Light->AttenuationRadius,Reach,.5f))Light->SetAttenuationRadius(Reach);
