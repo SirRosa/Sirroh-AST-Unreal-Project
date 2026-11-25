@@ -1,6 +1,7 @@
 #include "ASTFireFreeFlameComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Components/SceneComponent.h"
+#include "ProceduralMeshComponent.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"
@@ -83,6 +84,91 @@ FString UASTFireFreeFlameComponent::RunMotionAudit(UMaterialInterface* TestMater
         Details+=FString::Printf(TEXT(";%s:still=%d;still_cuts=%d;moving_cuts=%d;cells=%d;trail_cm=%.1f;lag=%d;rotation=%d;teleport=%d;settled=%d"),
             bMesh?TEXT("mesh"):TEXT("point"),int32(bSame),StillCuts,MoveCuts,Transferred,Trail,int32(bLag),int32(bRotation),int32(bTeleport),int32(bSettled));
         Still->GetOwner()->Destroy();Moving->GetOwner()->Destroy();
+    }
+    // Measure the actual submitted quads (section 1), not the velocity or
+    // the number of cuts. Surface mode compares elevated gas cells against
+    // the corresponding owner's fuel bed, independent of object dimensions.
+    auto Measure=[](UASTFireFreeFlameComponent* Fire,bool bMesh)
+    {
+        const auto* Section=Fire->Render->GetProcMeshSection(1);
+        if(!Section||Section->ProcVertexBuffer.Num()<4)return FVector::ZeroVector;
+        const auto& Buffer=Section->ProcVertexBuffer;
+        const FTransform Tr=Fire->Render->GetComponentTransform();
+        auto Quad=[&](int32 I)
+        {
+            FVector Center=FVector::ZeroVector;
+            for(int32 K=0;K<4;++K)Center+=FVector(Buffer[I*4+K].Position);
+            return Tr.TransformPosition(Center*.25);
+        };
+        if(!bMesh)
+        {
+            FVector Total=FVector::ZeroVector;
+            for(int32 I=0;I<Buffer.Num()/4;++I)Total+=Quad(I)-Fire->PointMotionOrigin();
+            return Total/(Buffer.Num()/4);
+        }
+        if(Fire->MeshPrevious.Num()!=Buffer.Num()/4)return FVector::ZeroVector;
+        FVector Low[MaxTongues],High[MaxTongues];
+        int32 NL[MaxTongues]={},NH[MaxTongues]={};
+        for(int32 I=0;I<MaxTongues;++I)Low[I]=High[I]=FVector::ZeroVector;
+        for(int32 I=0;I<Fire->MeshPrevious.Num();++I)
+        {
+            const auto& Cell=Fire->MeshPrevious[I];
+            if(Cell.Owner<0||Cell.Owner>=MaxTongues)continue;
+            if(Cell.Rise<.12f){Low[Cell.Owner]+=Quad(I);++NL[Cell.Owner];}
+            if(Cell.Rise>.60f){High[Cell.Owner]+=Quad(I);++NH[Cell.Owner];}
+        }
+        FVector Sum=FVector::ZeroVector;int32 Count=0;
+        for(int32 I=0;I<MaxTongues;++I)if(NL[I]>0&&NH[I]>0)
+        {
+            Sum+=High[I]/NH[I]-Low[I]/NL[I];++Count;
+        }
+        return Count?Sum/Count:FVector::ZeroVector;
+    };
+    const FVector Directions[]={FVector::UpVector,-FVector::UpVector,FVector::RightVector,-FVector::RightVector,FVector::UpVector};
+    const TCHAR* Names[]={TEXT("up"),TEXT("down"),TEXT("right"),TEXT("left"),TEXT("up6")};
+    for(bool bMesh:{false,true})
+    {
+        for(int32 Case=0;Case<5;++Case)
+        {
+            auto* Fire=Make(bMesh);
+            if(!Fire){bPass=false;continue;}
+            for(int32 I=0;I<70;++I)Step(Fire);
+            const FVector Direction=Directions[Case];
+            const float Speed=Case==4?600.f:1000.f;
+            FVector Geometry=FVector::ZeroVector;
+            int32 Births=0,OppositeBirths=0;
+            for(int32 I=0;I<65;++I)
+            {
+                Fire->GetOwner()->SetActorLocation(Direction*((I+1)*Speed*.04f));
+                Step(Fire);
+                if(I<25)continue;
+                Geometry+=Measure(Fire,bMesh);
+                for(const auto& F:Fire->FieldFragments)if(F.Age<.001f)
+                {
+                    ++Births;
+                    if(FVector::DotProduct(F.Velocity,-Direction)>35.f)++OppositeBirths;
+                }
+            }
+            Geometry/=40.;
+            const FVector Planar(0.,Geometry.Y,Geometry.Z);
+            const float Alignment=float(FVector::DotProduct(Planar.GetSafeNormal(),-Direction));
+            const float Backward=float(FVector::DotProduct(Planar,-Direction));
+            const bool bDirected=Alignment>.60f&&Backward>3.f;
+            const bool bFragments=Births>0&&OppositeBirths*2>=Births;
+            FVector Settled=FVector::ZeroVector;
+            for(int32 I=0;I<65;++I)
+            {
+                Step(Fire);
+                if(I>=35)Settled+=Measure(Fire,bMesh);
+            }
+            Settled/=30.;
+            const bool bRest=MotionStrength(Fire->AeroVelocity)==0.f&&Settled.Z>3.f&&
+                FMath::Abs(Settled.Y)<Settled.Z;
+            bPass&=bDirected&&bFragments&&bRest;
+            Details+=FString::Printf(TEXT(";%s_%s:alignment=%.2f;back_cm=%.2f;births=%d;opposite=%d;rest_z=%.2f;rest=%d"),
+                bMesh?TEXT("mesh"):TEXT("point"),Names[Case],Alignment,Backward,Births,OppositeBirths,float(Settled.Z),int32(bRest));
+            Fire->GetOwner()->Destroy();
+        }
     }
     World->DestroyWorld(false);
     return FString(bPass?TEXT("PASS:"):TEXT("FAIL:"))+Details;
