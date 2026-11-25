@@ -113,7 +113,8 @@ void UASTFireIgnitionZoneComponent::PollContactOverlaps()
         if(IsValid(Actor)&&Actor!=Owner)Touching.Add(Actor);
 
     FCollisionQueryParams Query(SCENE_QUERY_STAT(ASTFireContact),false,Owner);
-    const FCollisionObjectQueryParams Objects(FCollisionObjectQueryParams::AllDynamicObjects);
+    // Include custom physics object channels; reject static architecture below.
+    const FCollisionObjectQueryParams Objects(FCollisionObjectQueryParams::AllObjects);
     TArray<FOverlapResult> Hits;
     World->OverlapMultiByObjectType(Hits,GetComponentLocation(),GetComponentQuat(),
         Objects,FCollisionShape::MakeBox(GetScaledBoxExtent()),Query);
@@ -200,19 +201,23 @@ FString UASTFireIgnitionZoneComponent::RunContactAudit()
     AActor* Prop=World->SpawnActor<AActor>();
     if(!Source||!Prop){World->DestroyWorld(false);return TEXT("FAIL:actors");}
     auto* Zone=NewObject<UASTFireIgnitionZoneComponent>(Source);
+    Source->AddInstanceComponent(Zone);
     Source->SetRootComponent(Zone);
-    Zone->RegisterComponent();
     Zone->SetBoxExtent(FVector(75));
     Zone->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
     Zone->SetCollisionObjectType(ECC_WorldDynamic);
     Zone->SetCollisionResponseToAllChannels(ECR_Overlap);
+    Zone->SetMobility(EComponentMobility::Movable);
+    Zone->RegisterComponent();
     Zone->bRequireSourceBurning=false;
     auto* Body=NewObject<UStaticMeshComponent>(Prop);
     Body->SetStaticMesh(Cube);
     Body->SetMobility(EComponentMobility::Movable);
-    Body->SetCollisionProfileName(TEXT("BlockAllDynamic"));
-    Body->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+    Body->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+    Body->SetCollisionObjectType(ECC_WorldDynamic);
+    Body->SetCollisionResponseToAllChannels(ECR_Block);
     Body->SetGenerateOverlapEvents(false);
+    Prop->AddInstanceComponent(Body);
     Prop->SetRootComponent(Body);Body->RegisterComponent();
     auto* Fire=NewObject<UASTFireReactiveComponent>(Prop);
     Prop->AddInstanceComponent(Fire);
@@ -220,24 +225,34 @@ FString UASTFireIgnitionZoneComponent::RunContactAudit()
     Fire->bEnableProceduralFlames=false;Fire->bEnableFlameCards=false;
     Fire->bEnableNiagara=false;Fire->bEnableSurfaceFire=false;
     Fire->RegisterComponent();
-    Prop->SetActorLocation(FVector(400,0,0));
+    Body->SetWorldLocation(FVector(400,0,0),false,nullptr,ETeleportType::TeleportPhysics);
     Zone->PollContactOverlaps();
     const bool bOutside=!UASTFireBlueprintLibrary::IsActorBurning(Prop);
-    Prop->SetActorLocation(FVector::ZeroVector);
+    Body->SetWorldLocation(FVector::ZeroVector,false,nullptr,ETeleportType::TeleportPhysics);
     Zone->PollContactOverlaps();
     const bool bIgnited=UASTFireBlueprintLibrary::IsActorBurning(Prop);
+    FCollisionQueryParams DebugQuery(SCENE_QUERY_STAT(ASTFireContactAudit),false,Source);
+    FCollisionObjectQueryParams DebugObjects(FCollisionObjectQueryParams::AllObjects);
+    TArray<FOverlapResult> DebugHits;
+    World->OverlapMultiByObjectType(DebugHits,Zone->GetComponentLocation(),Zone->GetComponentQuat(),
+        DebugObjects,FCollisionShape::MakeBox(Zone->GetScaledBoxExtent()),DebugQuery);
+    const int32 DebugCount=DebugHits.Num();
+    bool bBodyHit=false;
+    for(const FOverlapResult& Hit:DebugHits)bBodyHit|=Hit.GetComponent()==Body;
+    const float BoundsSize=float(Prop->GetComponentsBoundingBox(true).GetSize().GetMax());
+    const bool bAuthority=Source->HasAuthority();
     UASTFireBlueprintLibrary::ExtinguishActor(Prop);
     Zone->PollContactOverlaps();
     const bool bNoDuplicate=!UASTFireBlueprintLibrary::IsActorBurning(Prop);
-    Prop->SetActorLocation(FVector(400,0,0));
+    Body->SetWorldLocation(FVector(400,0,0),false,nullptr,ETeleportType::TeleportPhysics);
     Zone->PollContactOverlaps();
-    Prop->SetActorLocation(FVector::ZeroVector);
+    Body->SetWorldLocation(FVector::ZeroVector,false,nullptr,ETeleportType::TeleportPhysics);
     Zone->PollContactOverlaps();
     const bool bReentry=UASTFireBlueprintLibrary::IsActorBurning(Prop);
     World->DestroyWorld(false);
-    return FString::Printf(TEXT("%s:outside=%d;no_overlap_events=%d;no_duplicate=%d;reentry=%d"),
+    return FString::Printf(TEXT("%s:outside=%d;no_overlap_events=%d;no_duplicate=%d;reentry=%d;query_hits=%d;body_hit=%d;bounds=%.1f;authority=%d"),
         bOutside&&bIgnited&&bNoDuplicate&&bReentry?TEXT("PASS"):TEXT("FAIL"),
-        int32(bOutside),int32(bIgnited),int32(bNoDuplicate),int32(bReentry));
+        int32(bOutside),int32(bIgnited),int32(bNoDuplicate),int32(bReentry),DebugCount,int32(bBodyHit),BoundsSize,int32(bAuthority));
 #else
     return TEXT("EDITOR_ONLY");
 #endif
